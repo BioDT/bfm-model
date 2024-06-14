@@ -1,0 +1,52 @@
+[tool.poetry]
+name = "biodiversity foundation model"
+version = "0.1.0"
+description = "This project has as its goal the development of a foundation model usable within the context of a Biodiversity Digital Twin."
+authors = ["Sebastian Gribincea <sebastian.gribincea@tno.nl>"]
+readme = "README.md"
+package-mode = false # for now, let's keep poetry just for the goal of requirements management
+
+[tool.poetry.dependencies]
+python = "^3.10"
+
+[tool.poetry.dev-dependencies]
+python = "^3.10"
+numpy = "^1.26.4"
+torch = "^2.3.1"
+torchvision = "^0.18.1"
+seaborn = "^0.13.2"
+pandas = "^2.2.2"
+pre-commit = "^3.7.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.black]
+line-length = 130
+target-version = ['py310']
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.git
+| \.hg
+| \.mypy_cache
+| \.tox
+| \.venv
+| _build
+| buck-out
+| build
+)/
+'''
+
+[tool.flake8]
+max-line-length = 130
+extend-ignore = ["D203", "E203", "E251", "E266", "E302", "E305", "E401", "E402", "E501", "F401", "F403", "W503"]
+exclude = [".git", "__pycache__", "dist"]
+max-complexity = 10
+
+[tool.isort]
+atomic = true
+profile = "black"
+line_length = 130
+skip_gitignore = true
