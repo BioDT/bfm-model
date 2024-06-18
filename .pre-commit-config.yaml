@@ -1,4 +1,4 @@
-fail_fast: true
+fail_fast: false
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
@@ -13,9 +13,10 @@ repos:
     hooks:
     - id: black
   - repo: https://github.com/PyCQA/flake8
-    rev: 7.0.0
+    rev: 7.1.0
     hooks:
     - id: flake8
+      additional_dependencies: [Flake8-pyproject]
   - repo: https://github.com/timothycrosley/isort
     rev: 5.13.2
     hooks:
