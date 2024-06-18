@@ -33,7 +33,7 @@ test:
 	. $(VENV)/bin/activate; python -m unittest discover -s tests
 
 # remove venv
-clean: setup
+clean: 
 	@echo "Cleaning up."
 	rm -rf $(VENV)
 	find . -type f -name '*.pyc' -delete
