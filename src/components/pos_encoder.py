@@ -1,46 +1,59 @@
 import functools
+from math import pi
 from typing import Optional, Tuple
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from einops import rearrange, repeat
 
 
 def generate_fourier_features(
     pos: torch.Tensor,
     num_bands: int,
-    max_resolution: Tuple[int, int] = (224, 224),
+    batch_size: int,
+    max_freq: float = 10.0,
     concat_pos: bool = True,
     sine_only: bool = False,
 ) -> torch.Tensor:
-    print(f"Position Shape: {pos.shape}")
-    min_freq = 1.0
-    freq_bands = torch.stack([torch.linspace(min_freq, res / 2, steps=num_bands) for res in max_resolution], dim=0)
+    pos = pos.unsqueeze(-1)
+    device, dtype, orig_x = pos.device, pos.dtype, pos
 
-    per_pos_features = pos[:, :, None] * freq_bands[None, :, :]
-    per_pos_features = per_pos_features.view(-1, per_pos_features.shape[1] * per_pos_features.shape[2])
+    scales = torch.linspace(1.0, max_freq / 2, num_bands, device=device, dtype=dtype)
+    scales = scales[(*((None,) * (len(pos.shape) - 1)), Ellipsis)]
+
+    pos = pos * scales * pi
 
     if sine_only:
-        per_pos_features = torch.sin(torch.pi * per_pos_features)
+        pos = pos.sin()
     else:
-        per_pos_features = torch.cat([torch.sin(torch.pi * per_pos_features), torch.cos(torch.pi * per_pos_features)], dim=-1)
+        pos = torch.cat([pos.sin(), pos.cos()], dim=-1)
 
-    if concat_pos:
-        per_pos_features = torch.cat([pos, per_pos_features], dim=-1)
+    pos = torch.cat((pos, orig_x), dim=-1)
 
-    print(per_pos_features.shape)
-    return per_pos_features
+    # Rearrange dimensions
+    side_enc_pos = rearrange(pos, "... n d -> ... (n d)")
+
+    # Repeat for batch size if necessary
+    if side_enc_pos.shape[0] != batch_size:
+        side_enc_pos = repeat(side_enc_pos, "... -> b ...", b=batch_size)
+
+    if not concat_pos:
+        side_enc_pos = side_enc_pos[..., : -pos.shape[-1]]
+
+    return side_enc_pos
 
 
 def build_linear_positions(index_dims: Tuple[int], output_range: Tuple[float, float] = (-1.0, 1.0)) -> torch.Tensor:
     def _linspace(n_xels_per_dim: int) -> torch.Tensor:
         return torch.linspace(output_range[0], output_range[1], steps=n_xels_per_dim)
 
-    dim_ranges = [_linspace(n_xels_per_dim) for n_xels_per_dim in index_dims]
-    array_index_grid = torch.meshgrid(*dim_ranges, indexing="ij")
+    per_dim_ranges = [_linspace(n_xels_per_dim) for n_xels_per_dim in index_dims]
+    array_index_grid = torch.meshgrid(*per_dim_ranges, indexing="ij")
 
-    return torch.stack(array_index_grid, dim=-1)
+    stacked_index_dim = torch.stack(array_index_grid, dim=-1)
+    return stacked_index_dim
 
 
 class AbstractPositionEncoding(nn.Module):
@@ -65,49 +78,46 @@ class TrainablePositionEncoding(AbstractPositionEncoding):
         return pos_embs
 
 
-def _check_or_build_spatial_positions(pos: Optional[torch.Tensor], index_dims: Tuple[int], batch_size: int) -> torch.Tensor:
-    if pos is None:
-        pos = build_linear_positions(index_dims)
-        pos = pos.unsqueeze(0).expand(batch_size, *pos.shape)
-        pos = pos.view(batch_size, -1, pos.shape[-1])
-    else:
-        assert pos.shape[-1] == len(index_dims)
-
-    return pos
-
-
 class FourierPositionEncoding(AbstractPositionEncoding):
-    """Fourier (Sinusoidal) position encoding."""
-
     def __init__(
         self,
         index_dims: Tuple[int],
         num_bands: int,
+        max_freq: float = 10.0,
         concat_pos: bool = True,
-        max_resolution: Optional[Tuple[int, int]] = None,
         sine_only: bool = False,
     ):
         super(FourierPositionEncoding, self).__init__()
         self.num_bands = num_bands
+        self.max_freq = max_freq
         self.concat_pos = concat_pos
         self.sine_only = sine_only
         self.index_dims = index_dims
-        self.max_resolution = max_resolution or index_dims
-        self.output_size = None  # initialize output_size as None
+        self.output_size = None
+
+    def _check_or_build_spatial_positions(
+        self, pos: Optional[torch.Tensor], index_dims: Tuple[int], batch_size: int
+    ) -> torch.Tensor:
+        if pos is None:
+            axis_pos = [torch.linspace(-1.0, 1.0, steps=size) for size in index_dims]
+            pos = torch.stack(torch.meshgrid(*axis_pos, indexing="ij"), dim=-1)
+            pos = pos.unsqueeze(0).expand(batch_size, *pos.shape)
+        else:
+            assert pos.shape[1:-1] == index_dims, f"Position shape {pos.shape[1:-1]} does not match index dims {index_dims}."
+            assert pos.shape[0] == batch_size, f"Batch size {pos.shape[0]} does not match expected batch size {batch_size}."
+        return pos
 
     def forward(self, batch_size: int, pos: Optional[torch.Tensor] = None) -> torch.Tensor:
-        pos = _check_or_build_spatial_positions(pos, self.index_dims, batch_size)
-        build_ff_fn = functools.partial(
-            generate_fourier_features,
+        pos = self._check_or_build_spatial_positions(pos, self.index_dims, batch_size)
+        side_enc_pos = generate_fourier_features(
+            pos=pos,
             num_bands=self.num_bands,
-            max_resolution=self.max_resolution,
+            batch_size=batch_size,
+            max_freq=self.max_freq,
             concat_pos=self.concat_pos,
             sine_only=self.sine_only,
         )
-        encoding = torch.stack([build_ff_fn(p) for p in pos])
-        if self.output_size is None:
-            self.output_size = encoding.shape[-1]  # set output_size dynamically
-        return encoding
+        return side_enc_pos
 
 
 class PositionEncodingProjector(AbstractPositionEncoding):
@@ -153,11 +163,10 @@ if __name__ == "__main__":
     # Example usage:
     pos_enc = build_position_encoding(
         position_encoding_type="fourier",
-        index_dims=(224, 224),
-        project_pos_dim=256,
-        fourier_position_encoding_kwargs={"num_bands": 4, "concat_pos": True, "sine_only": False},
+        index_dims=(4, 4),
+        fourier_position_encoding_kwargs={"num_bands": 3, "max_resolution": (8, 8), "concat_pos": True, "sine_only": False},
     )
-    pos = pos_enc(batch_size=1)
+    pos = pos_enc(batch_size=23)
     print(pos.shape)  # should be (2, 50176, 256)
 
     # pos_enc = build_position_encoding(
