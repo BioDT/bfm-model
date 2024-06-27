@@ -60,6 +60,79 @@ class FeedForward(nn.Module):
         return x
 
 
+class Attention(nn.Module):
+    def __init__(self, q_dim, context_dim=None, heads=8, head_dim=64, dropout=0.1):
+        super().__init__()
+        inner_dim = head_dim * heads
+        context_dim = context_dim or q_dim
+
+        self.scale = head_dim**-0.5
+        self.heads = heads
+
+        # linear projections for Q, K, and V
+        self.to_q = nn.Linear(q_dim, inner_dim, bias=False)
+        self.to_k = nn.Linear(context_dim, inner_dim, bias=False)
+        self.to_v = nn.Linear(context_dim, inner_dim, bias=False)
+
+        self.dropout = nn.Dropout(dropout)
+        # project attention output back to the query dimension
+        self.to_out = nn.Linear(inner_dim, q_dim)
+
+    @staticmethod
+    def _split_heads(tensor, num_heads):
+        """
+        Split the last dimension of the input tensor into (num_heads, head_dim)
+        and permutes the dimensions to (batch_size, num_heads, seq_len, head_dim).
+        """
+        batch_size, seq_len, dim = tensor.shape
+        head_dim = dim // num_heads
+        tensor = tensor.reshape(batch_size, seq_len, num_heads, head_dim)
+        return tensor.permute(0, 2, 1, 3)
+
+    @staticmethod
+    def _merge_heads(tensor, num_heads):
+        """
+        Reverse the _split_heads operation. Permutes the dimensions and reshapes
+        the tensor to (batch_size, seq_len, num_heads * head_dim).
+        """
+        batch_size, _, seq_len, head_dim = tensor.shape
+        return tensor.permute(0, 2, 1, 3).reshape(batch_size, seq_len, num_heads * head_dim)
+
+    def forward(self, x, context=None, mask=None):
+        h = self.heads
+
+        # Shape: (batch_size, seq_len_q, inner_dim)
+        q = self.to_q(x)
+        context = context or x
+        k = self.to_k(context)  # shape: (batch_size, seq_len_kv, inner_dim)
+        v = self.to_v(context)  # shape: (batch_size, seq_len_kv, inner_dim)
+
+        # Split heads
+        q, k, v = map(lambda t: self._split_heads(t, h), (q, k, v))
+        # after splitting:
+        # q: (batch_size, num_heads, seq_len_q, head_dim)
+        # k, v: (batch_size, num_heads, seq_len_kv, head_dim)
+
+        # scaled dot-product attention
+        sim = torch.einsum("bhid, bhjd -> bhij", q, k) * self.scale  # shape: (batch_size, num_heads, seq_len_q, seq_len_kv)
+
+        if mask is not None:
+            # Add two dimensions to mask for broadcasting over heads and queries
+            mask = mask.unsqueeze(1).unsqueeze(1)
+            sim = sim.masked_fill(~mask, -torch.finfo(sim.dtype).max)
+
+        # compute attention (is all we need)
+        attention = sim.softmax(dim=-1)
+        attention = self.dropout(attention)
+
+        out = torch.einsum("bhij, bhjd ->bhid", attention, v)
+
+        # Merge heads
+        out = self._merge_heads(out, h)
+        # out shape: (batch_size, seq_len_q, inner_dim)
+
+        return self.to_out(out)
+
+
 # TODO:
-# 1) Attention
-# 2) Perceiver
+# 1) Perceiver
