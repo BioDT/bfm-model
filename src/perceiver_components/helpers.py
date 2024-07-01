@@ -182,10 +182,8 @@ class Attention(nn.Module):
         # scaled dot-product attention
         sim = torch.einsum("bhid, bhjd -> bhij", q, k) * self.scale  # shape: (batch_size, num_heads, seq_len_q, seq_len_kv)
 
-        print(f"Shape of sim: {sim.shape}")
         if mask is not None:
             mask = mask.unsqueeze(1)  # Add head dimension
-            print(f"Shape of mask: {mask.shape}")
             max_neg_value = -torch.finfo(sim.dtype).max
             sim = sim.masked_fill(~mask, max_neg_value)
 
