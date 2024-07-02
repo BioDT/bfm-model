@@ -183,13 +183,9 @@ class Attention(nn.Module):
         sim = torch.einsum("bhid, bhjd -> bhij", q, k) * self.scale  # shape: (batch_size, num_heads, seq_len_q, seq_len_kv)
 
         if mask is not None:
-<<<<<<< HEAD
             # Reshape and repeat mask for each head
             mask = rearrange(mask, "b ... -> b (...)")
             mask = repeat(mask, "b j -> b h () j", h=h)
-=======
-            mask = mask.unsqueeze(1)  # Add head dimension
->>>>>>> a9423121f6d4ad8ab06661cab912081c832d568d
             max_neg_value = -torch.finfo(sim.dtype).max
             sim = sim.masked_fill(~mask, max_neg_value)
 
