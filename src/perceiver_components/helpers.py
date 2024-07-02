@@ -112,7 +112,7 @@ class Attention(nn.Module):
     def __init__(self, q_dim: int, context_dim: int = None, heads: int = 8, head_dim: int = 64, dropout: float = 0.1):
         super().__init__()
         inner_dim = head_dim * heads
-        context_dim = context_dim or q_dim
+        context_dim = context_dim if context_dim is not None else q_dim
 
         self.scale = head_dim**-0.5
         self.heads = heads
@@ -182,10 +182,10 @@ class Attention(nn.Module):
         # scaled dot-product attention
         sim = torch.einsum("bhid, bhjd -> bhij", q, k) * self.scale  # shape: (batch_size, num_heads, seq_len_q, seq_len_kv)
 
-        print(f"Shape of sim: {sim.shape}")
         if mask is not None:
-            mask = mask.unsqueeze(1)  # Add head dimension
-            print(f"Shape of mask: {mask.shape}")
+            # Reshape and repeat mask for each head
+            mask = rearrange(mask, "b ... -> b (...)")
+            mask = repeat(mask, "b j -> b h () j", h=h)
             max_neg_value = -torch.finfo(sim.dtype).max
             sim = sim.masked_fill(~mask, max_neg_value)
 
