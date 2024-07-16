@@ -21,6 +21,7 @@ def cache_fn(f):
     of unused cached results. It also supports optional caching and custom cache keys.
 
     :param f: Function to be cached
+
     :return: Cached function
     """
     cache = weakref.WeakValueDictionary()
@@ -100,7 +101,9 @@ class Perceiver(nn.Module):
         self.use_fourier_encoding = use_fourier_encoding
 
         # Calculate total input dimension including Fourier features
-        fourier_channels = (num_input_axes * ((num_fourier_bands * 2) + 1)) if use_fourier_encoding else 0
+        fourier_channels = (
+            (num_input_axes * ((num_fourier_bands * 2) + 1)) if use_fourier_encoding else 0
+        )  # TODO: Add extra 'if's, since fourier encodings could be e.g., only sinusoidal, not-concatenated with original positions etc.
         total_input_dim = fourier_channels + input_channels
 
         # Initialize latent tokens (what makes the Perceiver special)
@@ -182,6 +185,7 @@ class Perceiver(nn.Module):
         :param num_layers: Number of cross-attention/self-attention layer blocks
         :param self_attentions_per_cross: Number of self-attention blocks per cross-attention
         :param weight_tie_layers: Whether to tie weights across layers
+
         :return: ModuleList of model layers
         """
         layers = nn.ModuleList([])
@@ -220,36 +224,21 @@ class Perceiver(nn.Module):
             Reduce("b n d -> b d", "mean"), nn.LayerNorm(latent_dimension), nn.Linear(latent_dimension, num_classes)
         )
 
-    def _build_position_encoder(self, num_input_axes: int, num_fourier_bands: int, max_frequency: float):
-        """
-        Builds the position encoder for Fourier features.
-
-        :param num_input_axes: Number of axes in the input data
-        :param num_fourier_bands: Number of frequency bands for Fourier encoding
-        :param max_frequency: Maximum frequency for Fourier encoding
-        :return: Position encoder module
-        """
-        return build_position_encoding(
-            position_encoding_type="fourier",
-            index_dims=None,  # We'll set this dynamically in _apply_fourier_encode
-            fourier_position_encoding_kwargs={
-                "num_bands": num_fourier_bands,
-                "max_freq": max_frequency,
-                "concat_pos": True,
-                "sine_only": False,
-            },
-        )
-
-    def _apply_fourier_encode(self, input_data: torch.Tensor) -> torch.Tensor:
+    def _apply_fourier_encode(self, input_data: torch.Tensor, concat_pos: bool = True, sine_only: bool = False) -> torch.Tensor:
         """
         Applies Fourier encoding to the input data.
 
         :param input_data: Input tensor
+        :param concat_pos: Whether to concatenate the original positions with Fourier features
+        :param sine_only: Whether to use only sine Fourier features
+
         :return: Fourier encoded input tensor
         """
         if self.use_fourier_encoding:
             batch_size, *axes, _, device, dtype = *input_data.shape, input_data.device, input_data.dtype  # noqa
-            assert len(axes) == self.num_input_axes, "input data must have the right number of axes"
+            assert (
+                len(axes) == self.num_input_axes
+            ), "Declared number of axes of the data is not equal to the actual number of axes present in the input data."
 
             # Dynamically create position encoder with correct index_dims
             position_encoder = build_position_encoding(
@@ -258,13 +247,13 @@ class Perceiver(nn.Module):
                 fourier_position_encoding_kwargs={
                     "num_bands": self.num_fourier_bands,
                     "max_freq": self.max_frequency,
-                    "concat_pos": True,
-                    "sine_only": False,
+                    "concat_pos": concat_pos,
+                    "sine_only": sine_only,
                 },
             )
 
             # Generate encoded positions
-            encoded_positions = position_encoder(batch_size=batch_size)
+            encoded_positions = position_encoder(batch_size=batch_size).to(device)
 
             # Concatenate encoded positions with input data
             input_data = torch.cat((input_data, encoded_positions), dim=-1)
@@ -280,6 +269,7 @@ class Perceiver(nn.Module):
         :param input_data: Input tensor
         :param attention_mask: Optional attention mask
         :param return_embeddings: Whether to return embeddings instead of class logits
+
         :return: Output tensor (logits or embeddings)
         """
         # Apply Fourier encoding to input data (if enabled)
@@ -340,3 +330,4 @@ if __name__ == "__main__":
 # 1) Improve flexibility with regards to applying positional encdoigns and passing parameters for these
 # 2) Add more examples and unit tests
 # 3) Add device/ dtype support
+# 4) (For later) Warmup learning rate scheduler?
