@@ -1,10 +1,10 @@
 [tool.poetry]
-name = "biodiversity_foundation_model"
+name = "src"
 version = "0.1.0"
 description = "This project has as its goal the development of a foundation model usable within the context of a Biodiversity Digital Twin."
 authors = ["Sebastian Gribincea <sebastian.gribincea@tno.nl>"]
 readme = "README.md"
-package-mode = false # for now, let's keep poetry just for the goal of requirements management
+# package-mode = false # for now, let's keep poetry just for the goal of requirements management
 
 [tool.poetry.dependencies]
 python = "^3.10"

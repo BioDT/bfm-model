@@ -9,39 +9,8 @@ import torch.nn.functional as F
 from einops import rearrange, repeat
 from einops.layers.torch import Reduce
 
-from src.perceiver_components.helpers import Attention, FeedForward, PreNorm
+from src.perceiver_components.helpers import Attention, FeedForward, PreNorm, cache_fn
 from src.perceiver_components.pos_encoder import build_position_encoding
-
-
-def cache_fn(f):
-    """
-    Caching decorator for functions.
-
-    This decorator implements a cache with weak references to allow garbage collection
-    of unused cached results. It also supports optional caching and custom cache keys.
-
-    :param f: Function to be cached
-
-    :return: Cached function
-    """
-    cache = weakref.WeakValueDictionary()
-
-    @wraps(f)
-    def cached_fn(*args, _cache=True, key=None, **kwargs):
-        if not _cache:
-            return f(*args, **kwargs)
-
-        if key is None:
-            key = (args, frozenset(kwargs.items()))
-
-        try:
-            return cache[key]
-        except KeyError:
-            result = f(*args, **kwargs)
-            cache[key] = result
-            return result
-
-    return cached_fn
 
 
 class Perceiver(nn.Module):
@@ -101,9 +70,8 @@ class Perceiver(nn.Module):
         self.use_fourier_encoding = use_fourier_encoding
 
         # Calculate total input dimension including Fourier features
-        fourier_channels = (
-            (num_input_axes * ((num_fourier_bands * 2) + 1)) if use_fourier_encoding else 0
-        )  # TODO: Add extra 'if's, since fourier encodings could be e.g., only sinusoidal, not-concatenated with original positions etc.
+        fourier_channels = self._calculate_fourier_channels()
+        # TODO: Add extra 'if's, since fourier encodings could be e.g., only sinusoidal, not-concatenated with original positions etc.
         total_input_dim = fourier_channels + input_channels
 
         # Initialize latent tokens (what makes the Perceiver special)
@@ -123,6 +91,15 @@ class Perceiver(nn.Module):
         self.layers = self._build_layers(num_layers, self_attentions_per_cross, weight_tie_layers)
         # Build the classifier head if desired
         self.classifier = self._build_classifier(latent_dimension, num_classes) if include_classifier_head else nn.Identity()
+
+    def _calculate_fourier_channels(self):
+        """
+        Calculates the number of Fourier channels based on the number of bands and input axes.
+
+        :return: Number of Fourier channels
+        """
+        # TODO: Make it more adapative for various position encoding types (+ various parameters for each type)
+        return (self.num_input_axes * ((self.num_fourier_bands * 2) + 1)) if self.use_fourier_encoding else 0
 
     @cache_fn
     def _get_cross_attention(self):

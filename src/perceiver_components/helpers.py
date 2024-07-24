@@ -1,7 +1,41 @@
+import weakref
+from functools import wraps
+
 import torch
 import torch.nn.functional as F
 from einops import rearrange, repeat
 from torch import einsum, nn
+
+
+def cache_fn(f):
+    """
+    Caching decorator for functions.
+
+    This decorator implements a cache with weak references to allow garbage collection
+    of unused cached results. It also supports optional caching and custom cache keys.
+
+    :param f: Function to be cached
+
+    :return: Cached function
+    """
+    cache = weakref.WeakValueDictionary()
+
+    @wraps(f)
+    def cached_fn(*args, _cache=True, key=None, **kwargs):
+        if not _cache:
+            return f(*args, **kwargs)
+
+        if key is None:
+            key = (args, frozenset(kwargs.items()))
+
+        try:
+            return cache[key]
+        except KeyError:
+            result = f(*args, **kwargs)
+            cache[key] = result
+            return result
+
+    return cached_fn
 
 
 class PreNorm(nn.Module):
@@ -58,7 +92,7 @@ class FeedForward(nn.Module):
         multiplier: int = 4,
         hidden_dimension: int = None,
         out_dimension: int = None,
-        actiavtion: nn.functional = F.gelu,
+        activation: nn.functional = F.gelu,
         dropout: float = 0.1,
         num_layers: int = 1,
     ):
@@ -73,7 +107,7 @@ class FeedForward(nn.Module):
             self.layers.append(
                 nn.Sequential(
                     nn.Linear(in_dimension, hidden_dimension * 2),
-                    _GLU(actiavtion),
+                    _GLU(activation),
                     nn.Linear(hidden_dimension, out_dimension),  # without the '*2' for because of _GLU splitting
                     nn.Dropout(dropout),
                 )
