@@ -14,9 +14,11 @@ def cache_fn(f):
     This decorator implements a cache with weak references to allow garbage collection
     of unused cached results. It also supports optional caching and custom cache keys.
 
-    :param f: Function to be cached
+    Args:
+        f: Function to be cached
 
-    :return: Cached function
+    Returns:
+        Wrapped version of the input function that implements caching
     """
     cache = weakref.WeakValueDictionary()
 
@@ -47,6 +49,14 @@ class PreNorm(nn.Module):
     """
 
     def __init__(self, dimension: int, function: nn.functional, context_dimension: int = None):
+        """
+        Initialize the PreNorm module.
+
+        Args:
+            dimension: The input dimensionality
+            function: The function to be wrapped
+            context_dimension: The context dimensionality (if None, no context normalization is applied)
+        """
         super().__init__()
         self.norm = nn.LayerNorm(dimension)
         self.function = function
@@ -68,11 +78,15 @@ class _GLU(nn.Module):
 
     Differs from the original GLU. It uses a variant described in https://arxiv.org/pdf/2002.05202.pdf,
     which is designed to provide an extra performance boost to the model, as compared to more tradition ReLU or GELU activations.
-
-    :param activation: The activation function to use (default: GELU).
     """
 
     def __init__(self, activation: nn.functional = F.gelu):
+        """
+        Initialize the _GLU module.
+
+        Args:
+            activation: The activation function to use (default
+        """
         super().__init__()
         self.activation = activation
 
@@ -124,26 +138,31 @@ class Attention(nn.Module):
     """
     Multi-head Attention module that cna be used for self-attention or cross-attention.
 
-    :param q_dim: Dimensionality of the query input
-    :param context_dim: Dimensionality of the key/value input (if None, defaults to `q_dim` for self-attention)
-    :param heads: Number of attention heads
-    :param head_dim: Dimensionality of each attention head
-    :param dropout: Dropout probability applied to the attention weights
+    Attributes:
+        scale: The scaling factor applied to the dot-product of queries and keys
+        heads: Number of attention heads
+        to_q: Linear layer for projecting the queries
+        to_k: Linear layer for projecting the keys
+        to_v: Linear layer for projecting the values
+        dropout: Dropout layer
+        to_out: Linear layer for projecting the concatenated attention heads back to the query dimension
 
-    :ivar scale: The scaling factor applied to the dot-product of queries and keys
-    :ivar heads: Number of attention heads
-    :ivar to_q: Linear layer for projecting the queries
-    :ivar to_k: Linear layer for projecting the keys
-    :ivar to_v: Linear layer for projecting the values
-    :ivar dropout: Dropout layer
-    :ivar to_out: Linear layer for projecting the concatenated attention heads back to the query dimension
-
-    .. note::
+    Note:
         To use this as self-attention, pass the same tensor as both `x` and `context` to an instance of this class.
         To use it as cross-attention, pass different tensors for `x` and `context`.
     """
 
     def __init__(self, q_dim: int, context_dim: int = None, heads: int = 8, head_dim: int = 64, dropout: float = 0.1):
+        """
+        Initialize the Attention module.
+
+        Args:
+            q_dim: Dimensionality of the query input
+            context_dim: Dimensionality of the key/value input (if None, defaults to `q_dim` for self-attention)
+            heads: Number of attention heads
+            head_dim: Dimensionality of each attention head
+            dropout: Dropout probability applied to the attention weights
+        """
         super().__init__()
         inner_dim = head_dim * heads
         context_dim = context_dim if context_dim is not None else q_dim
@@ -166,10 +185,12 @@ class Attention(nn.Module):
         Split the last dimension of the input tensor into (num_heads, head_dim)
         and permutes the dimensions to (batch_size, num_heads, seq_len, head_dim).
 
-        :param tensor: The input tensor of shape (batch_size, seq_len, dim)
-        :param num_heads: The number of attention heads
+        Args:
+            tensor: The input tensor of shape (batch_size, seq_len, dim)
+            num_heads: The number of attention heads
 
-        :return: The split tensor of shape (batch_size, num_heads, seq_len, head_dim)
+        Returns:
+            The split tensor of shape (batch_size, num_heads, seq_len, head_dim)
         """
         batch_size, seq_len, dim = tensor.shape
         head_dim = dim // num_heads
@@ -181,10 +202,12 @@ class Attention(nn.Module):
         """
         Reverse the _split_heads operation.
 
-        :param tensor: The input tensor of shape (batch_size, num_heads, seq_len, head_dim)
-        :param num_heads: The number of attention heads
+        Args:
+            tensor: The input tensor of shape (batch_size, num_heads, seq_len, head_dim)
+            num_heads: The number of attention heads
 
-        :return: The merged tensor of shape (batch_size, seq_len, num_heads * head_dim)
+        Returns:
+            The merged tensor of shape (batch_size, seq_len, num_heads * head_dim)
         """
         batch_size, _, seq_len, head_dim = tensor.shape
         return tensor.permute(0, 2, 1, 3).reshape(batch_size, seq_len, num_heads * head_dim)
@@ -193,11 +216,14 @@ class Attention(nn.Module):
         """
         Applies multi-head attention to the input.
 
-        :param x: Query input of shape (batch_size, seq_len_q, q_dim)
-        :param context: Key/Value input of shape (batch_size, seq_len_kv, context_dim)
-                        If None, use x for self-attention
-        :param mask: Attention mask of shape (batch_size, seq_len_q, seq_len_kv)
-        :return: Attention output of shape (batch_size, seq_len_q, q_dim)
+        Args:
+            x: Query input of shape (batch_size, seq_len_q, q_dim)
+            context: Key/Value input of shape (batch_size, seq_len_kv, context_dim)
+                     If None, use x for self-attention
+            mask: Attention mask of shape (batch_size, seq_len_q, seq_len_kv)
+
+        Returns:
+            Attention output of shape (batch_size, seq_len_q, q_dim)
         """
         h = self.heads
 
@@ -234,7 +260,3 @@ class Attention(nn.Module):
         # out shape: (batch_size, seq_len_q, inner_dim)
 
         return self.to_out(out)
-
-
-# TODO:
-# 1) Perceiver

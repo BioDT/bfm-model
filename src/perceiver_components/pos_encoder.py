@@ -14,8 +14,6 @@ class AbstractPositionEncoding(nn.Module):
     Abstract base class for position encodings.
 
     This class defines the interface for position encodings used in the Perceiver architecture.
-
-    :param nn.Module: PyTorch Module class
     """
 
     def forward(self, batch_size: int, pos: Optional[torch.Tensor] = None) -> torch.Tensor:
@@ -28,13 +26,17 @@ class TrainablePositionEncoding(AbstractPositionEncoding):
 
     This class implements trainable position encodings where the embeddings
     are learned during the training process.
-
-    :param index_dims: Dimensions of the input indices
-    :param num_channels: Number of channels per position encoding (size of each generated positional embeddings)
-    :param init_scale: Initial scale for a bit of randomness in the initialization of embeddings
     """
 
     def __init__(self, index_dims: Tuple[int], num_channels: int = 128, init_scale: float = 0.02):
+        """
+        Initialize the trainable position encoding.
+
+        Args:
+            index_dims: Dimensions of the input indices
+            num_channels: Number of channels per position encoding (size of each generated positional embeddings)
+            init_scale: Initial scale for a bit of randomness in the initialization of embeddings
+        """
         super(TrainablePositionEncoding, self).__init__()
         self.index_dims = index_dims
         self.num_channels = num_channels
@@ -54,9 +56,12 @@ class TrainablePositionEncoding(AbstractPositionEncoding):
         """
         Build linear positions for the given index dimensions.
 
-        :param index_dims: Dimensions of the input indices
-        :param output_range: Range of the output values
-        :return: Tensor containing linear positions
+        Args:
+            index_dims: Dimensions of the input indices
+            output_range: Range of the output values
+
+        Returns:
+            Tensor containing linear positions
         """
 
         def _linspace(n_xels_per_dim: int) -> torch.Tensor:
@@ -76,12 +81,6 @@ class FourierPositionEncoding(AbstractPositionEncoding):
     Fourier position encoding.
 
     This class implements a position encoding based on Fourier features.
-
-    :param index_dims: Dimensions of the input indices
-    :param num_bands: Number of frequency bands to construct the features from
-    :param max_freq: Maximum frequency of a band
-    :param concat_pos: Whether to concatenate the original position to the encoding
-    :param sine_only: Whether to use only sine functions (otherwise uses both sine and cosine)
     """
 
     def __init__(
@@ -92,6 +91,16 @@ class FourierPositionEncoding(AbstractPositionEncoding):
         concat_pos: bool = True,
         sine_only: bool = False,
     ):
+        """
+        Initialize the Fourier position encoding.
+
+        Args:
+            index_dims: Dimensions of the input indices
+            num_bands: Number of frequency bands to construct the features from
+            max_freq: Maximum frequency of a band
+            concat_pos: Whether to concatenate the original position to the encoding
+            sine_only: Whether to use only sine functions (otherwise uses both sine and cosine)
+        """
         super(FourierPositionEncoding, self).__init__()
         self.num_bands = num_bands
         self.max_freq = max_freq
@@ -119,9 +128,12 @@ class FourierPositionEncoding(AbstractPositionEncoding):
         """
         Build linear positions for the given index dimensions.
 
-        :param index_dims: Dimensions of the input indices
-        :param output_range: Range of the output values
-        :return: Tensor containing linear positions, shape: (*index_dims, len(index_dims))
+        Args:
+            index_dims: Dimensions of the input indices
+            output_range: Range of the output values
+
+        Returns:
+            Tensor containing linear positions, shape: (*index_dims, len(index_dims))
         """
 
         def _linspace(n_xels_per_dim: int) -> torch.Tensor:
@@ -144,13 +156,16 @@ class FourierPositionEncoding(AbstractPositionEncoding):
         """
         Generate Fourier features from the given positions.
 
-        :param pos: Tensor of input positions, of shape: (batch_size, *index_dims, len(index_dims))
-        :param num_bands: Number of frequency bands to construct the features from
-        :param batch_size: Number of samples in the batch
-        :param max_freq: Maximum frequency of a band
-        :param concat_pos: Whether to concatenate the original position to the encoding
-        :param sine_only: Whether to use only sine functions (otherwise uses both sine and cosine)
-        :return: Tensor of Fourier features, shape: (batch_size, *index_dims, num_bands * len(index_dims) * (1 if sine_only else 2) + (len(index_dims) if concat_pos else 0))
+        Args:
+            pos: Tensor of input positions, of shape: (batch_size, *index_dims, len(index_dims))
+            num_bands: Number of frequency bands to construct the features from
+            batch_size: Number of samples in the batch
+            max_freq: Maximum frequency of a band
+            concat_pos: Whether to concatenate the original position to the encoding
+            sine_only: Whether to use only sine functions (otherwise uses both sine and cosine)
+
+        Returns:
+            Tensor of Fourier features, shape: (batch_size, *index_dims, num_bands * len(index_dims) * (1 if sine_only else 2) + (len(index_dims) if concat_pos else 0))
         """
         # Shape: (batch_size, *index_dims, len(index_dims), 1)
         pos = pos.unsqueeze(-1)
@@ -204,12 +219,16 @@ class PositionEncodingProjector(AbstractPositionEncoding):
     """
     Projects a position encoding to a target size.
     This class takes a base position encoding and projects it to a specified output size.
-
-    :param output_size: Desired size of the output encoding
-    :param base_position_encoding: Base position encoding to be projected
     """
 
     def __init__(self, output_size: int, base_position_encoding: AbstractPositionEncoding):
+        """
+        Initialize the position encoding projector.
+
+        Args:
+            output_size: Desired size of the output encoding
+            base_position_encoding: Base position encoding to be projected
+        """
         super(PositionEncodingProjector, self).__init__()
         self.output_size = output_size
         self.base_position_encoding = base_position_encoding
@@ -235,13 +254,18 @@ def build_position_encoding(
     """
     Build a position encoding based on the specified type and parameters.
 
-    :param position_encoding_type: Type of position encoding ("trainable" or "fourier")
-    :param index_dims: Dimensions of the input indices
-    :param project_pos_dim: Dimension to project the position encoding to (-1 for no projection)
-    :param trainable_position_encoding_kwargs: Keyword arguments for trainable position encoding
-    :param fourier_position_encoding_kwargs: Keyword arguments for Fourier position encoding
-    :return: An instance of the specified position encoding
-    :raises ValueError: If an unknown position encoding type is specified
+    Args:
+        position_encoding_type: Type of position encoding ("trainable" or "fourier")
+        index_dims: Dimensions of the input indices
+        project_pos_dim: Dimension to project the position encoding to (-1 for no projection)
+        trainable_position_encoding_kwargs: Keyword arguments for trainable position encoding
+        fourier_position_encoding_kwargs: Keyword arguments for Fourier position encoding
+
+    Returns:
+        An instance of the specified position encoding
+
+    Raises:
+        ValueError: If an unknown position encoding type is specified
     """
     if position_encoding_type == "trainable":
         assert trainable_position_encoding_kwargs is not None

@@ -20,25 +20,6 @@ class Perceiver(nn.Module):
     This implementation is based on the paper "Perceiver: General Perception with Iterative Attention"
     by Jaegle et al. (2021). The Perceiver uses a combination of cross-attention and self-attention
     mechanisms to process high-dimensional inputs into a latent space, and then make predictions.
-
-    :param num_fourier_bands: Number of frequency bands for Fourier positional feature encodings
-    :param num_layers: Number of cross-attention/self-attention layer blocks
-    :param max_frequency: Maximum frequency for Fourier feature encoding
-    :param input_channels: Number of channels in the input data (default: 3 for RGB images)
-    :param num_input_axes: Number of axes in the input data (e.g., 2 for images, 3 for video)
-    :param num_latent_tokens: Number of latent tokens (called latents/centroids etc.) to use
-    :param latent_dimension: Dimensionality of latent tokens
-    :param cross_attention_heads: Number of heads in cross-attention layers
-    :param self_attention_heads: Number of heads in latent self-attention layers
-    :param cross_attention_head_dim: Dimension of each cross-attention head
-    :param self_attention_head_dim: Dimension of each latent self-attention head
-    :param num_classes: Number of output classes for classification
-    :param attention_dropout: Dropout rate for attention layers
-    :param feedforward_dropout: Dropout rate for feedforward layers
-    :param weight_tie_layers: Whether to tie weights across layers (optional)
-    :param use_fourier_encoding: Whether to use Fourier encoding for input data, using the given input axes
-    :param self_attentions_per_cross: Number of self-attention blocks per cross-attention
-    :param include_classifier_head: Whether to include a final classification head
     """
 
     def __init__(
@@ -62,6 +43,29 @@ class Perceiver(nn.Module):
         self_attentions_per_cross: int = 1,
         include_classifier_head: bool = True,
     ):
+        """
+        Initializes the Perceiver model.
+
+        Args:
+        num_fourier_bands: Number of frequency bands for Fourier positional feature encodings
+        num_layers: Number of cross-attention/self-attention layer blocks
+        max_frequency: Maximum frequency for Fourier feature encoding
+        input_channels: Number of channels in the input data (default: 3 for RGB images)
+        num_input_axes: Number of axes in the input data (e.g., 2 for images, 3 for video)
+        num_latent_tokens: Number of latent tokens (called latents/centroids etc.) to use
+        latent_dimension: Dimensionality of latent tokens
+        cross_attention_heads: Number of heads in cross-attention layers
+        self_attention_heads: Number of heads in latent self-attention layers
+        cross_attention_head_dim: Dimension of each cross-attention head
+        self_attention_head_dim: Dimension of each latent self-attention head
+        num_classes: Number of output classes for classification
+        attention_dropout: Dropout rate for attention layers
+        feedforward_dropout: Dropout rate for feedforward layers
+        weight_tie_layers: Whether to tie weights across layers (optional)
+        use_fourier_encoding: Whether to use Fourier encoding for input data, using the given input axes
+        self_attentions_per_cross: Number of self-attention blocks per cross-attention
+        include_classifier_head: Whether to include a final classification head
+        """
         super().__init__()
         # Input-related parameters
         self.num_input_axes = num_input_axes
@@ -96,7 +100,8 @@ class Perceiver(nn.Module):
         """
         Calculates the number of Fourier channels based on the number of bands and input axes.
 
-        :return: Number of Fourier channels
+        Returns:
+            Number of Fourier channels
         """
         # TODO: Make it more adapative for various position encoding types (+ various parameters for each type)
         return (self.num_input_axes * ((self.num_fourier_bands * 2) + 1)) if self.use_fourier_encoding else 0
@@ -106,7 +111,8 @@ class Perceiver(nn.Module):
         """
         Creates a cross-attention layer with normalization.
 
-        :return: PreNorm wrapped cross-attention layer
+        Returns:
+            PreNorm wrapped cross-attention layer
         """
         return PreNorm(
             self.latent_dimension,
@@ -125,7 +131,8 @@ class Perceiver(nn.Module):
         """
         Creates a feedforward layer for cross-attention with normalization.
 
-        :return: PreNorm wrapped feedforward layer
+        Returns:
+            PreNorm wrapped feedforward layer
         """
         return PreNorm(self.latent_dimension, FeedForward(self.latent_dimension, dropout=self.feedforward_dropout))
 
@@ -134,7 +141,8 @@ class Perceiver(nn.Module):
         """
         Creates a self-attention layer with normalization.
 
-        :return: PreNorm wrapped self-attention layer
+        Returns:
+            PreNorm wrapped self-attention layer
         """
         return PreNorm(
             self.latent_dimension,
@@ -151,7 +159,8 @@ class Perceiver(nn.Module):
         """
         Creates a feedforward layer for self-attention with normalization.
 
-        :return: PreNorm wrapped feedforward layer
+        Returns:
+            PreNorm wrapped feedforward layer
         """
         return PreNorm(self.latent_dimension, FeedForward(self.latent_dimension, dropout=self.feedforward_dropout))
 
@@ -159,11 +168,13 @@ class Perceiver(nn.Module):
         """
         Builds the main layers of the Perceiver model.
 
-        :param num_layers: Number of cross-attention/self-attention layer blocks
-        :param self_attentions_per_cross: Number of self-attention blocks per cross-attention
-        :param weight_tie_layers: Whether to tie weights across layers
+        Args:
+            num_layers: Number of cross-attention/self-attention layer blocks
+            self_attentions_per_cross: Number of self-attention blocks per cross-attention
+            weight_tie_layers: Whether to tie weights across layers
 
-        :return: ModuleList of model layers
+        Returns:
+            ModuleList of model layers
         """
         layers = nn.ModuleList([])
         for i in range(num_layers):
@@ -193,9 +204,12 @@ class Perceiver(nn.Module):
         """
         Builds the final classifier head.
 
-        :param latent_dimension: Dimensionality of latent tokens
-        :param num_classes: Number of output classes
-        :return: Sequential model for classification
+        Args:
+            latent_dimension: Dimensionality of latent tokens
+            num_classes: Number of output classes
+
+        Returns:
+            Sequential model for classification
         """
         return nn.Sequential(
             Reduce("b n d -> b d", "mean"), nn.LayerNorm(latent_dimension), nn.Linear(latent_dimension, num_classes)
@@ -205,11 +219,13 @@ class Perceiver(nn.Module):
         """
         Applies Fourier encoding to the input data.
 
-        :param input_data: Input tensor
-        :param concat_pos: Whether to concatenate the original positions with Fourier features
-        :param sine_only: Whether to use only sine Fourier features
+        Args:
+            input_data: Input tensor
+            concat_pos: Whether to concatenate the original positions with Fourier features
+            sine_only: Whether to use only sine Fourier features
 
-        :return: Fourier encoded input tensor
+        Returns:
+            Fourier encoded input tensor
         """
         if self.use_fourier_encoding:
             batch_size, *axes, _, device, dtype = *input_data.shape, input_data.device, input_data.dtype  # noqa
@@ -243,11 +259,13 @@ class Perceiver(nn.Module):
         """
         Forward pass of the Perceiver model.
 
-        :param input_data: Input tensor
-        :param attention_mask: Optional attention mask
-        :param return_embeddings: Whether to return embeddings instead of class logits
+        Args:
+            input_data: Input tensor
+            attention_mask: Optional attention mask
+            return_embeddings: Whether to return embeddings instead of class logits
 
-        :return: Output tensor (logits or embeddings)
+        Returns:
+            Output tensor (logits or embeddings)
         """
         # Apply Fourier encoding to input data (if enabled)
         encoded_input = self._apply_fourier_encode(input_data)
@@ -305,6 +323,4 @@ if __name__ == "__main__":
 
 # TODO:
 # 1) Improve flexibility with regards to applying positional encdoigns and passing parameters for these
-# 2) Add more examples and unit tests
-# 3) Add device/ dtype support
-# 4) (For later) Warmup learning rate scheduler?
+# 2) (For later) Warmup learning rate scheduler?
