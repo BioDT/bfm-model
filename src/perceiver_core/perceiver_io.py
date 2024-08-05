@@ -41,7 +41,8 @@ class PerceiverIO(nn.Module):
         num_fourier_bands: int = 64,
         max_frequency: int = 224,
         num_input_axes: int = 2,
-        position_encoding_type: bool = None,
+        position_encoding_type: bool = "fourier",
+        trainable_position_encoding_kwargs: Optional[dict] = None,  # Add this parameter
     ):
         """
         Initialize the PerceiverIO model.
@@ -98,14 +99,16 @@ class PerceiverIO(nn.Module):
 
         """
         super().__init__()
+        self.dim = dim
         self.sequence_dropout_prob = sequence_dropout_prob
         self.num_input_axes = num_input_axes
         self.max_frequency = max_frequency
         self.num_fourier_bands = num_fourier_bands
         self.position_encoding_type = position_encoding_type
+        self.trainable_position_encoding_kwargs = trainable_position_encoding_kwargs  # Add this line
 
         self.fourier_channels = self._calculate_fourier_channels()
-        self.total_input_dim = dim + self.fourier_channels
+        self.total_input_dim = self._calculate_total_input_dim()
 
         # Intiialize learnable latent tokens
         self.latents = nn.Parameter(torch.randn(num_latent_tokens, latent_dimension))
@@ -269,15 +272,6 @@ class PerceiverIO(nn.Module):
         return PreNorm(queries_dim, FeedForward(queries_dim))
 
     def _build_position_encoding(self, shape: Tuple[int, ...]) -> Optional[nn.Module]:
-        """
-        Build the position encoding module based on the specified type.
-
-        Args:
-            shape (Tuple[int, ...]): Shape of the input data.
-
-        Returns:
-            Optional[nn.Module]: Position encoding module if specified, else None.
-        """
         if self.position_encoding_type is None:
             return None
         elif self.position_encoding_type == "fourier":
@@ -291,23 +285,30 @@ class PerceiverIO(nn.Module):
                     "sine_only": False,
                 },
             )
+        elif self.position_encoding_type == "trainable":
+            return build_position_encoding(
+                position_encoding_type=self.position_encoding_type,
+                index_dims=shape[1:-1],
+                trainable_position_encoding_kwargs=self.trainable_position_encoding_kwargs,
+            )
+        else:
+            raise ValueError(f"Unsupported position encoding type: {self.position_encoding_type}")
 
     def _apply_position_encoding(self, input_data: torch.Tensor) -> torch.Tensor:
-        """
-        Apply positional encoding to the input data.
-
-        Args:
-            input_data (torch.Tensor): Input tensor.
-
-        Returns:
-            torch.Tensor: Input tensor with positional encoding applied.
-        """
         batch_size, *_, _, device = *input_data.shape, input_data.device
-        if self.position_encoding_type == "fourier":
+        if self.position_encoding_type in ["fourier", "trainable"]:
             pos_encoder = self._build_position_encoding(input_data.shape)
             pos_encoding = pos_encoder(batch_size=batch_size).to(device)
             input_data = torch.cat((input_data, pos_encoding), dim=-1)
         return input_data
+
+    def _calculate_total_input_dim(self) -> int:
+        if self.position_encoding_type == "fourier":
+            return self.dim + self.fourier_channels
+        elif self.position_encoding_type == "trainable":
+            return self.dim + self.trainable_position_encoding_kwargs.get("num_channels", 0)
+        else:
+            return self.dim
 
     def _process_latents(
         self, latent_representation: torch.Tensor, flattened_input: torch.Tensor, attention_mask: Optional[torch.Tensor]
@@ -456,7 +457,11 @@ if __name__ == "__main__":
         num_fourier_bands=64,
         max_frequency=224,
         num_input_axes=2,
-        position_encoding_type="fourier",
+        position_encoding_type="trainable",
+        trainable_position_encoding_kwargs={
+            "num_channels": 256,
+            "init_scale": 0.02,
+        },
     )
 
     #  dummy image-like input data
@@ -470,7 +475,7 @@ if __name__ == "__main__":
 
     # forward pass for image-like data
     output_img = model_img(data_img, attention_mask=mask_img, queries=queries_img)
-    print(f"Image-like output shape (with positional encoding): {output_img.shape}")
+    print(f"Image-like output shape (with trainable positional encoding): {output_img.shape}")
 
     # Test case 3: Language-like data with positional encoding
     model_lang_pos = PerceiverIO(
@@ -495,7 +500,7 @@ if __name__ == "__main__":
 
     # forward pass for language-like data with positional encoding
     output_lang_pos = model_lang_pos(data_lang, attention_mask=mask_lang, queries=queries_lang)
-    print(f"Language-like output shape (with positional encoding): {output_lang_pos.shape}")
+    print(f"Language-like output shape (with fourier positional encoding): {output_lang_pos.shape}")
 
     # just checking out the number of parameters for each of the models
     print("\nModel parameters:")
