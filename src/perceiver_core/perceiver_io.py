@@ -272,6 +272,16 @@ class PerceiverIO(nn.Module):
         return PreNorm(queries_dim, FeedForward(queries_dim))
 
     def _build_position_encoding(self, shape: Tuple[int, ...]) -> Optional[nn.Module]:
+        """
+        Build the position encoding module based on the specified type.
+
+        Args:
+            shape (Tuple[int, ...]): Shape of the input data.
+
+        Returns:
+            Optional[nn.Module]: Position encoding module if specified, else None.
+        """
+
         if self.position_encoding_type is None:
             return None
         elif self.position_encoding_type == "fourier":
