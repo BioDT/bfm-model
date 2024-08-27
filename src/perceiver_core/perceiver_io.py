@@ -42,7 +42,7 @@ class PerceiverIO(nn.Module):
         max_frequency: int = 224,
         num_input_axes: int = 2,
         position_encoding_type: bool = "fourier",
-        trainable_position_encoding_kwargs: Optional[dict] = None,  # Add this parameter
+        trainable_position_encoding_kwargs: Optional[dict] = None,
     ):
         """
         Initialize the PerceiverIO model.
@@ -105,7 +105,7 @@ class PerceiverIO(nn.Module):
         self.max_frequency = max_frequency
         self.num_fourier_bands = num_fourier_bands
         self.position_encoding_type = position_encoding_type
-        self.trainable_position_encoding_kwargs = trainable_position_encoding_kwargs  # Add this line
+        self.trainable_position_encoding_kwargs = trainable_position_encoding_kwargs
 
         self.fourier_channels = self._calculate_fourier_channels()
         self.total_input_dim = self._calculate_total_input_dim()
