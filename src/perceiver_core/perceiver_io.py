@@ -413,7 +413,7 @@ class PerceiverIO(nn.Module):
         return self._decode(latent_representation, queries)
 
 
-if __name__ == "__main__":
+def main():
     # Test case 1: Language-like data without positional encoding
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model_lang = PerceiverIO(
@@ -517,3 +517,7 @@ if __name__ == "__main__":
     print(f"Language model (no pos encoding): {sum(p.numel() for p in model_lang.parameters()):,}")
     print(f"Image model (with pos encoding): {sum(p.numel() for p in model_img.parameters()):,}")
     print(f"Language model (with pos encoding): {sum(p.numel() for p in model_lang_pos.parameters()):,}")
+
+
+if __name__ == "__main__":
+    main()

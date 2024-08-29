@@ -296,7 +296,7 @@ class Perceiver(nn.Module):
         return self.classifier(latent_representation)
 
 
-if __name__ == "__main__":
+def main():
     # Example usage:#
     ################
     model = Perceiver(
@@ -320,6 +320,10 @@ if __name__ == "__main__":
     print(f"Input shape: {input_data.shape}")
     print(f"Output shape: {output.shape}")
     print(f"Output: {output}")
+
+
+if __name__ == "__main__":
+    main()
 
 # TODO:
 # 1) Improve flexibility with regards to applying positional encdoigns and passing parameters for these

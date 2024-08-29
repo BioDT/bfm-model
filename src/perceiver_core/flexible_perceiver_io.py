@@ -2,6 +2,7 @@ from typing import Dict, Optional, Tuple
 
 import torch
 import torch.nn as nn
+import torch.optim as optim
 from einops import repeat
 
 from src.perceiver_components.helpers_io import (
@@ -356,11 +357,7 @@ class FlexiblePerceiverIO(nn.Module):
         return self._decode(latent_representation, queries)
 
 
-if __name__ == "__main__":
-    import torch
-    import torch.nn as nn
-    import torch.optim as optim
-
+def main():
     # Define input configurations
     input_configs = {
         "image": {"dim": 2048, "max_len": 196},  # e.g., 14x14 grid of 2048-dim features
@@ -455,3 +452,7 @@ if __name__ == "__main__":
         print(f"Predicted class: {predicted_class.item()}")
 
     print("Training and inference completed, yEeEeEeEe-HaAaAaW!")
+
+
+if __name__ == "__main__":
+    main()

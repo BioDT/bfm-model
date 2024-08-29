@@ -282,7 +282,7 @@ def build_position_encoding(
     return output_pos_enc
 
 
-if __name__ == "__main__":
+def main():
     # Example usage fourier:
     pos_enc = build_position_encoding(
         position_encoding_type="fourier",
@@ -296,3 +296,8 @@ if __name__ == "__main__":
     trainable_pos_enc = TrainablePositionEncoding(index_dims=(4, 4), num_channels=14)
     # Output shape: (23, 4, 4, 14)
     pos = trainable_pos_enc(batch_size=23)
+    print(pos.shape)
+
+
+if __name__ == "__main__":
+    main()
