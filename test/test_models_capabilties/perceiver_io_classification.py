@@ -129,8 +129,6 @@ class QueryPerceiverIOClassifier(BasePerceiverIOClassifier):
         batch_size = x.shape[0]
         queries = self.class_queries.unsqueeze(0).expand(batch_size, -1, -1)
         output = self.perceiver_io(x, queries=queries)
-        output_processor = self.output_processor(output).squeeze(-1)
-        print("Shape:", output_processor.shape)
         return self.output_processor(output).squeeze(-1)
 
 
