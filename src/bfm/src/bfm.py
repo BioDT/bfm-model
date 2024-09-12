@@ -59,7 +59,12 @@ def main():
     batch = Batch(surf_vars=surf_vars, static_vars=static_vars, atmos_vars=atmos_vars, metadata=metadata)
 
     model = BFM(
-        surf_vars=tuple(surf_vars.keys()), static_vars=tuple(static_vars.keys()), atmos_vars=tuple(atmos_vars.keys()), H=H, W=W
+        surf_vars=tuple(surf_vars.keys()),
+        static_vars=tuple(static_vars.keys()),
+        atmos_vars=tuple(atmos_vars.keys()),
+        H=H,
+        W=W,
+        atmos_levels=atmos_levels,
     )
 
     # set a lead time

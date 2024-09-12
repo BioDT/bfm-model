@@ -2,6 +2,7 @@ import math
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from einops import rearrange, repeat
 
 from src.perceiver_components.helpers_io import dropout_seq
@@ -15,6 +16,7 @@ class BFMEncoder(nn.Module):
         surf_vars: tuple[str, ...],
         static_vars: tuple[str, ...] | None,
         atmos_vars: tuple[str, ...],
+        atmos_levels: list[int] | None = None,
         patch_size: int = 4,
         latent_levels: int = 8,
         embed_dim: int = 1024,
@@ -39,6 +41,10 @@ class BFMEncoder(nn.Module):
         self.max_frequency = max_frequency
         self.num_fourier_bands = num_fourier_bands
         self.position_encoding_type = position_encoding_type
+
+        self.surf_vars = surf_vars
+        self.static_vars = static_vars
+        self.atmos_vars = atmos_vars
 
         surf_vars = surf_vars + static_vars if static_vars is not None else surf_vars
         self.surf_var_map = {v: i for i, v in enumerate(surf_vars)}
@@ -73,7 +79,7 @@ class BFMEncoder(nn.Module):
             latent_attention_head_dim=head_dim,
             num_fourier_bands=num_fourier_bands,
             max_frequency=max_frequency,
-            num_input_axes=1,
+            num_input_axes=2,
             position_encoding_type=position_encoding_type,
         )
 
@@ -125,141 +131,100 @@ class BFMEncoder(nn.Module):
         return input_data
 
     def forward(self, batch, lead_time):
-        surf_vars = tuple(batch.surf_vars.keys())
-        static_vars = tuple(batch.static_vars.keys())
-        atmos_vars = tuple(batch.atmos_vars.keys())  # noqa
+        surf_vars = self.surf_vars
+        static_vars = self.static_vars
+        atmos_vars = self.atmos_vars
         atmos_levels = batch.metadata.atmos_levels
-        # print(f"Surface variables: {surf_vars}")
-        # print(f"Static variables: {static_vars}")
-        # print(f"Atmospheric variables: {atmos_vars}")
-        # print(f"Atmospheric levels: {atmos_levels}")
+        print(f"Surface variables: {surf_vars}")
+        print(f"Static variables: {static_vars}")
+        print(f"Atmospheric variables: {atmos_vars}")
+        print(f"Atmospheric levels: {atmos_levels}")
 
         x_surf = torch.stack(tuple(batch.surf_vars.values()), dim=2)
-        x_static = torch.stack(tuple(batch.static_vars.values()), dim=2)
         x_atmos = torch.stack(tuple(batch.atmos_vars.values()), dim=2)
-        # print(f"x_surf shape: {x_surf.shape}")
-        # print(f"x_static shape: {x_static.shape}")
-        # print(f"x_atmos shape: {x_atmos.shape}")
+        print(f"x_surf shape: {x_surf.shape}")
+        print(f"x_atmos shape: {x_atmos.shape}")
 
         B, T, _, C, H, W = x_atmos.size()
-        # print(f"Batch size (B): {B}, Time steps (T): {T}, Atmos levels (C): {C}, Height (H): {H}, Width (W): {W}")
-        assert x_surf.shape[:2] == (B, T), f"Expected shape {(B, T)}, got {x_surf.shape[:2]}."
+        print(f"Batch size (B): {B}, Time steps (T): {T}, Atmos levels (C): {C}, Height (H): {H}, Width (W): {W}")
 
         if static_vars:
-            # print("Processing static variables")
-            x_static = x_static.permute(2, 0, 1).unsqueeze(0).unsqueeze(0)
-            x_static = x_static.expand(B, T, -1, H, W)
-            # print(f"x_static shape after expand: {x_static.shape}")
-            # print(f"x_surf shape before cat: {x_surf.shape}")
+            print("Processing static variables")
+            x_static = torch.stack(tuple(batch.static_vars.values()), dim=0)
+            x_static = x_static.unsqueeze(0).unsqueeze(0).expand(B, T, -1, H, W)
             x_surf = torch.cat((x_surf, x_static), dim=2)
-            # print(f"x_surf shape after cat: {x_surf.shape}")
-            surf_vars = surf_vars + static_vars
+            print(f"x_surf shape after adding static vars: {x_surf.shape}")
 
         lat, lon = batch.metadata.lat, batch.metadata.lon
-        # print(f"lat shape: {lat.shape}, lon shape: {lon.shape}")
-        # print(f"lat dtype: {lat.dtype}, lon dtype: {lon.dtype}")
-        assert lat.dtype in [torch.float32, torch.float64], f"Latitude num. unstable: {lat.dtype}."
-        assert lon.dtype in [torch.float32, torch.float64], f"Longitude num. unstable: {lon.dtype}."
-        assert lat.shape[0] == H and lon.shape[-1] == W
+        print(f"lat shape: {lat.shape}, lon shape: {lon.shape}")
 
-        # print(f"x_surf shape before patching: {x_surf.shape}")
+        # Create 2D grid of lat and lon
+        lat_grid, lon_grid = torch.meshgrid(lat, lon, indexing="ij")
+        print(f"Lat grid shape: {lat_grid.shape}, Lon grid shape: {lon_grid.shape}")
+        pos_input = torch.stack((lat_grid, lon_grid), dim=-1)
+        print(f"Position input shape: {pos_input.shape}")
+
+        # Add position encoding
+        pos_encode = self._apply_position_encoding(pos_input)
+        pos_encode = self.pos_embed(pos_encode)
+        pos_encode = pos_encode.view(1, H * W, -1)
+        pos_encode = F.interpolate(
+            pos_encode.transpose(1, 2), size=(H // self.patch_size) * (W // self.patch_size), mode="linear", align_corners=False
+        )
+        pos_encode = pos_encode.transpose(1, 2)
+        print(f"Position encoding shape: {pos_encode.shape}")
+
+        # Process surface variables
         x_surf = rearrange(x_surf, "b t v (h p1) (w p2) -> (b h w) (v t p1 p2)", p1=self.patch_size, p2=self.patch_size)
-        # print(f"x_surf shape after patching: {x_surf.shape}")
         x_surf = self.surf_token_embeds(x_surf)
-        # print(f"x_surf shape after token embedding: {x_surf.shape}")
         x_surf = rearrange(x_surf, "(b h w) d -> b (h w) d", h=H // self.patch_size, w=W // self.patch_size)
-        # print(f"x_surf shape after final rearrange: {x_surf.shape}")
-
-        # print(f"x_atmos shape before patching: {x_atmos.shape}")
-        x_atmos = rearrange(x_atmos, "b t v c (h p1) (w p2) -> (b c h w) (v t p1 p2)", p1=self.patch_size, p2=self.patch_size)
-        # print(f"x_atmos shape after patching: {x_atmos.shape}")
-        x_atmos = self.atmos_token_embeds(x_atmos)
-        # print(f"x_atmos shape after token embedding: {x_atmos.shape}")
-        x_atmos = rearrange(x_atmos, "(b c h w) d -> b c (h w) d", b=B, c=C, h=H // self.patch_size, w=W // self.patch_size)
-        # print(f"x_atmos shape after final rearrange: {x_atmos.shape}")
-
         x_surf = x_surf + self.surf_level_encoding[None, None, :]
-        # print(f"x_surf shape after adding level encoding: {x_surf.shape}")
+        print(f"x_surf shape after processing: {x_surf.shape}")
 
+        # Process atmospheric variables
+        x_atmos = rearrange(x_atmos, "b t v c (h p1) (w p2) -> (b c h w) (v t p1 p2)", p1=self.patch_size, p2=self.patch_size)
+        x_atmos = self.atmos_token_embeds(x_atmos)
+        x_atmos = rearrange(x_atmos, "(b c h w) d -> b c (h w) d", b=B, c=C, h=H // self.patch_size, w=W // self.patch_size)
+
+        # Add atmospheric level embeddings
         atmos_levels_tensor = torch.tensor(atmos_levels, device=x_atmos.device)
-        # print(f"atmos_levels_tensor shape: {atmos_levels_tensor.shape}")
         atmos_levels_encode = self._apply_position_encoding(atmos_levels_tensor.unsqueeze(0).unsqueeze(-1))
-        # print(f"atmos_levels_encode shape: {atmos_levels_encode.shape}")
-        # Remove the last dimension to match the expected input size
         atmos_levels_encode = atmos_levels_encode[..., :-1]
-        # print(f"atmos_levels_encode shape after adjustment: {atmos_levels_encode.shape}")
         atmos_levels_embed = self.atmos_levels_embed(atmos_levels_encode.squeeze(0))
-        # print(f"atmos_levels_embed shape: {atmos_levels_embed.shape}")
         atmos_levels_embed = atmos_levels_embed.unsqueeze(0).unsqueeze(2).expand_as(x_atmos)
-        # print(f"atmos_levels_embed shape after expand: {atmos_levels_embed.shape}")
         x_atmos = x_atmos + atmos_levels_embed
-        # print(f"x_atmos shape after adding level embedding: {x_atmos.shape}")
+        print(f"x_atmos shape after processing: {x_atmos.shape}")
 
+        # Combine surface and atmospheric data
         x = torch.cat((x_surf.unsqueeze(1), x_atmos), dim=1)
-        # print(f"x shape after concatenating x_surf and x_atmos: {x.shape}")
+        print(f"Combined x shape: {x.shape}")
 
-        lat_2d = lat.unsqueeze(1).expand(-1, W)
-        lon_2d = lon.unsqueeze(0).expand(H, -1)
-        # print(f"lat_2d shape: {lat_2d.shape}, lon_2d shape: {lon_2d.shape}")
-        pos_encode = self._apply_position_encoding(torch.stack((lat_2d, lon_2d), dim=-1))
-        # print(f"pos_encode shape: {pos_encode.shape}")
-        pos_encode = self.pos_embed(pos_encode.reshape(-1, pos_encode.size(-1)))
-        # print(f"pos_encode shape after linear layer: {pos_encode.shape}")
-        pos_encode = pos_encode.view(H, W, -1).permute(2, 0, 1).unsqueeze(0)
-        pos_encode = pos_encode[:, :, :: self.patch_size, :: self.patch_size]
-        pos_encode = pos_encode.expand(B, -1, H // self.patch_size, W // self.patch_size)
-        # print(f"pos_encode shape after expand: {pos_encode.shape}")
-        pos_encode = pos_encode.permute(0, 2, 3, 1).reshape(B, -1, self.embed_dim)
-        pos_encode = pos_encode.unsqueeze(1).expand(-1, x.size(1), -1, -1)
-        # print(f"pos_encode shape after reshape: {pos_encode.shape}")
+        # Add position encoding
+        x = x + pos_encode.unsqueeze(1)
 
-        x = x + pos_encode
-        # print(f"x shape after adding position encoding: {x.shape}")
-        x = x.reshape(B, -1, self.embed_dim)
-        # print(f"x shape after reshaping: {x.shape}")
-
+        # Add lead time embedding
         lead_hours = lead_time.total_seconds() / 3600
         lead_times = lead_hours * torch.ones(B, dtype=x.dtype, device=x.device)
-        # print(f"lead_times shape: {lead_times.shape}")
         lead_time_encode = self._time_encoding(lead_times)
-        # print(f"lead_time_encode shape: {lead_time_encode.shape}")
         lead_time_emb = self.lead_time_embed(lead_time_encode)
-        # print(f"lead_time_emb shape: {lead_time_emb.shape}")
-        x = x + lead_time_emb.unsqueeze(1)
-        # print(f"x shape after adding lead time embedding: {x.shape}")
+        x = x + lead_time_emb.unsqueeze(1).unsqueeze(1)
 
+        # Add absolute time embedding
         absolute_times = torch.tensor(
             [[t.timestamp() / 3600 for t in time_list] for time_list in batch.metadata.time], dtype=torch.float32, device=x.device
         )
-        # print(f"absolute_times shape: {absolute_times.shape}")
         absolute_time_encode = self._time_encoding(absolute_times)
-        # print(f"absolute_time_encode shape: {absolute_time_encode.shape}")
         absolute_time_embed = self.absolute_time_embed(absolute_time_encode)
-        # print(f"absolute_time_embed shape: {absolute_time_embed.shape}")
-        # print(f"x shape before adding time embed: {x.shape}")
+        absolute_time_embed = absolute_time_embed.mean(dim=1, keepdim=True)
+        x = x + absolute_time_embed.unsqueeze(1)
 
-        B, N, D = x.shape
-        T = absolute_time_embed.shape[1]
-
-        absolute_time_embed = absolute_time_embed.unsqueeze(1).expand(B, N, T, D)
-        # print(f"absolute_time_embed shape after expansion: {absolute_time_embed.shape}")
-
-        x = x.unsqueeze(2).expand(B, N, T, D)
-        # print(f"x shape after expansion: {x.shape}")
-
-        x = x + absolute_time_embed
-        # print(f"x shape after adding absolute time embedding: {x.shape}")
-
-        x = x.mean(dim=2)  # You can also use .max(dim=2)[0] if you prefer max pooling
-        # print(f"x shape after reshaping: {x.shape}")
+        print(f"x shape after adding all embeddings: {x.shape}")
 
         x = self.pos_drop(x)
-        # print(f"x shape after position dropout: {x.shape}")
 
         latents = self.atmos_latents.unsqueeze(0).expand(B, -1, -1)
-        # print(f"latents shape: {latents.shape}")
         x = self.perceiver_io(x, queries=latents)
-        # print(f"x shape after Perceiver IO: {x.shape}")
+        print(f"Final output shape: {x.shape}")
 
         return x
 
@@ -280,21 +245,25 @@ class BFMEncoder(nn.Module):
 
 
 def main():
-    # dummy data
     from collections import namedtuple
     from datetime import datetime, timedelta
 
     Batch = namedtuple("Batch", ["surf_vars", "static_vars", "atmos_vars", "metadata"])
     Metadata = namedtuple("Metadata", ["lat", "lon", "time", "atmos_levels"])
 
-    B, T, V_s, V_a, C, H, W = 2, 2, 3, 5, 13, 32, 64
+    B, T, V_s, V_a, C, H, W = 32, 2, 3, 5, 13, 32, 64
     surf_vars = {f"surf_var_{i}": torch.randn(B, T, H, W) for i in range(V_s)}
     static_vars = {f"static_var_{i}": torch.randn(H, W) for i in range(2)}
     atmos_vars = {f"atmos_var_{i}": torch.randn(B, T, C, H, W) for i in range(V_a)}
 
+    print("Input shapes:")
+    print(f"surf_vars: {', '.join([f'{k}: {v.shape}' for k, v in surf_vars.items()])}")
+    print(f"static_vars: {', '.join([f'{k}: {v.shape}' for k, v in static_vars.items()])}")
+    print(f"atmos_vars: {', '.join([f'{k}: {v.shape}' for k, v in atmos_vars.items()])}")
+
     lat = torch.linspace(-90, 90, H)
     lon = torch.linspace(0, 360, W)
-    time = [datetime.now() + timedelta(hours=i) for i in range(T)]
+    time = [[datetime.now() + timedelta(hours=i) for i in range(T)] for _ in range(B)]
     atmos_levels = [1000, 925, 850, 700, 600, 500, 400, 300, 250, 200, 150, 100, 50]
 
     metadata = Metadata(lat=lat, lon=lon, time=time, atmos_levels=atmos_levels)

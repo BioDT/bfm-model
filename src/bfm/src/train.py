@@ -128,6 +128,7 @@ def main():
 
     dataset = AuroraDataset(B, T, V_s, V_a, C, H, W)
     dataloader = DataLoader(dataset, batch_size=1, num_workers=4, collate_fn=custom_collate)
+    atmos_levels = [1000, 925, 850, 700, 600, 500, 400, 300, 250, 200, 150, 100, 50]
 
     model = BFM(
         surf_vars=tuple(f"surf_var_{i}" for i in range(V_s)),
@@ -137,6 +138,7 @@ def main():
         W=W,
         embed_dim=embed_dim,
         num_latent_tokens=num_latent_tokens,
+        atmos_levels=atmos_levels,
     )
 
     trainer = BFMTrainer(model)
