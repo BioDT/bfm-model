@@ -1,8 +1,8 @@
 [tool.poetry]
 name = "src"
-version = "0.1.0"
-description = "This project has as its goal the development of a foundation model usable within the context of a Biodiversity Digital Twin."
-authors = ["Sebastian Gribincea <sebastian.gribincea@tno.nl>"]
+version = "0.2.0"
+description = "First steps towards developing an Artificial Intelligence Foundation Model for Biodiversity research and conservation."
+authors = ["Sebastian Gribincea <sebastian.gribincea@tno.nl>", "Athanasios Trantas <thanasis.trantas@tno.nl>"]
 readme = "README.md"
 # package-mode = false # for now, let's keep poetry just for the goal of requirements management
 
@@ -12,6 +12,10 @@ numpy = "^1.26.4"
 torch = "^2.3.1"
 torchvision = "^0.18.1"
 torchaudio = "^2.3.1"
+mlflow = "^2.16.2"
+einops = "^0.8.0"
+hydra-core = "^1.3.2"
+lightning = "^2.4.0"
 
 [tool.poetry.dev-dependencies]
 pytorch-lightning = "^1.6.0"

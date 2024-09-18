@@ -136,7 +136,7 @@ class FeedForward(nn.Module):
 
 class Attention(nn.Module):
     """
-    Multi-head Attention module that cna be used for self-attention or cross-attention.
+    Multi-head Attention module that can be used for self-attention or cross-attention.
 
     Attributes:
         scale: The scaling factor applied to the dot-product of queries and keys

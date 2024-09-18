@@ -1,7 +1,13 @@
 from collections import namedtuple
 from datetime import datetime, timedelta
 
-import pytorch_lightning as pl
+from omegaconf import DictConfig, OmegaConf
+import hydra
+
+import lightning as L
+from lightning.pytorch import LightningModule
+from lightning.pytorch.loggers import MLFlowLogger
+
 import torch
 from torch.utils.data import DataLoader, Dataset
 from torch.utils.data._utils.collate import default_collate
@@ -67,7 +73,7 @@ class AuroraDataset(Dataset):
         )
 
 
-class BFMTrainer(pl.LightningModule):
+class BFMTrainer(LightningModule):
     def __init__(self, model, learning_rate=5e-4, weight_decay=5e-6):
         super().__init__()
         self.model = model
@@ -119,37 +125,44 @@ class BFMTrainer(pl.LightningModule):
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=150000, eta_min=self.learning_rate / 10)
         return [optimizer], [scheduler]
 
+@hydra.main(version_base=None, config_path="configs", config_name="test_config")
+def main(cfg: DictConfig):
+    # Setup config
+    print(OmegaConf.to_yaml(cfg))
+    # hyperparams -> moved to config file
+    # TODO Adapt this way of handling parameters
+    # B, T, V_s, V_a, C, H, W = 32, 2, 3, 5, 13, 32, 64
+    # embed_dim = 1024
+    # num_latent_tokens = 7
 
-def main():
-    # hyperparams
-    B, T, V_s, V_a, C, H, W = 32, 2, 3, 5, 13, 32, 64
-    embed_dim = 1024
-    num_latent_tokens = 7
-
-    dataset = AuroraDataset(B, T, V_s, V_a, C, H, W)
-    dataloader = DataLoader(dataset, batch_size=1, num_workers=4, collate_fn=custom_collate)
+    dataset = AuroraDataset(cfg.model.B, cfg.model.T, cfg.model.V_s, cfg.model.V_a, cfg.model.C, cfg.model.H, cfg.model.W)
+    dataloader = DataLoader(dataset, batch_size=cfg.training.batch_size, num_workers=cfg.training.workers, collate_fn=custom_collate)
     atmos_levels = [1000, 925, 850, 700, 600, 500, 400, 300, 250, 200, 150, 100, 50]
 
     model = BFM(
-        surf_vars=tuple(f"surf_var_{i}" for i in range(V_s)),
+        surf_vars=tuple(f"surf_var_{i}" for i in range(cfg.model.V_s)),
         static_vars=tuple(f"static_var_{i}" for i in range(2)),
-        atmos_vars=tuple(f"atmos_var_{i}" for i in range(V_a)),
-        H=H,
-        W=W,
-        embed_dim=embed_dim,
-        num_latent_tokens=num_latent_tokens,
+        atmos_vars=tuple(f"atmos_var_{i}" for i in range(cfg.model.V_a)),
+        H=cfg.model.H,
+        W=cfg.model.W,
+        embed_dim=cfg.model.embed_dim,
+        num_latent_tokens=cfg.model.num_latent_tokens,
         atmos_levels=atmos_levels,
     )
 
+    # Setup logger
+    remote_server_uri = "http://127.0.0.1:8081"
+    mlf_logger = MLFlowLogger(experiment_name="lightning_logs", tracking_uri=remote_server_uri)
     trainer = BFMTrainer(model)
 
-    pl_trainer = pl.Trainer(
-        max_epochs=10,
+    pl_trainer = L.Trainer(
+        max_epochs=2,
         accelerator="gpu" if torch.cuda.is_available() else "cpu",
         devices=1,
         precision="bf16",
         gradient_clip_val=1.0,
         log_every_n_steps=1,
+        logger=mlf_logger,
     )
 
     pl_trainer.fit(trainer, train_dataloaders=dataloader)

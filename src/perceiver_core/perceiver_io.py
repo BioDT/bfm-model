@@ -54,7 +54,7 @@ class PerceiverIO(nn.Module):
             dim (int): Dimension of the input features.
                        (e.g., for RGB images, this would be 3, for text, this would be the embedding dimension of the words, such as 512).
 
-            queries_dim (int): Dimension of the decoder queries. DEtermines the size of the features used to quey the latent representation during decoding.
+            queries_dim (int): Dimension of the decoder queries. Determines the size of the features used to quey the latent representation during decoding.
 
             logits_dimension (Optional[int]): Dimension of the output logits. For classification tasks, this would be the number of classes.
                                               If None, no final projection is applied and the output is the latent representation that can be combined with the custom query.
@@ -92,7 +92,7 @@ class PerceiverIO(nn.Module):
                                    This determins the highest frequency componenet in the positional encoding.
 
             num_input_axes (int): Number of axes in the input data.
-                                  For examples: 1 for text (sequence length), 2 for images (height, width), 3 for videos (height, width, time).
+                                  For example: 1 for text (sequence length), 2 for images (height, width), 3 for videos (height, width, time).
 
             position_encoding_type (Optional[str]): Type of positional encoding to use.
                                                     If None, no positional encoding is applied. Current implementation supports 'fourier'.
