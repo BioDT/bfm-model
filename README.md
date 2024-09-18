@@ -39,10 +39,22 @@ poetry add <dependency>
 poetry export -f requirements.txt --without-hases > requirements.txt
 ```
 
+## Run experiments
+
+Start an MLFLow server
+```
+mlflow server --host 127.0.0.1 --port 8081
+```
+On another terminal, run the train recipe
+```
+python src/bfm/src/train.py
+```
+
 ## TODOs
 
-- Export new requirements.txt
-- Make the output folder system coherent
-- Add more logging points
-- Add checkpointing 
-- Test multi-node, multi-gpu runs
+- [ ] Export new requirements.txt
+- [ ] Make the output folder system coherent
+- [ ] Add more logging points
+- [ ] Add checkpointing 
+- [ ] Test multi-node, multi-gpu runs
+- [ ] Cleanup, remove prints etc.

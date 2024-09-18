@@ -9,9 +9,18 @@ model:
   embed_dim: 1024
   num_latent_tokens: 7
 
+data:
+  atmos_levels: [1000, 925, 850, 700, 600, 500, 400, 300, 250, 200, 150, 100, 50]
+
 training:
   batch_size: 1
   workers: 4
+  epochs: 20
+  accelerator: auto
+  precision: bf16
+  devices: 1
+  gradient_clip: 1.0
+  log_steps: 10
 
 general:
   do_eval: True
