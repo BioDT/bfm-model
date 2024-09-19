@@ -167,3 +167,7 @@ src/perceiver_components/scrap/
 # Experiment outputs
 outputs
 mlruns
+
+# Log-related (e.g., lightning, surf etc.)
+lightning_logs/
+slurm-*

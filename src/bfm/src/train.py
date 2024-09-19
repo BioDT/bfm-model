@@ -154,7 +154,7 @@ def main(cfg: DictConfig):
 
     # Setup logger
     current_time = datetime.now()
-    remote_server_uri = f"http://127.0.0.1:{cfg.mlflow.port}"
+    remote_server_uri = f"http://0.0.0.0:{cfg.mlflow.port}"
     mlf_logger = MLFlowLogger(experiment_name="BFM_logs", run_name=f"BFM_{current_time}", tracking_uri=remote_server_uri)
     # Setup trainer
     trainer = BFMTrainer(model)

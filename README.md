@@ -41,12 +41,41 @@ Start an MLFLow server
 ```bash
 # change here port if you get [Errno 98] Address already in use
 # also change port in the src/bfm/src/configs
-mlflow server --host 127.0.0.1 --port 8081
+# & - optional, for interactive mode
+mlflow server --host 0.0.0.0 --port 8081 [&] 
 ```
-On another terminal, run the train recipe
+On another terminal (if not running in interactive mode), run the train recipe
 ```
 python src/bfm/src/train.py
 ```
+
+## Connection
+
+```bash
+# start an interactive job
+salloc -p gpu_h100 --gpus-per-node=1 -t 01:00:00
+# ssh to the node with port forwarding
+# ssh gcn140
+
+
+# Forwarding the node mlflow instance to the local machine
+# N.B.: Make sure to specify the host on the local machine, as specifying just the port might results in "Permission denied" errors.
+# N.B.2.: If specifying the host 0.0.0.0 on the local machine, access by using `localhost:<port_id>`.
+ssh -i .ssh/snelius_key -L 0.0.0.0:<desired_port_on_local>:gcn<node_id>:<mlflow_port_on_remote> <user_name>@snellius.surf.nl
+
+```
+
+## Running via scheduled job
+
+```bash
+sbatch job.sh
+```
+
+Then you can observe mlflow with the same bind command:
+```bash
+ssh -i .ssh/snelius_key -L 0.0.0.0:<desired_port_on_local>:gcn<node_id>:<mlflow_port_on_remote> <user_name>@snellius.surf.nl
+```
+
 
 ## TODOs
 
