@@ -24,3 +24,6 @@ training:
 
 general:
   do_eval: True
+
+mlflow:
+  port: 8081 # change here port if you get [Errno 98] Address already in use

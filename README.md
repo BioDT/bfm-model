@@ -42,7 +42,9 @@ poetry export -f requirements.txt --without-hases > requirements.txt
 ## Run experiments
 
 Start an MLFLow server
-```
+```bash
+# change here port if you get [Errno 98] Address already in use
+# also change port in the src/bfm/src/configs
 mlflow server --host 127.0.0.1 --port 8081
 ```
 On another terminal, run the train recipe
