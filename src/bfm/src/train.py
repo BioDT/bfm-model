@@ -1,14 +1,12 @@
 from collections import namedtuple
 from datetime import datetime, timedelta
 
-from omegaconf import DictConfig, OmegaConf
 import hydra
-
 import lightning as L
+import torch
 from lightning.pytorch import LightningModule
 from lightning.pytorch.loggers import MLFlowLogger
-
-import torch
+from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader, Dataset
 from torch.utils.data._utils.collate import default_collate
 
@@ -125,6 +123,7 @@ class BFMTrainer(LightningModule):
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=150000, eta_min=self.learning_rate / 10)
         return [optimizer], [scheduler]
 
+
 @hydra.main(version_base=None, config_path="configs", config_name="test_config")
 def main(cfg: DictConfig):
     # Setup config
@@ -136,7 +135,9 @@ def main(cfg: DictConfig):
     # num_latent_tokens = 7
 
     dataset = AuroraDataset(cfg.model.B, cfg.model.T, cfg.model.V_s, cfg.model.V_a, cfg.model.C, cfg.model.H, cfg.model.W)
-    dataloader = DataLoader(dataset, batch_size=cfg.training.batch_size, num_workers=cfg.training.workers, collate_fn=custom_collate)
+    dataloader = DataLoader(
+        dataset, batch_size=cfg.training.batch_size, num_workers=cfg.training.workers, collate_fn=custom_collate
+    )
     atmos_levels = [1000, 925, 850, 700, 600, 500, 400, 300, 250, 200, 150, 100, 50]
 
     model = BFM(
@@ -150,16 +151,16 @@ def main(cfg: DictConfig):
         atmos_levels=atmos_levels,
     )
 
-    # Setup logger
-    remote_server_uri = "http://127.0.0.1:8081"
+    # # Setup logger
+    remote_server_uri = "http://127.0.0.1:5000"
     mlf_logger = MLFlowLogger(experiment_name="lightning_logs", tracking_uri=remote_server_uri)
     trainer = BFMTrainer(model)
 
     pl_trainer = L.Trainer(
-        max_epochs=2,
+        max_epochs=4,
         accelerator="gpu" if torch.cuda.is_available() else "cpu",
         devices=1,
-        precision="bf16",
+        precision="bf16-mixed",
         gradient_clip_val=1.0,
         log_every_n_steps=1,
         logger=mlf_logger,
