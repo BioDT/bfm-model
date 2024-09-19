@@ -12,11 +12,12 @@ This software is tested to work with Python 3.10 and 3.12
 
 1) With pip
 
-```
+```bash
 python -m venv venv
 source venv/bin/activate
 pip install -U pip setuptools wheel
-pip install -r requirements.txt
+# from setuptools 61 onwards, it's possible to install with pip from a pyproject.toml
+pip install -e .
 # OPTIONAL: For CUDA capable machines
 pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
 ```
@@ -26,17 +27,12 @@ pip3 install torch torchvision torchaudio --index-url https://download.pytorch.o
 2) With poetry. (Make sure you have [Poetry](https://python-poetry.org/docs/#installation) installed)
 
 Just run in a terminal
-```
+```bash
 poetry install
 ```
 To run the scripts, activate the virtual env
-```
+```bash
 poetry shell
-```
-To add and export dependecies use:
-```
-poetry add <dependency>
-poetry export -f requirements.txt --without-hases > requirements.txt
 ```
 
 ## Run experiments
