@@ -1,0 +1,29 @@
+model:
+  B: 32
+  T: 2
+  V_s: 3
+  V_a: 5
+  C: 13
+  H: 32
+  W: 64
+  embed_dim: 1024
+  num_latent_tokens: 7
+
+data:
+  atmos_levels: [1000, 925, 850, 700, 600, 500, 400, 300, 250, 200, 150, 100, 50]
+
+training:
+  batch_size: 1
+  workers: 4
+  epochs: 20
+  accelerator: auto
+  precision: bf16
+  devices: 1
+  gradient_clip: 1.0
+  log_steps: 10
+
+general:
+  do_eval: True
+
+mlflow:
+  port: 8081 # change here port if you get [Errno 98] Address already in use
