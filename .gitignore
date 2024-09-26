@@ -163,3 +163,11 @@ cython_debug/
 
 # folder for scrap code that is used for intermediate testing purposes (ugly, undocumented, and shouldn't be seen by anyone else)
 src/perceiver_components/scrap/
+
+# Experiment outputs
+outputs
+mlruns
+
+# Log-related (e.g., lightning, surf etc.)
+lightning_logs/
+slurm-*

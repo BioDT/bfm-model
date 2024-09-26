@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 import hydra
 import lightning as L
 import torch
-from lightning.pytorch import LightningModule
+from lightning.pytorch import LightningModule, seed_everything
 from lightning.pytorch.loggers import MLFlowLogger
 from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader, Dataset
@@ -134,11 +134,13 @@ def main(cfg: DictConfig):
     # embed_dim = 1024
     # num_latent_tokens = 7
 
+    # Seed the experiment for numpy, torch and python.random.
+    seed_everything(42, workers=True)
+
     dataset = AuroraDataset(cfg.model.B, cfg.model.T, cfg.model.V_s, cfg.model.V_a, cfg.model.C, cfg.model.H, cfg.model.W)
     dataloader = DataLoader(
         dataset, batch_size=cfg.training.batch_size, num_workers=cfg.training.workers, collate_fn=custom_collate
     )
-    atmos_levels = [1000, 925, 850, 700, 600, 500, 400, 300, 250, 200, 150, 100, 50]
 
     model = BFM(
         surf_vars=tuple(f"surf_var_{i}" for i in range(cfg.model.V_s)),
@@ -148,21 +150,23 @@ def main(cfg: DictConfig):
         W=cfg.model.W,
         embed_dim=cfg.model.embed_dim,
         num_latent_tokens=cfg.model.num_latent_tokens,
-        atmos_levels=atmos_levels,
+        atmos_levels=cfg.data.atmos_levels,
     )
 
-    # # Setup logger
-    remote_server_uri = "http://127.0.0.1:5000"
-    mlf_logger = MLFlowLogger(experiment_name="lightning_logs", tracking_uri=remote_server_uri)
+    # Setup logger
+    current_time = datetime.now()
+    remote_server_uri = f"http://0.0.0.0:{cfg.mlflow.port}"
+    mlf_logger = MLFlowLogger(experiment_name="BFM_logs", run_name=f"BFM_{current_time}", tracking_uri=remote_server_uri)
+    # Setup trainer
     trainer = BFMTrainer(model)
 
     pl_trainer = L.Trainer(
-        max_epochs=4,
-        accelerator="gpu" if torch.cuda.is_available() else "cpu",
-        devices=1,
-        precision="bf16-mixed",
-        gradient_clip_val=1.0,
-        log_every_n_steps=1,
+        max_epochs=cfg.training.epochs,
+        accelerator=cfg.training.accelerator,
+        devices=cfg.training.devices,
+        precision=cfg.training.precision,
+        gradient_clip_val=cfg.training.gradient_clip,
+        log_every_n_steps=cfg.training.log_steps,
         logger=mlf_logger,
     )
 

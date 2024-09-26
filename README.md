@@ -12,11 +12,12 @@ This software is tested to work with Python 3.10 and 3.12
 
 1) With pip
 
-```
+```bash
 python -m venv venv
 source venv/bin/activate
 pip install -U pip setuptools wheel
-pip install -r requirements.txt
+# from setuptools 61 onwards, it's possible to install with pip from a pyproject.toml
+pip install -e .
 # OPTIONAL: For CUDA capable machines
 pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
 ```
@@ -26,23 +27,61 @@ pip3 install torch torchvision torchaudio --index-url https://download.pytorch.o
 2) With poetry. (Make sure you have [Poetry](https://python-poetry.org/docs/#installation) installed)
 
 Just run in a terminal
-```
+```bash
 poetry install
 ```
 To run the scripts, activate the virtual env
-```
+```bash
 poetry shell
 ```
-To add and export dependecies use:
+
+## Run experiments
+
+Start an MLFLow server
+```bash
+# change here port if you get [Errno 98] Address already in use
+# also change port in the src/bfm/src/configs
+# & - optional, for interactive mode
+mlflow server --host 0.0.0.0 --port 8081 [&] 
 ```
-poetry add <dependency>
-poetry export -f requirements.txt --without-hases > requirements.txt
+On another terminal (if not running in interactive mode), run the train recipe
 ```
+python src/bfm/src/train.py
+```
+
+## Connection
+
+```bash
+# start an interactive job
+salloc -p gpu_h100 --gpus-per-node=1 -t 01:00:00
+# ssh to the node with port forwarding
+# ssh gcn140
+
+
+# Forwarding the node mlflow instance to the local machine
+# N.B.: Make sure to specify the host on the local machine, as specifying just the port might results in "Permission denied" errors.
+# N.B.2.: If specifying the host 0.0.0.0 on the local machine, access by using `localhost:<port_id>`.
+ssh -i .ssh/snelius_key -L 0.0.0.0:<desired_port_on_local>:gcn<node_id>:<mlflow_port_on_remote> <user_name>@snellius.surf.nl
+
+```
+
+## Running via scheduled job
+
+```bash
+sbatch job.sh
+```
+
+Then you can observe mlflow with the same bind command:
+```bash
+ssh -i .ssh/snelius_key -L 0.0.0.0:<desired_port_on_local>:gcn<node_id>:<mlflow_port_on_remote> <user_name>@snellius.surf.nl
+```
+
 
 ## TODOs
 
-- Export new requirements.txt
-- Make the output folder system coherent
-- Add more logging points
-- Add checkpointing 
-- Test multi-node, multi-gpu runs
+- [ ] Export new requirements.txt
+- [ ] Make the output folder system coherent
+- [ ] Add more logging points
+- [ ] Add checkpointing 
+- [ ] Test multi-node, multi-gpu runs
+- [ ] Cleanup, remove prints etc.
