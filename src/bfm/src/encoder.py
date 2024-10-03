@@ -55,7 +55,7 @@ class BFMEncoder(nn.Module):
         self.surf_level_encoding = nn.Parameter(torch.randn(embed_dim))
 
         pos_encoding_dim = self._calculate_pos_encoding_dim()
-        print(f"Calculated pos_encoding_dim: {pos_encoding_dim}")
+        # print(f"Calculated pos_encoding_dim: {pos_encoding_dim}")
         self.pos_embed = nn.Linear(self._calculate_pos_encoding_dim() + 2, embed_dim)  # +2 for lat and lon
         self.scale_embed = nn.Linear(embed_dim, embed_dim)
         self.lead_time_embed = nn.Linear(embed_dim, embed_dim)
@@ -221,12 +221,17 @@ class BFMEncoder(nn.Module):
         print(f"x shape after adding all embeddings: {x.shape}")
 
         x = self.pos_drop(x)
-
-        latents = self.atmos_latents.unsqueeze(0).expand(B, -1, -1)
+        surface_latent = self.surf_level_encoding.unsqueeze(0).unsqueeze(0).expand(B, 1, -1)
+        atmos_latents = self.atmos_latents.unsqueeze(0).expand(B, -1, -1)
+        latents = torch.cat([surface_latent, atmos_latents], dim=1)
         x = self.perceiver_io(x, queries=latents)
-        print(f"Final output shape: {x.shape}")
 
         return x
+        # latents = self.atmos_latents.unsqueeze(0).expand(B, -1, -1)
+        # x = self.perceiver_io(x, queries=latents)
+        # print(f"Final output shape: {x.shape}")
+
+        # return x
 
     def _time_encoding(self, times):
         device = times.device

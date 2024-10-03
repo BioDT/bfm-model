@@ -48,7 +48,7 @@ class BFMDecoder(nn.Module):
         self.W = W
 
         pos_encoding_dim = self._calculate_pos_encoding_dim()
-        print(f"Calculated pos_encoding_dim: {pos_encoding_dim}")
+        # print(f"Calculated pos_encoding_dim: {pos_encoding_dim}")
 
         self.pos_embed = nn.Linear(pos_encoding_dim + 2, embed_dim)  # +2 for lat and lon
         self.lead_time_embed = nn.Linear(embed_dim, embed_dim)
@@ -150,8 +150,8 @@ class BFMDecoder(nn.Module):
         # Create 2D grid of lat and lon
         lat_grid, lon_grid = torch.meshgrid(lat, lon, indexing="ij")
         print(f"Lat grid shape: {lat_grid.shape}, Lon grid shape: {lon_grid.shape}")
-        print(f"Lat grid contents: {lat_grid}")
-        print(f"Lon grid contents: {lon_grid}")
+        # print(f"Lat grid contents: {lat_grid}")
+        # print(f"Lon grid contents: {lon_grid}")
         pos_input = torch.stack((lat_grid, lon_grid), dim=-1)
         print(f"Position input shape: {pos_input.shape}")
 
