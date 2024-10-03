@@ -1,4 +1,4 @@
-.PHONY: setup test clean
+.PHONY: setup_venv compile_dependencies install_dependencies test clean
 
 # set the name of the venv
 VENV = venv
@@ -33,7 +33,7 @@ test:
 	. $(VENV)/bin/activate; python -m unittest discover -s tests
 
 # remove venv
-clean: 
+clean:
 	@echo "Cleaning up."
 	rm -rf $(VENV)
 	find . -type f -name '*.pyc' -delete

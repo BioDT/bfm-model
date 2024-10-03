@@ -1,3 +1,7 @@
+"""
+Run from root folder: `python -m test.test_setup`
+"""
+
 import os
 import unittest
 
