@@ -220,6 +220,7 @@ class BFMEncoder(nn.Module):
 
         print(f"x shape after adding all embeddings: {x.shape}")
 
+        # considering the surface latents as well, to not have L = latent_levels - 1, but L = latent_levels instead
         x = self.pos_drop(x)
         surface_latent = self.surf_level_encoding.unsqueeze(0).unsqueeze(0).expand(B, 1, -1)
         atmos_latents = self.atmos_latents.unsqueeze(0).expand(B, -1, -1)
