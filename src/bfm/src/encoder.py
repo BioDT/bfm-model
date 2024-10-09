@@ -19,7 +19,8 @@ class BFMEncoder(nn.Module):
         atmos_levels: list[int] | None = None,
         patch_size: int = 4,
         latent_levels: int = 8,
-        embed_dim: int = 1024,
+        perceiver_latents: int = 1024,
+        embed_dim: int = 512,
         num_heads: int = 16,
         head_dim: int = 64,
         drop_rate: float = 0.1,
@@ -41,10 +42,16 @@ class BFMEncoder(nn.Module):
         self.max_frequency = max_frequency
         self.num_fourier_bands = num_fourier_bands
         self.position_encoding_type = position_encoding_type
+        self.perceiver_latents = perceiver_latents
+        self.num_heads = num_heads
+        self.head_dim = head_dim
+        self.depth = depth
+        self.mlp_ratio = mlp_ratio
 
         self.surf_vars = surf_vars
         self.static_vars = static_vars
         self.atmos_vars = atmos_vars
+        self.atmos_levels = atmos_levels
 
         surf_vars = surf_vars + static_vars if static_vars is not None else surf_vars
         self.surf_var_map = {v: i for i, v in enumerate(surf_vars)}
@@ -53,10 +60,10 @@ class BFMEncoder(nn.Module):
         self.latent_levels = latent_levels
         self.atmos_latents = nn.Parameter(torch.randn(latent_levels - 1, embed_dim))
         self.surf_level_encoding = nn.Parameter(torch.randn(embed_dim))
+        self.latents = nn.Parameter(torch.randn(perceiver_latents, embed_dim))
 
         pos_encoding_dim = self._calculate_pos_encoding_dim()
-        # print(f"Calculated pos_encoding_dim: {pos_encoding_dim}")
-        self.pos_embed = nn.Linear(self._calculate_pos_encoding_dim() + 2, embed_dim)  # +2 for lat and lon
+        self.pos_embed = nn.Linear(pos_encoding_dim + 2, embed_dim)  # +2 for lat and lon
         self.scale_embed = nn.Linear(embed_dim, embed_dim)
         self.lead_time_embed = nn.Linear(embed_dim, embed_dim)
         self.absolute_time_embed = nn.Linear(embed_dim, embed_dim)
@@ -65,23 +72,8 @@ class BFMEncoder(nn.Module):
         self.surf_token_embeds = self._create_patch_embed(len(surf_vars), patch_size, embed_dim, max_history_size)
         self.atmos_token_embeds = self._create_patch_embed(len(atmos_vars), patch_size, embed_dim, max_history_size)
 
-        # total_tokens = self._calculate_total_tokens(surf_vars, static_vars, atmos_vars)
-        self.perceiver_io = PerceiverIO(
-            num_layers=depth,
-            dim=embed_dim,
-            queries_dim=embed_dim,
-            logits_dimension=None,
-            num_latent_tokens=latent_levels,
-            latent_dimension=embed_dim,
-            cross_attention_heads=num_heads,
-            latent_attention_heads=num_heads,
-            cross_attention_head_dim=head_dim,
-            latent_attention_head_dim=head_dim,
-            num_fourier_bands=num_fourier_bands,
-            max_frequency=max_frequency,
-            num_input_axes=2,
-            position_encoding_type=position_encoding_type,
-        )
+        self.perceiver_io = None
+        self.latents = None
 
         self.pos_drop = nn.Dropout(p=drop_rate)
 
@@ -92,8 +84,38 @@ class BFMEncoder(nn.Module):
     def _calculate_pos_encoding_dim(self):
         return 2 * self.num_fourier_bands + 1
 
-    def _calculate_total_tokens(self, surf_vars, static_vars, atmos_vars):
-        return len(surf_vars) + len(static_vars or []) + len(atmos_vars)
+    def _initialize_perceiver(self, H, W):
+        # Calculate the number of patches per level
+        num_patches = (H // self.patch_size) * (W // self.patch_size)
+
+        # Calculate the number of latent tokens
+        # This should equal C * H' * W', where:
+        # C is the number of latent levels
+        # H' is H // patch_size
+        # W' is W // patch_size
+        latent_tokens = self.latent_levels * num_patches
+
+        print(f"Calculated latent tokens: {latent_tokens}")
+
+        self.perceiver_io = PerceiverIO(
+            num_layers=2,  # You might want to make this configurable
+            dim=self.embed_dim,
+            queries_dim=self.embed_dim,
+            logits_dimension=None,
+            num_latent_tokens=latent_tokens,
+            latent_dimension=self.embed_dim,
+            cross_attention_heads=self.num_heads,
+            latent_attention_heads=self.num_heads,
+            cross_attention_head_dim=self.head_dim,
+            latent_attention_head_dim=self.head_dim,
+            num_fourier_bands=self.num_fourier_bands,
+            max_frequency=self.max_frequency,
+            num_input_axes=1,
+            position_encoding_type=self.position_encoding_type,
+        )
+
+        self.latents = nn.Parameter(torch.randn(latent_tokens, self.embed_dim))
+        self.patch_res = (self.latent_levels, H // self.patch_size, W // self.patch_size)
 
     def _create_patch_embed(self, num_vars, patch_size, embed_dim, max_history_size):
         in_dim = num_vars * max_history_size * patch_size * patch_size
@@ -154,6 +176,9 @@ class BFMEncoder(nn.Module):
             x_static = x_static.unsqueeze(0).unsqueeze(0).expand(B, T, -1, H, W)
             x_surf = torch.cat((x_surf, x_static), dim=2)
             print(f"x_surf shape after adding static vars: {x_surf.shape}")
+
+        if self.perceiver_io is None:
+            self._initialize_perceiver(H, W)
 
         lat, lon = batch.metadata.lat, batch.metadata.lon
         print(f"lat shape: {lat.shape}, lon shape: {lon.shape}")
@@ -220,19 +245,24 @@ class BFMEncoder(nn.Module):
 
         print(f"x shape after adding all embeddings: {x.shape}")
 
-        # considering the surface latents as well, to not have L = latent_levels - 1, but L = latent_levels instead
-        x = self.pos_drop(x)
-        surface_latent = self.surf_level_encoding.unsqueeze(0).unsqueeze(0).expand(B, 1, -1)
-        atmos_latents = self.atmos_latents.unsqueeze(0).expand(B, -1, -1)
-        latents = torch.cat([surface_latent, atmos_latents], dim=1)
+        # Flatten the input for Perceiver IO
+        x = x.flatten(1, 2)  # shape: [B, (C+1)*L, D]
+        print(f"Flattened x shape: {x.shape}")
+
+        # Create latent queries
+        # latents = torch.cat([self.surf_level_encoding.unsqueeze(0), self.atmos_latents], dim=0)
+        # latents = latents.unsqueeze(0).expand(B, -1, -1)  # (B, latent_levels, D)
+        latents = self.latents.to(x.device)
+        self.perceiver_io.to(x.device)
+
+        latents = latents.unsqueeze(0).expand(B, -1, -1)  # shape: [B, perceiver_latents, D]
+
+        # Apply Perceiver IO
         x = self.perceiver_io(x, queries=latents)
+        print(f"Final output shape: {x.shape}")
 
+        x = self.pos_drop(x)
         return x
-        # latents = self.atmos_latents.unsqueeze(0).expand(B, -1, -1)
-        # x = self.perceiver_io(x, queries=latents)
-        # print(f"Final output shape: {x.shape}")
-
-        # return x
 
     def _time_encoding(self, times):
         device = times.device
@@ -279,6 +309,7 @@ def main():
         surf_vars=tuple(surf_vars.keys()),
         static_vars=tuple(static_vars.keys()),
         atmos_vars=tuple(atmos_vars.keys()),
+        atmos_levels=atmos_levels,
     )
 
     lead_time = timedelta(hours=6)

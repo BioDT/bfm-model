@@ -192,11 +192,8 @@ class Swin3DTransformer(nn.Module):
         print(f"Patch res size: {patch_res[0] * patch_res[1] * patch_res[2]}")
         assert L == patch_res[0] * patch_res[1] * patch_res[2], "Input shape does not match patch size"
         assert (
-            patch_res[1] % self.window_size[1] == 0
-        ), f"Patch height ({patch_res[1]}) must be divisible by window size ({self.window_size[1]})"
-        assert (
-            patch_res[2] % self.window_size[2] == 0
-        ), f"Patch width ({patch_res[2]}) must be divisible by window size ({self.window_size[2]})"
+            patch_res[0] % self.window_size[0] == 0
+        ), f"Patch level ({patch_res[0]}) must be divisible by window size ({self.window_size[0]})"
 
         all_enc_res, padded_outs = self.get_encoder_specs(patch_res)
 

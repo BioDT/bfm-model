@@ -396,7 +396,10 @@ class PatchMerging3D(nn.Module):
         C, H, W = res
         B, L, D = x.shape
         assert L == C * H * W, f"Input shape mismatch: {L} != {C}*{H}*{W}"
-        assert H > 1 and W > 1, f"Height ({H}) and Width ({W}) must be larger than 1"
+        # assert H > 1 and W > 1, f"Height ({H}) and Width ({W}) must be larger than 1"
+        # Prevent merging if H or W is less than or equal to 1
+        if H <= 1 or W <= 1:
+            return x  # Skip merging if dimensions are too small
 
         # Reshape input to [B, C, H, W, D]
         x = x.view(B, C, H, W, D)

@@ -248,7 +248,7 @@ def main():
     )
 
     # Simulating encoder output
-    x = torch.randn(B, 7, 1024)  # Assuming 7 latent tokens and 1024 embedding dimension
+    x = torch.randn(B, 8, 1024)  # Assuming 7 latent tokens and 1024 embedding dimension
 
     lead_time = timedelta(hours=6)
     output = decoder(x, batch, lead_time)
