@@ -98,7 +98,7 @@ class BFMEncoder(nn.Module):
         print(f"Calculated latent tokens: {latent_tokens}")
 
         self.perceiver_io = PerceiverIO(
-            num_layers=2,  # You might want to make this configurable
+            num_layers=self.depth,
             dim=self.embed_dim,
             queries_dim=self.embed_dim,
             logits_dimension=None,
