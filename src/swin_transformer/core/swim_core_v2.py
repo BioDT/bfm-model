@@ -139,19 +139,21 @@ class Swin3DTransformer(nn.Module):
         # Final projection layer to match input dimensions
         self.final_proj = nn.Linear(2 * self.embed_dim, self.embed_dim)
 
-    def get_encoder_specs(self, patch_res: tuple[int, int, int]) -> tuple[list[tuple[int, int, int]], list[tuple[int, int, int]]]:
+    def get_encoder_specs(
+        self, patch_shape: tuple[int, int, int]
+    ) -> tuple[list[tuple[int, int, int]], list[tuple[int, int, int]]]:
         """
         Calculate the input resolution and output padding for each encoder layer.
 
         Args:
-            patch_res (tuple[int, int, int]): Initial patch resolution (C, H, W)
+            patch_shape (tuple[int, int, int]): Initial patch resolution (C, H, W)
 
         Returns:
             tuple[list[tuple[int, int, int]], list[tuple[int, int, int]]]:
                 List of resolutions and list of paddings for each layer
         """
-        print(f"Initial patch resolution: {patch_res}")
-        all_res = [patch_res]
+        print(f"Initial patch resolution: {patch_shape}")
+        all_res = [patch_shape]
         padded_outs = []
         for i in range(1, self.num_encoder_layers):
             C, H, W = all_res[-1]
@@ -171,7 +173,7 @@ class Swin3DTransformer(nn.Module):
         x: torch.Tensor,
         lead_time: timedelta,
         rollout_step: int,
-        patch_res: tuple[int, int, int],
+        patch_shape: tuple[int, int, int],
     ) -> torch.Tensor:
         """
         Forward pass of the Swin 3D Transformer backbone.
@@ -180,22 +182,22 @@ class Swin3DTransformer(nn.Module):
             x (torch.Tensor): Input tokens. Shape: [B, L, D]
             lead_time (timedelta): Lead time for temporal information
             rollout_step (int): Current roll-out step
-            patch_res (tuple[int, int, int]): Patch resolution (C, H, W)
+            patch_shape (tuple[int, int, int]): Patch resolution (C, H, W)
 
         Returns:
             torch.Tensor: Processed tokens. Shape: [B, L, D]
         """
         B, L, D = x.shape
         print(f"Input shape: {x.shape}")
-        print(f"Patch resolution: {patch_res}")
+        print(f"Patch resolution: {patch_shape}")
         print(f"L size: {L}")
-        print(f"Patch res size: {patch_res[0] * patch_res[1] * patch_res[2]}")
-        assert L == patch_res[0] * patch_res[1] * patch_res[2], "Input shape does not match patch size"
+        print(f"Patch res size: {patch_shape[0] * patch_shape[1] * patch_shape[2]}")
+        assert L == patch_shape[0] * patch_shape[1] * patch_shape[2], "Input shape does not match patch size"
         assert (
-            patch_res[0] % self.window_size[0] == 0
-        ), f"Patch level ({patch_res[0]}) must be divisible by window size ({self.window_size[0]})"
+            patch_shape[0] % self.window_size[0] == 0
+        ), f"Patch level ({patch_shape[0]}) must be divisible by window size ({self.window_size[0]})"
 
-        all_enc_res, padded_outs = self.get_encoder_specs(patch_res)
+        all_enc_res, padded_outs = self.get_encoder_specs(patch_shape)
 
         # Process lead time information
         lead_hours = lead_time.total_seconds() / 3600
@@ -257,14 +259,14 @@ def test_swin_transformer_backbone():
 
     # Create dummy input data
     batch_size = 2
-    patch_res = (2, 56, 56)  # (C, H, W)
-    x = torch.randn(batch_size, patch_res[0] * patch_res[1] * patch_res[2], 96).to(device)
+    patch_shape = (2, 56, 56)  # (C, H, W)
+    x = torch.randn(batch_size, patch_shape[0] * patch_shape[1] * patch_shape[2], 96).to(device)
     lead_time = timedelta(hours=6)
     rollout_step = 0
 
     # Run a forward pass
     try:
-        output = backbone(x, lead_time, rollout_step, patch_res)
+        output = backbone(x, lead_time, rollout_step, patch_shape)
         print(f"Forward pass successful. Output shape: {output.shape}")
         assert output.shape == x.shape, f"Expected output shape {x.shape}, but got {output.shape}"
         print("Test passed successfully!")

@@ -86,7 +86,9 @@ class BFMEncoder(nn.Module):
 
     def _initialize_perceiver(self, H, W):
         # Calculate the number of patches per level
+        print(f"Dividing H and W by patch_size: {H // self.patch_size}, {W // self.patch_size}")
         num_patches = (H // self.patch_size) * (W // self.patch_size)
+        print(f"Calculated num_patches: {num_patches}")
 
         # Calculate the number of latent tokens
         # This should equal C * H' * W', where:
@@ -115,7 +117,7 @@ class BFMEncoder(nn.Module):
         )
 
         self.latents = nn.Parameter(torch.randn(latent_tokens, self.embed_dim))
-        self.patch_res = (self.latent_levels, H // self.patch_size, W // self.patch_size)
+        self.patch_shape = (self.latent_levels, H // self.patch_size, W // self.patch_size)
 
     def _create_patch_embed(self, num_vars, patch_size, embed_dim, max_history_size):
         in_dim = num_vars * max_history_size * patch_size * patch_size

@@ -1,11 +1,13 @@
 from collections import namedtuple
 from datetime import datetime, timedelta
+from typing import Literal
 
 import torch
 import torch.nn as nn
 
 from src.bfm.src.decoder import BFMDecoder
 from src.bfm.src.encoder import BFMEncoder
+from src.mvit.mvit_model import MViT
 from src.swin_transformer.core.swim_core_v2 import Swin3DTransformer
 
 
@@ -20,6 +22,7 @@ class BFM(nn.Module):
         W: int = 64,
         embed_dim: int = 1024,
         num_latent_tokens: int = 8,
+        backbone_type: Literal["swin", "mvit"] = "mvit",
         **kwargs,
     ):
         super().__init__()
@@ -32,21 +35,48 @@ class BFM(nn.Module):
             **kwargs,
         )
 
-        self.backbone = Swin3DTransformer(
-            embed_dim=embed_dim,
-            encoder_depths=(2, 2),
-            encoder_num_heads=(8, 16),
-            decoder_depths=(2, 2),
-            decoder_num_heads=(32, 16),
-            window_size=(1, 2, 2),
-            mlp_ratio=4.0,
-            qkv_bias=True,
-            drop_rate=0.0,
-            attn_drop_rate=0.0,
-            drop_path_rate=0.1,
-            use_lora=False,
-        )
+        patch_shape = (num_latent_tokens, H // self.encoder.patch_size, W // self.encoder.patch_size)
 
+        if backbone_type == "swin":
+            self.backbone = Swin3DTransformer(
+                embed_dim=embed_dim,
+                encoder_depths=(2, 2),
+                encoder_num_heads=(8, 16),
+                decoder_depths=(2, 2),
+                decoder_num_heads=(32, 16),
+                window_size=(1, 2, 2),
+                mlp_ratio=4.0,
+                qkv_bias=True,
+                drop_rate=0.0,
+                attn_drop_rate=0.0,
+                drop_path_rate=0.1,
+                use_lora=False,
+            )
+        elif backbone_type == "mvit":
+            self.backbone = MViT(
+                patch_shape=patch_shape,
+                embed_dim=embed_dim,
+                depth=4,
+                num_heads=1,
+                mlp_ratio=4.0,
+                qkv_bias=True,
+                path_drop_rate=0.1,
+                attn_mode="conv",
+                pool_first=False,
+                rel_pos=False,
+                zero_init_rel=True,
+                res_pool=True,
+                dim_mul_attn=False,
+                dim_scales=[(i, 1.0) for i in range(4)],  # No dimension change
+                head_scales=[(1, 2.0), (2, 2.0)],  # Keep head scaling for attention
+                pool_kernel=[1, 1, 1],
+                kv_stride=[1, 1, 1],
+                q_stride=[(0, [1, 1, 1]), (1, [1, 1, 1]), (2, [1, 1, 1])],
+            )
+        else:
+            raise ValueError(f"Unknown backbone type: {backbone_type}")
+
+        self.backbone_type = backbone_type
         self.decoder = BFMDecoder(
             surf_vars=surf_vars, atmos_vars=atmos_vars, atmos_levels=atmos_levels, H=H, W=W, embed_dim=embed_dim, **kwargs
         )
@@ -55,12 +85,14 @@ class BFM(nn.Module):
         # Encode
         encoded = self.encoder(batch, lead_time)
 
-        # Process through Swin Transformer backbone
-        patch_res = self.encoder.patch_res
+        # Process through backbone
+        patch_shape = self.encoder.patch_shape
 
-        backbone_output = self.backbone(
-            encoded, lead_time=lead_time, rollout_step=0, patch_res=patch_res  # Assuming this is the initial step
-        )
+        if self.backbone_type == "mvit":
+            # Reshape for MViT
+            encoded = encoded.view(encoded.size(0), -1, self.encoder.embed_dim)
+
+        backbone_output = self.backbone(encoded, lead_time=lead_time, rollout_step=0, patch_shape=patch_shape)
 
         # Decode
         output = self.decoder(backbone_output, batch, lead_time)
@@ -98,6 +130,7 @@ def main():
         static_vars=tuple(batch.static_vars.keys()),
         atmos_vars=tuple(batch.atmos_vars.keys()),
         atmos_levels=batch.metadata.atmos_levels,
+        backbone_type="swin",  # or "mvit"
     )
 
     output = model(batch, lead_time)
