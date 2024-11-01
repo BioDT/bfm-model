@@ -49,6 +49,7 @@ class Swin3DTransformer(nn.Module):
         lora_steps: int = 40,
         lora_mode: LoRAMode = "single",
         use_lora: bool = False,
+        skip_connections: bool = True,
     ) -> None:
         """
         Args:
@@ -66,6 +67,7 @@ class Swin3DTransformer(nn.Module):
             lora_steps (int): Maximum number of LoRA roll-out steps. Default: 40
             lora_mode (LoRAMode): Mode for LoRA. Default: "single"
             use_lora (bool): Enable LoRA. Default: False
+            skip_connections (bool): Enable skip connections. Default: True
         """
         super().__init__()
 
@@ -74,6 +76,7 @@ class Swin3DTransformer(nn.Module):
         self.num_decoder_layers = len(decoder_depths)
         self.embed_dim = embed_dim
         self.mlp_ratio = mlp_ratio
+        self.skip_connections = skip_connections
 
         # Time embedding MLP for temporal information processing
         self.time_mlp = nn.Sequential(
@@ -152,7 +155,7 @@ class Swin3DTransformer(nn.Module):
             tuple[list[tuple[int, int, int]], list[tuple[int, int, int]]]:
                 List of resolutions and list of paddings for each layer
         """
-        print(f"Initial patch resolution: {patch_shape}")
+        # print(f"Initial patch resolution: {patch_shape}")
         all_res = [patch_shape]
         padded_outs = []
         for i in range(1, self.num_encoder_layers):
@@ -161,11 +164,11 @@ class Swin3DTransformer(nn.Module):
             padded_outs.append((0, pad_H, pad_W))
             new_res = (C, (H + pad_H) // 2, (W + pad_W) // 2)
             all_res.append(new_res)
-            print(f"Layer {i}: Input res: {all_res[-2]}, Padding: {padded_outs[-1]}, Output res: {new_res}")
+            # print(f"Layer {i}: Input res: {all_res[-2]}, Padding: {padded_outs[-1]}, Output res: {new_res}")
 
         padded_outs.append((0, 0, 0))
-        print(f"Final all_res: {all_res}")
-        print(f"Final padded_outs: {padded_outs}")
+        # print(f"Final all_res: {all_res}")
+        # print(f"Final padded_outs: {padded_outs}")
         return all_res, padded_outs
 
     def forward(
@@ -188,10 +191,10 @@ class Swin3DTransformer(nn.Module):
             torch.Tensor: Processed tokens. Shape: [B, L, D]
         """
         B, L, D = x.shape
-        print(f"Input shape: {x.shape}")
-        print(f"Patch resolution: {patch_shape}")
-        print(f"L size: {L}")
-        print(f"Patch res size: {patch_shape[0] * patch_shape[1] * patch_shape[2]}")
+        # print(f"Input shape: {x.shape}")
+        # print(f"Patch resolution: {patch_shape}")
+        # print(f"L size: {L}")
+        # print(f"Patch res size: {patch_shape[0] * patch_shape[1] * patch_shape[2]}")
         assert L == patch_shape[0] * patch_shape[1] * patch_shape[2], "Input shape does not match patch size"
         assert (
             patch_shape[0] % self.window_size[0] == 0
@@ -207,19 +210,23 @@ class Swin3DTransformer(nn.Module):
         # Encoder forward pass
         skips = []
         for i, layer in enumerate(self.encoder_layers):
-            print(f"Encoder Layer {i}: Input shape: {x.shape}, Resolution: {all_enc_res[i]}")
+            # print(f"Encoder Layer {i}: Input shape: {x.shape}, Resolution: {all_enc_res[i]}")
             x, x_unscaled = layer(x, c, all_enc_res[i], rollout_step=rollout_step)
-            print(f"Encoder Layer {i}: Output shape: {x.shape}")
+            # print(f"Encoder Layer {i}: Output shape: {x.shape}")
             skips.append(x_unscaled)
+
+        if not self.skip_connections:
+            # Simple forward pass without decoder
+            for i, layer in enumerate(self.encoder_layers):
+                x, _ = layer(x, c, all_enc_res[i], rollout_step=rollout_step)
+            return x
 
         # Decoder forward pass with skip connections
         for i, layer in enumerate(self.decoder_layers):
             index = self.num_decoder_layers - i - 1
-            print(
-                f"Decoder Layer {i}: Input shape: {x.shape}, Resolution: {all_enc_res[index]}, Padding: {padded_outs[index - 1]}"
-            )
+            # print(f"Decoder Layer {i}: Input shape: {x.shape}, Resolution: {all_enc_res[index]}, Padding: {padded_outs[index - 1]}")
             x, _ = layer(x, c, all_enc_res[index], padded_outs[index - 1], rollout_step=rollout_step)
-            print(f"Decoder Layer {i}: Output shape: {x.shape}")
+            # print(f"Decoder Layer {i}: Output shape: {x.shape}")
 
             if 0 < i < self.num_decoder_layers - 1:
                 x = x + skips[index - 1]  # Additive skip connection
@@ -228,7 +235,7 @@ class Swin3DTransformer(nn.Module):
 
         # Final projection to match input dimensions
         x = self.final_proj(x)  # shape: [B, L, D]
-        print(f"Final output shape: {x.shape}")
+        # print(f"Final output shape: {x.shape}")
 
         return x
 
@@ -242,7 +249,7 @@ def test_swin_transformer_backbone():
         embed_dim=96,
         encoder_depths=(2, 2, 6, 2),
         encoder_num_heads=(3, 6, 12, 24),
-        decoder_depths=(2, 2, 6, 2),  # Match encoder_depths
+        decoder_depths=(2, 6, 2, 2),  # Match encoder_depths
         decoder_num_heads=(24, 12, 6, 3),
         window_size=(2, 7, 7),
         mlp_ratio=4.0,
