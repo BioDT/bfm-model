@@ -1,3 +1,4 @@
+import json
 from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -8,14 +9,19 @@ from test.test_bfm_alternate_version.src.data_set import (
 )
 from typing import Literal, Optional
 
+import lightning.pytorch as pl
+import mlflow
 import numpy as np
-import pytorch_lightning as pl
+import optuna
 import torch
 import torch.nn.functional as F
+from lightning.pytorch.callbacks import Callback, ModelCheckpoint
 from lightning.pytorch.loggers import MLFlowLogger
-from pytorch_lightning.callbacks import ModelCheckpoint
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from torch.utils.data import DataLoader
+
+# sequence lengths to try during optimization
+SEQUENCE_LENGTHS = [48, 72, 96, 120, 144]
 
 
 class AQFMPredictor(pl.LightningModule):
@@ -28,6 +34,23 @@ class AQFMPredictor(pl.LightningModule):
         max_history_size: int = 24,
         learning_rate: float = 1e-4,
         checkpoint_path: Optional[str] = None,
+        # encoder params
+        encoder_num_heads: int = 16,
+        encoder_head_dim: int = 64,
+        encoder_depth: int = 2,
+        encoder_drop_rate: float = 0.1,
+        encoder_mlp_ratio: float = 4.0,
+        # backbone params
+        backbone_depth: int = 4,
+        backbone_num_heads: int = 1,
+        backbone_mlp_ratio: float = 4.0,
+        backbone_drop_rate: float = 0.1,
+        # decoder params
+        decoder_num_heads: int = 16,
+        decoder_head_dim: int = 64,
+        decoder_depth: int = 2,
+        decoder_drop_rate: float = 0.1,
+        decoder_mlp_ratio: float = 4.0,
         **kwargs,
     ):
         super().__init__()
@@ -43,6 +66,20 @@ class AQFMPredictor(pl.LightningModule):
                 num_latent_tokens=num_latent_tokens,
                 backbone_type=backbone_type,
                 max_history_size=max_history_size,
+                encoder_num_heads=encoder_num_heads,
+                encoder_head_dim=encoder_head_dim,
+                encoder_depth=encoder_depth,
+                encoder_drop_rate=encoder_drop_rate,
+                encoder_mlp_ratio=encoder_mlp_ratio,
+                backbone_depth=backbone_depth,
+                backbone_num_heads=backbone_num_heads,
+                backbone_mlp_ratio=backbone_mlp_ratio,
+                backbone_drop_rate=backbone_drop_rate,
+                decoder_num_heads=decoder_num_heads,
+                decoder_head_dim=decoder_head_dim,
+                decoder_depth=decoder_depth,
+                decoder_drop_rate=decoder_drop_rate,
+                decoder_mlp_ratio=decoder_mlp_ratio,
                 **kwargs,
             )
 
@@ -64,19 +101,23 @@ class AQFMPredictor(pl.LightningModule):
         targets,
         prefix: Optional[Literal["train_", "val_", "test_"]] = "",  # what kind of metrics are we computing? train, test, val?
     ):
+        """compute mse, mae and other metrics for predictions vs targets"""
         losses = defaultdict(list)
         metrics = defaultdict(list)
         total_loss = 0
 
         for name in targets.keys():
-            prediction = predictions[name].cpu()  # TODO check if needs detachment and move to cpu
+            prediction = predictions[name].cpu()
             true = targets[name].cpu()
+
+            # Clean metric names for MLFlow
+            clean_name = name.replace("(", "_").replace(")", "_")
 
             mse_loss = F.mse_loss(prediction, true)
             mae_loss = F.l1_loss(prediction, true)
 
-            losses[f"{prefix}{name}_mse"] = mse_loss
-            metrics[f"{prefix}{name}_mae"] = mae_loss
+            losses[f"{prefix}{clean_name}_mse"] = mse_loss
+            metrics[f"{prefix}{clean_name}_mae"] = mae_loss
 
             total_loss += mse_loss
 
@@ -94,20 +135,14 @@ class AQFMPredictor(pl.LightningModule):
         predictions = self(batch)
 
         losses, metrics = self._compute_metrics(predictions=predictions, targets=targets, prefix="train_")
-        self.logger.log_metrics(metrics)
+
+        batch_size = targets[list(targets.keys())[0]].size(0)
         for name, value in {**losses, **metrics}.items():
             if isinstance(value, torch.Tensor):
-                # cleaning name for MLFlow
                 sanitized_name = name.replace("(", "_").replace(")", "_")
-                self.logger.experiment.log_metric(self.logger.run_id, sanitized_name, value.item(), step=self.current_epoch)
-                # keeping original name for our metrics history
-                self.current_epoch_metrics[name].append(value.detach().cpu())
+                self.log(sanitized_name, value, batch_size=batch_size)
 
         return losses["averaged_train_total_loss"]
-
-    def on_train_epoch_end(self):
-        print("\nTraining metrics at epoch end:", self.current_epoch_metrics.keys())
-        pass
 
     def validation_step(self, batch_obj, _):
         batch, targets = batch_obj
@@ -115,27 +150,19 @@ class AQFMPredictor(pl.LightningModule):
 
         losses, metrics = self._compute_metrics(predictions=predictions, targets=targets, prefix="val_")
 
-        # logging the monitored metric for ModelCheckpoint
-        self.log("averaged_val_total_loss", losses["averaged_val_total_loss"], prog_bar=True)
-        print(
-            f"Logger info: {self.logger.experiment.get_run(self.logger.run_id)}"
-            f"\nRun ID: {self.logger.run_id}"
-            f"\nStep: {self.current_epoch}"
-            f"\n Logger experiment: {self.logger.experiment}"
-        )
+        batch_size = targets[list(targets.keys())[0]].size(0)
 
-        # MLFlow logging
         for name, value in {**losses, **metrics}.items():
             if isinstance(value, torch.Tensor):
                 sanitized_name = name.replace("(", "_").replace(")", "_")
-                self.logger.experiment.log_metric(self.logger.run_id, sanitized_name, value.item(), step=self.current_epoch)
-                self.current_epoch_metrics[name].append(value.detach().cpu())
+                self.log(
+                    sanitized_name, value, batch_size=batch_size, prog_bar=True if "averaged_val_total_loss" in name else False
+                )
 
         return losses["averaged_val_total_loss"]
 
     def on_validation_epoch_end(self):
-        print("\nValidation metrics at epoch end:", self.current_epoch_metrics.keys())
-
+        # compute epoch averages for metrics
         for metric_name, values in self.current_epoch_metrics.items():
             if "train_" in metric_name:
                 epoch_avg = torch.stack(values).mean()
@@ -192,16 +219,210 @@ class AQFMPredictor(pl.LightningModule):
         }
 
 
-def main():
-    # logging
-    current_time = datetime.now()
-    remote_server_uri = "http://0.0.0.0:5000"  # default MLFlow port
-    mlf_logger = MLFlowLogger(experiment_name="AQFM_logs", run_name=f"AQFM_{current_time}", tracking_uri=remote_server_uri)
+class SimpleModelPruning(Callback):
+    """callback for early stopping trials that aren't promising"""
 
-    # making a data set just as in encoder.py, data_set.py, decoder.py, and now here as well
+    def __init__(self, trial, monitor="averaged_val_total_loss"):
+        super().__init__()
+        self._trial = trial
+        self.monitor = monitor
+        self._epoch = 0
+
+    def on_validation_end(self, trainer, pl_module):
+        self._epoch += 1
+        metrics = trainer.callback_metrics
+        current_score = metrics.get(self.monitor)
+        if current_score is None:
+            return
+
+        self._trial.report(current_score.item(), step=self._epoch)
+        if self._trial.should_prune():
+            raise optuna.TrialPruned()
+
+
+def generate_trial_name(trial):
+    """generate descriptive name for the trial"""
+    return f"trial_{trial.number}_seq{trial.params['sequence_length']}_dim{trial.params['embed_dim']}_tokens{trial.params['num_latent_tokens']}"
+
+
+def save_best_hyperparameters(study, save_dir):
+    """save best hyperparameters from study to json"""
+    save_dir = Path(save_dir)
+    save_dir.mkdir(exist_ok=True)
+
+    best_params = study.best_trial.params
+    best_value = study.best_trial.value
+
+    save_dict = {
+        "best_parameters": best_params,
+        "best_validation_loss": best_value,
+        "parameters_amount": study.best_trial.user_attrs["n_parameters"],
+        "optimization_finished": datetime.now().strftime("%Y-%m-%d_%H-%M-%S"),
+        "n_trials": len(study.trials),
+        "study_name": study.study_name,
+    }
+
+    save_path = save_dir / "best_hyperparameters.json"
+    with open(save_path, "w") as f:
+        json.dump(save_dict, f, indent=4)
+
+    print(f"\nBest hyperparameters saved to: {save_path}")
+    return save_path
+
+
+def objective(trial, data_params, remote_server_uri):
+    """optimization objective function"""
+    # select sequence length for this trial
+    sequence_length = trial.suggest_categorical("sequence_length", SEQUENCE_LENGTHS)
+    data_params["sequence_length"] = sequence_length
+
+    # model hyperparameters to optimize
+    params = {
+        # basic model params
+        "embed_dim": trial.suggest_int("embed_dim", 128, 512, step=64),
+        "num_latent_tokens": trial.suggest_int("num_latent_tokens", 4, 16, step=2),
+        "learning_rate": trial.suggest_float("learning_rate", 1e-6, 1e-3, log=True),
+        "batch_size": trial.suggest_int("batch_size", 8, 128, step=8),
+        "max_history_size": sequence_length,
+        # encoder params
+        "encoder_num_heads": trial.suggest_int("encoder_num_heads", 4, 16, step=4),
+        "encoder_head_dim": trial.suggest_int("encoder_head_dim", 32, 128, step=32),
+        "encoder_depth": trial.suggest_int("encoder_depth", 1, 4),
+        "encoder_drop_rate": trial.suggest_float("encoder_drop_rate", 0.0, 0.5),
+        "encoder_mlp_ratio": trial.suggest_float("encoder_mlp_ratio", 2.0, 6.0),
+        # backbone params
+        "backbone_depth": trial.suggest_int("backbone_depth", 2, 6),
+        "backbone_num_heads": trial.suggest_int("backbone_num_heads", 1, 4),
+        "backbone_mlp_ratio": trial.suggest_float("backbone_mlp_ratio", 2.0, 6.0),
+        "backbone_drop_rate": trial.suggest_float("backbone_drop_rate", 0.0, 0.5),
+        # decoder params
+        "decoder_num_heads": trial.suggest_int("decoder_num_heads", 4, 16, step=4),
+        "decoder_head_dim": trial.suggest_int("decoder_head_dim", 32, 128, step=32),
+        "decoder_depth": trial.suggest_int("decoder_depth", 1, 4),
+        "decoder_drop_rate": trial.suggest_float("decoder_drop_rate", 0.0, 0.5),
+        "decoder_mlp_ratio": trial.suggest_float("decoder_mlp_ratio", 2.0, 6.0),
+        # training params
+        "gradient_clip_val": trial.suggest_float("gradient_clip_val", 0.1, 1.0),
+    }
+
+    trial_name = generate_trial_name(trial)
+
+    # setup mlflow logging
+    mlf_logger = MLFlowLogger(
+        experiment_name="AQFM_optimization",
+        tracking_uri=remote_server_uri,
+        run_name=trial_name,
+        tags={
+            "trial_number": str(trial.number),
+            "sequence_length": str(sequence_length),
+            "embed_dim": str(params["embed_dim"]),
+            "num_latent_tokens": str(params["num_latent_tokens"]),
+        },
+        log_model=False,
+    )
+
+    print(f"\nStarting {trial_name}")
+    print(f"Sequence Length: {sequence_length} hours")
+    print("Key parameters:")
+    print(f"  Embedding dim: {params['embed_dim']}")
+    print(f"  Latent tokens: {params['num_latent_tokens']}")
+    print(f"  Learning rate: {params['learning_rate']:.2e}")
+    print(f"  Batch size: {params['batch_size']}")
+
+    # setup data
+    train_dataset = AirQualityDataset(**data_params, mode="train")
+    val_dataset = AirQualityDataset(**data_params, mode="val", scalers=train_dataset.get_scalers())
+
+    train_loader = DataLoader(
+        dataset=train_dataset, batch_size=params["batch_size"], shuffle=True, collate_fn=collate_aq_batches, num_workers=16
+    )
+    val_loader = DataLoader(dataset=val_dataset, batch_size=params["batch_size"], collate_fn=collate_aq_batches, num_workers=16)
+
+    # get sample batch for model setup
+    sample_batch, sample_targets = next(iter(train_loader))
+
+    # create model
+    model = AQFMPredictor(
+        feature_names=sample_batch.metadata.feature_names,
+        embed_dim=params["embed_dim"],
+        num_latent_tokens=params["num_latent_tokens"],
+        backbone_type="swin",
+        max_history_size=sequence_length,
+        learning_rate=params["learning_rate"],
+    )
+
+    # setup training
+    callbacks = [
+        ModelCheckpoint(
+            dirpath=f"./checkpoints/trial_{trial.number}",
+            filename="aqfm-{epoch:02d}-{averaged_val_total_loss:.2f}",
+            monitor="averaged_val_total_loss",
+            mode="min",
+            save_top_k=1,
+            save_last=True,
+        ),
+        SimpleModelPruning(trial, monitor="averaged_val_total_loss"),
+    ]
+
+    if torch.cuda.is_available():
+        torch.cuda.init()
+
+    trainer = pl.Trainer(
+        max_epochs=1,
+        devices=1,
+        accelerator="cuda" if torch.cuda.is_available() else "cpu",
+        callbacks=callbacks,
+        gradient_clip_val=params["gradient_clip_val"],
+        logger=mlf_logger,
+        enable_progress_bar=True,
+        enable_model_summary=True,
+        log_every_n_steps=10,
+    )
+
+    try:
+        # track model size
+        n_params = sum(p.numel() for p in model.parameters())
+        trial.set_user_attr("n_parameters", n_params)
+
+        # train model
+        trainer.fit(model, train_loader, val_loader)
+        final_loss = trainer.callback_metrics["averaged_val_total_loss"].item()
+
+        print(f"Trial {trial.number} completed successfully with validation loss: {final_loss}")
+        return final_loss
+
+    except Exception as e:
+        error_type = type(e).__name__
+        error_msg = str(e)
+        print(f"Trial {trial.number} failed with {error_type}: {error_msg}")
+        print(f"Parameters that caused failure: {params}")
+        trial.set_user_attr("failure_reason", f"{error_type}: {error_msg}")
+        return float("inf")
+
+
+def main():
+    """main optimization routine"""
+    remote_server_uri = "http://0.0.0.0:5052"
+
+    # setup directories for results and models
+    results_dir = Path("optimization_results")
+    model_dir = results_dir / "models"
+    results_dir.mkdir(exist_ok=True)
+    model_dir.mkdir(exist_ok=True)
+
+    # setup mlflow
+    mlflow.set_tracking_uri(remote_server_uri)
+    experiment_name = "AQFM_optimization"
+    try:
+        experiment_id = mlflow.create_experiment(experiment_name)
+    except Exception:
+        experiment_id = mlflow.get_experiment_by_name(experiment_name).experiment_id  # noqa
+
+    mlflow.set_experiment(experiment_name)
+
+    # data parameters
     data_params = {
         "xlsx_path": Path(__file__).parent.parent / "data/AirQuality.xlsx",
-        "sequence_length": 24,
         "prediction_horizon": 1,
         "feature_groups": {
             "sensor": ["PT08.S1(CO)", "PT08.S2(NMHC)", "PT08.S3(NOx)", "PT08.S4(NO2)", "PT08.S5(O3)"],
@@ -210,78 +431,63 @@ def main():
         },
     }
 
-    train_dataset = AirQualityDataset(**data_params, mode="train")
-    val_dataset = AirQualityDataset(**data_params, mode="val", scalers=train_dataset.get_scalers())
-    test_dataset = AirQualityDataset(**data_params, mode="test", scalers=train_dataset.get_scalers())
-
-    # setup data loading
-    batch_size = 32
-    train_loader = DataLoader(
-        dataset=train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_aq_batches, num_workers=16
+    # setup optimization study
+    pruner = optuna.pruners.MedianPruner(
+        n_startup_trials=10,  # don't prune first 10 trials
+        n_warmup_steps=10,  # don't prune before 10 epochs
+        interval_steps=2,  # check for pruning every 2 epochs
     )
 
-    val_loader = DataLoader(dataset=val_dataset, batch_size=batch_size, collate_fn=collate_aq_batches, num_workers=16)
-
-    test_loader = DataLoader(dataset=test_dataset, batch_size=batch_size, collate_fn=collate_aq_batches, num_workers=16)  # noqa
-
-    # create model instance
-    checkpoint_path = None
-    da_model = AQFMPredictor(
-        feature_names=data_params["feature_groups"],
-        embed_dim=512,
-        num_latent_tokens=8,
-        backbone_type="swin",
-        max_history_size=24,
-        checkpoint_path=checkpoint_path,
+    study = optuna.create_study(
+        study_name="aqfm_optimization",
+        direction="minimize",
+        pruner=pruner,
+        storage="sqlite:///optuna_study.db",
+        load_if_exists=True,
     )
 
-    # checkpoint callback
-    checkpoint_callback = ModelCheckpoint(
-        dirpath="./checkpoints",
-        filename="aqfm-{epoch:02d}-{val_total_loss:.2f}",
-        monitor="averaged_val_total_loss",
-        mode="min",
-        save_top_k=3,
-        save_last=True,  # also save latest model
-        auto_insert_metric_name=False,
+    # run optimization
+    study.optimize(
+        lambda trial: objective(trial, data_params, remote_server_uri),
+        n_trials=1,
+        timeout=None,
+        catch=(Exception,),
+        show_progress_bar=True,
     )
 
-    trainer = pl.Trainer(
-        max_epochs=10,
-        devices=1 if torch.cuda.is_available() else None,
-        accelerator="gpu" if torch.cuda.is_available() else None,
-        callbacks=[checkpoint_callback],
-        gradient_clip_val=0.5,
-        log_every_n_steps=10,
-        enable_progress_bar=True,
-        enable_model_summary=True,
-        logger=mlf_logger,
-    )
-    # train / test
-    trainer.fit(da_model, train_loader, val_loader)
-    # trainer.test(da_model, test_loader)  # not testing for now - just training and validation tracking
+    # save results
+    best_params_path = save_best_hyperparameters(study, results_dir)
 
-    from test.test_bfm_alternate_version.src.visualization import TimeSeriesVisualizer
+    # log final results to MLFlow
+    with mlflow.start_run(experiment_id=experiment_id, run_name="best_model_summary"):
+        mlflow.log_params(study.best_trial.params)
+        mlflow.log_metric("best_validation_loss", study.best_trial.value)
+        mlflow.log_artifact(str(best_params_path))
 
-    visualizer = TimeSeriesVisualizer(
-        model=da_model,
-        dataset=val_dataset,
-        sequence_length=data_params["sequence_length"],
-        prediction_horizon=data_params["prediction_horizon"],
-    )
+    # create visualizations
+    try:
+        fig1 = optuna.visualization.plot_optimization_history(study)
+        fig2 = optuna.visualization.plot_param_importances(study)
+        fig3 = optuna.visualization.plot_parallel_coordinate(study)
 
-    save_dir = Path("visualization_results")
-    visualizer.plot_variable_predictions(save_dir)
-    visualizer.plot_feature_correlations(save_dir)
+        fig1.write_html(str(results_dir / "optimization_history.html"))
+        fig2.write_html(str(results_dir / "param_importances.html"))
+        fig3.write_html(str(results_dir / "parallel_coordinate.html"))
 
-    training_history = da_model.get_metrics_history()
+        with mlflow.start_run(experiment_id=experiment_id, run_name="optimization_visualizations"):
+            mlflow.log_artifact(str(results_dir / "optimization_history.html"))
+            mlflow.log_artifact(str(results_dir / "param_importances.html"))
+            mlflow.log_artifact(str(results_dir / "parallel_coordinate.html"))
 
-    print("Available metrics:", list(training_history.keys()))
+    except Exception as e:
+        print(f"Error creating visualization: {e}")
 
-    if training_history:
-        visualizer.plot_training_metrics(training_history, save_dir)
-    else:
-        print("No training metrics available for plotting :(((")
+    print("\nOptimization completed!")
+    print(f"Best trial: {study.best_trial.number}")
+    print(f"Best validation loss: {study.best_trial.value:.4f}")
+    print("\nResults saved in:")
+    print(f"  - Hyperparameters: {best_params_path}")
+    print(f"  - Visualizations: {results_dir}")
 
 
 if __name__ == "__main__":

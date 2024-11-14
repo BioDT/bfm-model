@@ -18,6 +18,23 @@ class AQFM(nn.Module):
         num_latent_tokens: int = 8,
         backbone_type: Literal["swin", "mvit"] = "mvit",
         max_history_size: int = 24,
+        # Encoder params
+        encoder_num_heads: int = 16,
+        encoder_head_dim: int = 64,
+        encoder_depth: int = 2,
+        encoder_drop_rate: float = 0.1,
+        encoder_mlp_ratio: float = 4.0,
+        # Backbone params
+        backbone_depth: int = 4,
+        backbone_num_heads: int = 1,
+        backbone_mlp_ratio: float = 4.0,
+        backbone_drop_rate: float = 0.1,
+        # Decoder params
+        decoder_num_heads: int = 16,
+        decoder_head_dim: int = 64,
+        decoder_depth: int = 2,
+        decoder_drop_rate: float = 0.1,
+        decoder_mlp_ratio: float = 4.0,
         **kwargs,
     ):
         super().__init__()
@@ -26,33 +43,38 @@ class AQFM(nn.Module):
             latent_tokens=num_latent_tokens,
             embed_dim=embed_dim,
             max_history_size=max_history_size,
+            num_heads=encoder_num_heads,
+            head_dim=encoder_head_dim,
+            depth=encoder_depth,
+            drop_rate=encoder_drop_rate,
+            mlp_ratio=encoder_mlp_ratio,
             **kwargs,
         )
         if backbone_type == "swin":
             self.backbone = Swin3DTransformer(
                 embed_dim=embed_dim,
-                encoder_depths=(2,),
-                encoder_num_heads=(8,),  # barely any depth, for simplicity, and since we are operating on time series
-                decoder_depths=(2,),
-                decoder_num_heads=(8,),
+                encoder_depths=(backbone_depth,),
+                encoder_num_heads=(backbone_num_heads,),
+                decoder_depths=(backbone_depth,),
+                decoder_num_heads=(backbone_num_heads,),
                 window_size=(2, 1, 1),
-                mlp_ratio=4.0,
+                mlp_ratio=backbone_mlp_ratio,
                 qkv_bias=True,
-                drop_rate=0.0,
-                attn_drop_rate=0.0,
-                drop_path_rate=0.1,
+                drop_rate=backbone_drop_rate,
+                attn_drop_rate=backbone_drop_rate,
+                drop_path_rate=backbone_drop_rate,
                 use_lora=False,
-                skip_connections=False,  # no skip connections - for a simple forward pass
+                skip_connections=False,
             )
         elif backbone_type == "mvit":
             self.backbone = MViT(
-                patch_shape=[num_latent_tokens, 1, 1],  # treating timeseries as 3D image, flat temporal dimension
+                patch_shape=[num_latent_tokens, 1, 1],
                 embed_dim=embed_dim,
-                depth=4,
-                num_heads=1,
-                mlp_ratio=4.0,
+                depth=backbone_depth,
+                num_heads=backbone_num_heads,
+                mlp_ratio=backbone_mlp_ratio,
                 qkv_bias=True,
-                path_drop_rate=0.1,
+                path_drop_rate=backbone_drop_rate,
                 attn_mode="conv",
                 pool_first=False,
                 rel_pos=False,
@@ -70,7 +92,16 @@ class AQFM(nn.Module):
 
         self.backbone_type = backbone_type
 
-        self.decoder = AQDecoder(feature_names=feature_names, embed_dim=embed_dim, **kwargs)
+        self.decoder = AQDecoder(
+            feature_names=feature_names,
+            embed_dim=embed_dim,
+            num_heads=decoder_num_heads,
+            head_dim=decoder_head_dim,
+            depth=decoder_depth,
+            drop_rate=decoder_drop_rate,
+            mlp_ratio=decoder_mlp_ratio,
+            **kwargs,
+        )
 
     def forward(self, batch, lead_time: timedelta) -> dict[str, torch.Tensor]:
         encoded = self.encoder(batch, lead_time)
@@ -94,10 +125,11 @@ def main():
 
     from torch.utils.data import DataLoader
 
-    # making a data set just as in encoder.py, data_set.py, decoder.py, and now here as well (:
+    SEQUENCE_LENGTH = 48
+
     data_params = {
         "xlsx_path": Path(__file__).parent.parent.parent / "data/AirQuality.xlsx",
-        "sequence_length": 24,
+        "sequence_length": SEQUENCE_LENGTH,
         "prediction_horizon": 1,
         "feature_groups": {
             "sensor": ["PT08.S1(CO)", "PT08.S2(NMHC)", "PT08.S3(NOx)", "PT08.S4(NO2)", "PT08.S5(O3)"],
@@ -121,7 +153,7 @@ def main():
             embed_dim=512,
             num_latent_tokens=8,
             backbone_type=backbone,
-            max_history_size=24,
+            max_history_size=SEQUENCE_LENGTH,
         )
         lead_time = timedelta(hours=1)
         predictions = model(batch, lead_time)

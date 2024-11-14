@@ -40,11 +40,9 @@ class AirQualityDataset(Dataset):
         feature_groups: Optional[Dict[str, List[str]]] = None,
     ):
         df = pd.read_excel(xlsx_path)
-        print(f"Data shape: {df.shape}")
 
         # combining date and time
         df["DateTime"] = df.apply(lambda row: pd.Timestamp.combine(row["Date"].date(), row["Time"]), axis=1)
-        print(f"Date + time example: {df['DateTime'].iloc[0]}")
 
         if feature_groups is None:
             self.sensor_features = ["PT08.S1(CO)", "PT08.S2(NMHC)", "PT08.S3(NOx)", "PT08.S4(NO2)", "PT08.S5(O3)"]
@@ -104,10 +102,6 @@ class AirQualityDataset(Dataset):
         self.prediction_horizon = prediction_horizon
 
         print(f"Created {mode} dataset with {len(self.sequences)} sequences")
-        print("Feature groups:")
-        print(f"  Sensor features: {self.sensor_features}")
-        print(f"  Ground truth features: {self.ground_truth_features}")
-        print(f"  Physical features: {self.physical_features}")
 
     def _compute_scalers(self, sequences: List[Tuple[pd.DataFrame, pd.DataFrame]]) -> Dict[str, Dict[str, float]]:
         all_data = pd.concat([seq[0] for seq in sequences])

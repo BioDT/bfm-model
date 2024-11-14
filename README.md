@@ -2,7 +2,7 @@
 
 First steps towards developing an Artificial Intelligence Foundation Model for Biodiversity research and conservation.
 
-This repository contains a self-contained implementation of the underlying architecture of the BFM. 
+This repository contains a self-contained implementation of the underlying architecture of the BFM.
 
 ## Installation
 
@@ -42,12 +42,14 @@ Start an MLFLow server
 # change here port if you get [Errno 98] Address already in use
 # also change port in the src/bfm/src/configs
 # & - optional, for interactive mode
-mlflow server --host 0.0.0.0 --port 8081 [&] 
+mlflow server --host 0.0.0.0 --port 8081 [&]
 ```
 On another terminal (if not running in interactive mode), run the train recipe
 ```
 python src/bfm/src/train.py
 ```
+
+In case of running the AQFM training script, make sure that the port you defined in it corresponds to the port of the MLFlow running server.
 
 ## Connection
 
@@ -82,6 +84,6 @@ ssh -i .ssh/snelius_key -L 0.0.0.0:<desired_port_on_local>:gcn<node_id>:<mlflow_
 - [ ] Export new requirements.txt
 - [ ] Make the output folder system coherent
 - [ ] Add more logging points
-- [ ] Add checkpointing 
+- [ ] Add checkpointing
 - [ ] Test multi-node, multi-gpu runs
 - [ ] Cleanup, remove prints etc.
