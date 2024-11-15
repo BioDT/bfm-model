@@ -29,6 +29,12 @@ class AQFM(nn.Module):
         backbone_num_heads: int = 1,
         backbone_mlp_ratio: float = 4.0,
         backbone_drop_rate: float = 0.1,
+        # MViT specific params
+        mvit_attn_mode: str = "conv",
+        mvit_pool_first: bool = False,
+        mvit_rel_pos: bool = False,
+        mvit_res_pool: bool = True,
+        mvit_dim_mul_attn: bool = False,
         # Decoder params
         decoder_num_heads: int = 16,
         decoder_head_dim: int = 64,
@@ -75,12 +81,12 @@ class AQFM(nn.Module):
                 mlp_ratio=backbone_mlp_ratio,
                 qkv_bias=True,
                 path_drop_rate=backbone_drop_rate,
-                attn_mode="conv",
-                pool_first=False,
-                rel_pos=False,
+                attn_mode=mvit_attn_mode,
+                pool_first=mvit_pool_first,
+                rel_pos=mvit_rel_pos,
                 zero_init_rel=False,
-                res_pool=True,
-                dim_mul_attn=False,
+                res_pool=mvit_res_pool,
+                dim_mul_attn=mvit_dim_mul_attn,
                 dim_scales=[(i, 1.0) for i in range(4)],  # no dimension scaling - timeseries are flat, sorta
                 head_scales=[(1, 2.0), (2, 2.0)],  # scale only heads
                 pool_kernel=[1, 1, 1],  # aand no pooling

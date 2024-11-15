@@ -242,7 +242,13 @@ class SimpleModelPruning(Callback):
 
 def generate_trial_name(trial):
     """generate descriptive name for the trial"""
-    return f"trial_{trial.number}_seq{trial.params['sequence_length']}_dim{trial.params['embed_dim']}_tokens{trial.params['num_latent_tokens']}"
+    return (
+        f"trial_{trial.number}_"
+        f"backbone={trial.params['backbone_type']}_"
+        f"seq{trial.params['sequence_length']}_"
+        f"dim{trial.params['embed_dim']}_"
+        f"tokens{trial.params['num_latent_tokens']}"
+    )
 
 
 def save_best_hyperparameters(study, save_dir):
@@ -253,6 +259,8 @@ def save_best_hyperparameters(study, save_dir):
     best_params = study.best_trial.params
     best_value = study.best_trial.value
 
+    backbone_type = best_params.get("backbone_type")
+
     save_dict = {
         "best_parameters": best_params,
         "best_validation_loss": best_value,
@@ -260,6 +268,7 @@ def save_best_hyperparameters(study, save_dir):
         "optimization_finished": datetime.now().strftime("%Y-%m-%d_%H-%M-%S"),
         "n_trials": len(study.trials),
         "study_name": study.study_name,
+        "backbone_type": backbone_type,
     }
 
     save_path = save_dir / "best_hyperparameters.json"
@@ -276,6 +285,9 @@ def objective(trial, data_params, remote_server_uri):
     sequence_length = trial.suggest_categorical("sequence_length", SEQUENCE_LENGTHS)
     data_params["sequence_length"] = sequence_length
 
+    # Select backbone type FIRST
+    backbone_type = trial.suggest_categorical("backbone_type", ["swin", "mvit"])
+
     # model hyperparameters to optimize
     params = {
         # basic model params
@@ -284,27 +296,45 @@ def objective(trial, data_params, remote_server_uri):
         "learning_rate": trial.suggest_float("learning_rate", 1e-6, 1e-3, log=True),
         "batch_size": trial.suggest_int("batch_size", 8, 128, step=8),
         "max_history_size": sequence_length,
+        "backbone_type": backbone_type,
+        "gradient_clip_val": trial.suggest_float("gradient_clip_val", 0.1, 1.0),
         # encoder params
         "encoder_num_heads": trial.suggest_int("encoder_num_heads", 4, 16, step=4),
         "encoder_head_dim": trial.suggest_int("encoder_head_dim", 32, 128, step=32),
         "encoder_depth": trial.suggest_int("encoder_depth", 1, 4),
         "encoder_drop_rate": trial.suggest_float("encoder_drop_rate", 0.0, 0.5),
         "encoder_mlp_ratio": trial.suggest_float("encoder_mlp_ratio", 2.0, 6.0),
-        # backbone params
-        "backbone_depth": trial.suggest_int("backbone_depth", 2, 6),
-        "backbone_num_heads": trial.suggest_int("backbone_num_heads", 1, 4),
-        "backbone_mlp_ratio": trial.suggest_float("backbone_mlp_ratio", 2.0, 6.0),
-        "backbone_drop_rate": trial.suggest_float("backbone_drop_rate", 0.0, 0.5),
         # decoder params
         "decoder_num_heads": trial.suggest_int("decoder_num_heads", 4, 16, step=4),
         "decoder_head_dim": trial.suggest_int("decoder_head_dim", 32, 128, step=32),
         "decoder_depth": trial.suggest_int("decoder_depth", 1, 4),
         "decoder_drop_rate": trial.suggest_float("decoder_drop_rate", 0.0, 0.5),
         "decoder_mlp_ratio": trial.suggest_float("decoder_mlp_ratio", 2.0, 6.0),
-        # training params
-        "gradient_clip_val": trial.suggest_float("gradient_clip_val", 0.1, 1.0),
     }
 
+    # Add backbone-specific parameters
+    if backbone_type == "swin":
+        backbone_params = {
+            "backbone_depth": trial.suggest_int("backbone_depth", 2, 6),
+            "backbone_num_heads": trial.suggest_int("backbone_num_heads", 1, 4),
+            "backbone_mlp_ratio": trial.suggest_float("backbone_mlp_ratio", 2.0, 6.0),
+            "backbone_drop_rate": trial.suggest_float("backbone_drop_rate", 0.0, 0.5),
+        }
+    else:  # mvit
+        backbone_params = {
+            "backbone_depth": trial.suggest_int("backbone_depth", 2, 6),
+            "backbone_num_heads": trial.suggest_int("backbone_num_heads", 4, 16, step=4),
+            "backbone_mlp_ratio": trial.suggest_float("backbone_mlp_ratio", 2.0, 6.0),
+            "backbone_drop_rate": trial.suggest_float("backbone_drop_rate", 0.0, 0.5),
+            "backbone_pool_size": trial.suggest_int("backbone_pool_size", 2, 8, step=2),
+            "backbone_kernel_qkv": trial.suggest_int("backbone_kernel_qkv", 3, 7, step=2),
+            "backbone_stride_q": trial.suggest_int("backbone_stride_q", 1, 3),
+            "backbone_stride_kv": trial.suggest_int("backbone_stride_kv", 1, 3),
+        }
+
+    params.update(backbone_params)
+
+    # Generate trial name AFTER all parameters are set
     trial_name = generate_trial_name(trial)
 
     # setup mlflow logging
@@ -346,7 +376,7 @@ def objective(trial, data_params, remote_server_uri):
         feature_names=sample_batch.metadata.feature_names,
         embed_dim=params["embed_dim"],
         num_latent_tokens=params["num_latent_tokens"],
-        backbone_type="swin",
+        backbone_type=params["backbone_type"],
         max_history_size=sequence_length,
         learning_rate=params["learning_rate"],
     )
@@ -358,7 +388,7 @@ def objective(trial, data_params, remote_server_uri):
             filename="aqfm-{epoch:02d}-{averaged_val_total_loss:.2f}",
             monitor="averaged_val_total_loss",
             mode="min",
-            save_top_k=1,
+            save_top_k=2,
             save_last=True,
         ),
         SimpleModelPruning(trial, monitor="averaged_val_total_loss"),
@@ -368,7 +398,7 @@ def objective(trial, data_params, remote_server_uri):
         torch.cuda.init()
 
     trainer = pl.Trainer(
-        max_epochs=1,
+        max_epochs=100,
         devices=1,
         accelerator="cuda" if torch.cuda.is_available() else "cpu",
         callbacks=callbacks,
@@ -402,7 +432,7 @@ def objective(trial, data_params, remote_server_uri):
 
 def main():
     """main optimization routine"""
-    remote_server_uri = "http://0.0.0.0:5052"
+    remote_server_uri = "http://0.0.0.0:8082"
 
     # setup directories for results and models
     results_dir = Path("optimization_results")
@@ -434,8 +464,8 @@ def main():
     # setup optimization study
     pruner = optuna.pruners.MedianPruner(
         n_startup_trials=10,  # don't prune first 10 trials
-        n_warmup_steps=10,  # don't prune before 10 epochs
-        interval_steps=2,  # check for pruning every 2 epochs
+        n_warmup_steps=5,  # don't prune before 5 epochs
+        interval_steps=1,  # check for pruning every 1 epoch
     )
 
     study = optuna.create_study(
@@ -449,7 +479,7 @@ def main():
     # run optimization
     study.optimize(
         lambda trial: objective(trial, data_params, remote_server_uri),
-        n_trials=1,
+        n_trials=100,
         timeout=None,
         catch=(Exception,),
         show_progress_bar=True,
