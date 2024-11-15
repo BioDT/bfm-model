@@ -29,7 +29,6 @@ class PatchEmbed(nn.Module):
         patch_shape: list[int],  # [T, H, W]
     ):
         super().__init__()
-        print(f"Initializing PatchEmbed with input_dim={input_dim}, embed_dim={embed_dim}")
         self.patch_shape = patch_shape
         # Linear projection to embedding dimension
         self.proj = nn.Linear(input_dim, embed_dim)  # shape: [B, L, input_dim] -> [B, L, embed_dim]
@@ -98,8 +97,6 @@ class MViT(nn.Module):
         q_stride: list = [(0, [1, 2, 2]), (1, [1, 2, 2]), (2, [1, 2, 2])],
     ):
         super().__init__()
-        print(f"\nInitializing MViT with patch_shape={patch_shape}")
-        print(f"Model parameters: embed_dim={embed_dim}, depth={depth}, num_heads={num_heads}")
 
         # initialize embeddings, scaling factors, and pooling configs
         self._init_embeddings(patch_shape, embed_dim)
@@ -266,30 +263,19 @@ class MViT(nn.Module):
             tokens: Output tensor of shape [B, L, D]
         """
         batch_size, seq_len, dim = tokens.shape
-        print("\nMViT Forward Pass:")
-        print(f"Input shape: [B={batch_size}, L={seq_len}, D={dim}]")
-        print(f"Patch shape: {patch_shape}")
-        print(f"Position embedding shape: {self.pos_embed.shape}")
 
         # Token embedding and position embedding in one forward pass
         tokens, spatial_shape = self.patch_embed(tokens)
         tokens = tokens + self.pos_embed
 
-        print(f"After embeddings: {tokens.shape}")
-        print(f"Spatial shape: {spatial_shape}")
-
         # Process through transformer blocks
         curr_shape = spatial_shape  # [T, H, W] spatial dimensions
-        print(f"Initial spatial shape: {curr_shape}")
 
         # Forward through transformer blocks
         for i, block in enumerate(self.blocks):
-            print(f"\nProcessing block {i}")
             tokens, curr_shape = block(tokens, curr_shape)  # shape: [B, L, D]
-            print(f"After block {i}: shape={tokens.shape}, spatial_shape={curr_shape}")
 
         # Final normalization and projection
         tokens = self.proj(self.norm(tokens))
-        print(f"Final output: {tokens.shape}")
 
         return tokens

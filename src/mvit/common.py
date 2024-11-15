@@ -36,8 +36,6 @@ class MLPBlock(nn.Module):
 
         self.dropout = nn.Dropout(dropout_rate) if dropout_rate > 0.0 else nn.Identity()
 
-        print(f"MLPBlock initialized: input_dim={input_dim}, hidden_dim={hidden_dim}, output_dim={output_dim}")
-
     def forward(self, input_tensor: torch.Tensor) -> torch.Tensor:
         """Forward pass of MLP block.
 
@@ -47,12 +45,10 @@ class MLPBlock(nn.Module):
         Returns:
             Output tensor of shape [batch, *, output_dim]
         """
-        print(f"MLPBlock input shape: {input_tensor.shape}")
         hidden_features = self.activation(self.linear1(input_tensor))
         hidden_features = self.dropout(hidden_features)
         output_features = self.linear2(hidden_features)
         output_features = self.dropout(output_features)
-        print(f"MLPBlock output shape: {output_features.shape}")
         return output_features
 
 
