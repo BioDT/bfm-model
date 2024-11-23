@@ -476,7 +476,11 @@ def main():
         load_if_exists=True,
     )
 
-    # run optimization
+    # Add this before study.optimize()
+    print(f"Resuming optimization from trial {len(study.trials)}")
+    print(f"Best value so far: {study.best_trial.value if len(study.trials) > 0 else 'No trials yet'}")
+    print(f"Best trial so far: {study.best_trial.number if len(study.trials) > 0 else 'No trials yet'}")
+    
     study.optimize(
         lambda trial: objective(trial, data_params, remote_server_uri),
         n_trials=100,
