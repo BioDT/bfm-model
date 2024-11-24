@@ -54,7 +54,6 @@ class AQFM(nn.Module):
             depth=encoder_depth,
             drop_rate=encoder_drop_rate,
             mlp_ratio=encoder_mlp_ratio,
-            **kwargs,
         )
         if backbone_type == "swin":
             self.backbone = Swin3DTransformer(
@@ -106,7 +105,6 @@ class AQFM(nn.Module):
             depth=decoder_depth,
             drop_rate=decoder_drop_rate,
             mlp_ratio=decoder_mlp_ratio,
-            **kwargs,
         )
 
     def forward(self, batch, lead_time: timedelta) -> dict[str, torch.Tensor]:

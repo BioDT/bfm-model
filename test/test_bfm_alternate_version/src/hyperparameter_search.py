@@ -149,7 +149,6 @@ class AQFMPredictor(pl.LightningModule):
         predictions = self(batch)
 
         losses, metrics = self._compute_metrics(predictions=predictions, targets=targets, prefix="val_")
-
         batch_size = targets[list(targets.keys())[0]].size(0)
 
         for name, value in {**losses, **metrics}.items():
@@ -242,13 +241,11 @@ class SimpleModelPruning(Callback):
 
 def generate_trial_name(trial):
     """generate descriptive name for the trial"""
-    return (
-        f"trial_{trial.number}_"
+    return (f"trial_{trial.number}_"
         f"backbone={trial.params['backbone_type']}_"
         f"seq{trial.params['sequence_length']}_"
         f"dim{trial.params['embed_dim']}_"
-        f"tokens{trial.params['num_latent_tokens']}"
-    )
+        f"tokens{trial.params['num_latent_tokens']}")
 
 
 def save_best_hyperparameters(study, save_dir):
@@ -285,7 +282,7 @@ def objective(trial, data_params, remote_server_uri):
     sequence_length = trial.suggest_categorical("sequence_length", SEQUENCE_LENGTHS)
     data_params["sequence_length"] = sequence_length
 
-    # Select backbone type FIRST
+    # first things first - backbone type
     backbone_type = trial.suggest_categorical("backbone_type", ["swin", "mvit"])
 
     # model hyperparameters to optimize
@@ -380,6 +377,7 @@ def objective(trial, data_params, remote_server_uri):
         max_history_size=sequence_length,
         learning_rate=params["learning_rate"],
     )
+
 
     # setup training
     callbacks = [
@@ -476,7 +474,6 @@ def main():
         load_if_exists=True,
     )
 
-    # Add this before study.optimize()
     print(f"Resuming optimization from trial {len(study.trials)}")
     print(f"Best value so far: {study.best_trial.value if len(study.trials) > 0 else 'No trials yet'}")
     print(f"Best trial so far: {study.best_trial.number if len(study.trials) > 0 else 'No trials yet'}")
