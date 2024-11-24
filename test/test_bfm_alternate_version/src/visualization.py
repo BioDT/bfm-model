@@ -165,7 +165,6 @@ def get_model_predictions(model, dataset, cutoff_idx, variable_name, model_type=
                     raise e
             else:  # the AQFM variants
                 print(f"\nProcessing batch {i}:")
-                print(f"Batch structure: {type(batch)}")
                 
                 try:
                     # new batch with the same structure but reshaped tensors, because 
@@ -175,11 +174,6 @@ def get_model_predictions(model, dataset, cutoff_idx, variable_name, model_type=
                         physical_vars={name: value.unsqueeze(0) for name, value in batch.physical_vars.items()},
                         metadata=batch.metadata
                     )
-
-                    print(f"Reshaped batch structure:")
-                    print(f"Sensor vars shape: {[v.shape for v in new_batch.sensor_vars.values()]}")
-                    print(f"Ground truth vars shape: {[v.shape for v in new_batch.ground_truth_vars.values()]}")
-                    print(f"Physical vars shape: {[v.shape for v in new_batch.physical_vars.values()]}")
 
                     # imma let the AQFMPredictor wrapper handle the timedelta and model call
                     output = model(new_batch)
