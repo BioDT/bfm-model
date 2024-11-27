@@ -241,11 +241,13 @@ class SimpleModelPruning(Callback):
 
 def generate_trial_name(trial):
     """generate descriptive name for the trial"""
-    return (f"trial_{trial.number}_"
+    return (
+        f"trial_{trial.number}_"
         f"backbone={trial.params['backbone_type']}_"
         f"seq{trial.params['sequence_length']}_"
         f"dim{trial.params['embed_dim']}_"
-        f"tokens{trial.params['num_latent_tokens']}")
+        f"tokens{trial.params['num_latent_tokens']}"
+    )
 
 
 def save_best_hyperparameters(study, save_dir):
@@ -378,7 +380,6 @@ def objective(trial, data_params, remote_server_uri):
         learning_rate=params["learning_rate"],
     )
 
-
     # setup training
     callbacks = [
         ModelCheckpoint(
@@ -477,7 +478,7 @@ def main():
     print(f"Resuming optimization from trial {len(study.trials)}")
     print(f"Best value so far: {study.best_trial.value if len(study.trials) > 0 else 'No trials yet'}")
     print(f"Best trial so far: {study.best_trial.number if len(study.trials) > 0 else 'No trials yet'}")
-    
+
     study.optimize(
         lambda trial: objective(trial, data_params, remote_server_uri),
         n_trials=100,

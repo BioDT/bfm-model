@@ -5,6 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange, repeat
 
+from src.bfm.src.dataset_basics import load_batches
 from src.perceiver_components.helpers_io import dropout_seq
 from src.perceiver_components.pos_encoder import build_position_encoding
 from src.perceiver_core.perceiver_io import PerceiverIO
@@ -13,16 +14,19 @@ from src.perceiver_core.perceiver_io import PerceiverIO
 class BFMEncoder(nn.Module):
     def __init__(
         self,
-        surf_vars: tuple[str, ...],
-        static_vars: tuple[str, ...] | None,
+        surface_vars: tuple[str, ...],
+        single_vars: tuple[str, ...],
         atmos_vars: tuple[str, ...],
-        atmos_levels: list[int] | None = None,
+        species_vars: tuple[str, ...],
+        land_vars: tuple[str, ...],
+        agriculture_vars: tuple[str, ...],
+        forest_vars: tuple[str, ...],
+        atmos_levels: tuple[int, ...],
         patch_size: int = 4,
-        latent_levels: int = 8,
-        perceiver_latents: int = 1024,
-        embed_dim: int = 512,
-        num_heads: int = 16,
-        head_dim: int = 64,
+        perceiver_latents: int = 256,
+        embed_dim: int = 128,
+        num_heads: int = 4,
+        head_dim: int = 16,
         drop_rate: float = 0.1,
         depth: int = 2,
         mlp_ratio: float = 4.0,
@@ -30,10 +34,11 @@ class BFMEncoder(nn.Module):
         perceiver_ln_eps: float = 1e-5,
         num_fourier_bands: int = 64,
         max_frequency: float = 224.0,
-        num_input_axes: int = 2,
+        num_input_axes: int = 1,
         position_encoding_type: str = "fourier",
     ):
         super().__init__()
+        # basic config
         self.drop_rate = drop_rate
         self.embed_dim = embed_dim
         self.patch_size = patch_size
@@ -48,222 +53,386 @@ class BFMEncoder(nn.Module):
         self.depth = depth
         self.mlp_ratio = mlp_ratio
 
-        self.surf_vars = surf_vars
-        self.static_vars = static_vars
+        # variable names
+        self.surface_vars = surface_vars
+        self.single_vars = single_vars
         self.atmos_vars = atmos_vars
+        self.species_vars = species_vars
+        self.land_vars = land_vars
+        self.agriculture_vars = agriculture_vars
+        self.forest_vars = forest_vars
         self.atmos_levels = atmos_levels
 
-        surf_vars = surf_vars + static_vars if static_vars is not None else surf_vars
-        self.surf_var_map = {v: i for i, v in enumerate(surf_vars)}
-        self.atmos_var_map = {v: i for i, v in enumerate(atmos_vars)}
+        # variable mappings
+        self.var_maps = {
+            "surface": {v: i for i, v in enumerate(surface_vars)},
+            "single": {v: i for i, v in enumerate(single_vars)},
+            "atmos": {v: i for i, v in enumerate(atmos_vars)},
+            "species": {v: i for i, v in enumerate(species_vars)},
+            "land": {v: i for i, v in enumerate(land_vars)},
+            "agriculture": {v: i for i, v in enumerate(agriculture_vars)},
+            "forest": {v: i for i, v in enumerate(forest_vars)},
+        }
 
-        self.latent_levels = latent_levels
-        self.atmos_latents = nn.Parameter(torch.randn(latent_levels - 1, embed_dim))
-        self.surf_level_encoding = nn.Parameter(torch.randn(embed_dim))
-        self.latents = nn.Parameter(torch.randn(perceiver_latents, embed_dim))
-
+        # init embeddings
         pos_encoding_dim = self._calculate_pos_encoding_dim()
-        self.pos_embed = nn.Linear(pos_encoding_dim + 2, embed_dim)  # +2 for lat and lon
-        self.scale_embed = nn.Linear(embed_dim, embed_dim)
+
+        # position and coordinate embeddings
+        self.pos_embed = nn.Linear(pos_encoding_dim, embed_dim)  # vourier features + original coords
         self.lead_time_embed = nn.Linear(embed_dim, embed_dim)
         self.absolute_time_embed = nn.Linear(embed_dim, embed_dim)
+
+        # embedding for atmospheric pressure levels
         self.atmos_levels_embed = nn.Linear(pos_encoding_dim, embed_dim)
 
-        self.surf_token_embeds = self._create_patch_embed(len(surf_vars), patch_size, embed_dim, max_history_size)
+        # token embeddings for each variable type
+        self.surface_token_embeds = self._create_patch_embed(len(surface_vars), patch_size, embed_dim, max_history_size)
+        self.single_token_embeds = self._create_patch_embed(len(single_vars), patch_size, embed_dim, max_history_size)
         self.atmos_token_embeds = self._create_patch_embed(len(atmos_vars), patch_size, embed_dim, max_history_size)
+        self.species_token_embeds = self._create_patch_embed(len(species_vars), patch_size, embed_dim, max_history_size)
+        self.land_token_embeds = self._create_patch_embed(len(land_vars), patch_size, embed_dim, max_history_size)
+        self.agriculture_token_embeds = self._create_patch_embed(len(agriculture_vars), patch_size, embed_dim, max_history_size)
+        self.forest_token_embeds = self._create_patch_embed(len(forest_vars), patch_size, embed_dim, max_history_size)
 
-        self.perceiver_io = None
-        self.latents = None
+        # init latent queries
+        self.latents = nn.Parameter(torch.randn(perceiver_latents, embed_dim))
 
+        # dropout
         self.pos_drop = nn.Dropout(p=drop_rate)
 
+        # init weights
         self.apply(self._init_weights)
-        nn.init.trunc_normal_(self.atmos_latents, std=0.02)
-        nn.init.trunc_normal_(self.surf_level_encoding, std=0.02)
+
+        # add normalization layer
+        self.pre_perceiver_norm = nn.LayerNorm(embed_dim)
 
     def _calculate_pos_encoding_dim(self):
-        return 2 * self.num_fourier_bands + 1
+        """get dimension for positional encoding"""
+        return 2 * self.num_fourier_bands * 2 + 2
 
-    def _initialize_perceiver(self, H, W):
-        # Calculate the number of patches per level
-        print(f"Dividing H and W by patch_size: {H // self.patch_size}, {W // self.patch_size}")
-        num_patches = (H // self.patch_size) * (W // self.patch_size)
-        print(f"Calculated num_patches: {num_patches}")
-
-        # Calculate the number of latent tokens
-        # This should equal C * H' * W', where:
-        # C is the number of latent levels
-        # H' is H // patch_size
-        # W' is W // patch_size
-        latent_tokens = self.latent_levels * num_patches
-
-        print(f"Calculated latent tokens: {latent_tokens}")
-
-        self.perceiver_io = PerceiverIO(
-            num_layers=self.depth,
-            dim=self.embed_dim,
-            queries_dim=self.embed_dim,
-            logits_dimension=None,
-            num_latent_tokens=latent_tokens,
-            latent_dimension=self.embed_dim,
-            cross_attention_heads=self.num_heads,
-            latent_attention_heads=self.num_heads,
-            cross_attention_head_dim=self.head_dim,
-            latent_attention_head_dim=self.head_dim,
-            num_fourier_bands=self.num_fourier_bands,
-            max_frequency=self.max_frequency,
-            num_input_axes=1,
-            position_encoding_type=self.position_encoding_type,
-        )
-
-        self.latents = nn.Parameter(torch.randn(latent_tokens, self.embed_dim))
-        self.patch_shape = (self.latent_levels, H // self.patch_size, W // self.patch_size)
-
-    def _create_patch_embed(self, num_vars, patch_size, embed_dim, max_history_size):
-        in_dim = num_vars * max_history_size * patch_size * patch_size
-        return nn.Sequential(nn.Linear(in_dim, embed_dim), nn.LayerNorm(embed_dim))
+    def _create_patch_embed(self, num_vars: int, patch_size: int, embed_dim: int, max_history_size: int) -> nn.Linear:
+        """create patch embedding layer for a variable type"""
+        return nn.Linear(num_vars * patch_size * patch_size * max_history_size, embed_dim)
 
     def _init_weights(self, m):
+        """init weights for linear layers and layer norm"""
         if isinstance(m, nn.Linear):
-            nn.init.trunc_normal_(m.weight, std=0.02)
+            torch.nn.init.xavier_uniform_(m.weight)
             if m.bias is not None:
                 nn.init.constant_(m.bias, 0)
         elif isinstance(m, nn.LayerNorm):
             nn.init.constant_(m.bias, 0)
             nn.init.constant_(m.weight, 1.0)
 
-    def _build_position_encoding(self, shape):
-        if self.position_encoding_type is None:
-            return None
-        return build_position_encoding(
+    def _initialize_perceiver(self, H: int, W: int):
+        """init the Perceiver IO model with structured latents"""
+        # get number of patches
+        num_patches = (H // self.patch_size) * (W // self.patch_size)
+
+        # set the device from an existing parameter or default to CPU
+        device = (
+            next(self.parameters()).device
+            if list(self.parameters())
+            else torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        )
+
+        # Calculate structured latent tokens
+        surface_latents = num_patches if self.surface_vars else 0
+        single_latents = num_patches if self.single_vars else 0
+        atmos_latents = num_patches * len(self.atmos_levels) if self.atmos_vars else 0
+        species_latents = num_patches if self.species_vars else 0
+        land_latents = num_patches if self.land_vars else 0
+        agri_latents = num_patches if self.agriculture_vars else 0
+        forest_latents = num_patches if self.forest_vars else 0
+
+        # store latent sizes for forward pass
+        self.latent_sizes = {
+            "surface": surface_latents,
+            "single": single_latents,
+            "atmos": atmos_latents,
+            "species": species_latents,
+            "land": land_latents,
+            "agriculture": agri_latents,
+            "forest": forest_latents,
+        }
+
+        # initialize structured latents only if needed
+        latent_list = []
+        if surface_latents > 0:
+            self.surface_latents = nn.Parameter(torch.randn(surface_latents, self.embed_dim, device=device))
+            latent_list.append(self.surface_latents)
+        if single_latents > 0:
+            self.single_latents = nn.Parameter(torch.randn(single_latents, self.embed_dim, device=device))
+            latent_list.append(self.single_latents)
+        if atmos_latents > 0:
+            self.atmos_latents = nn.Parameter(torch.randn(atmos_latents, self.embed_dim, device=device))
+            latent_list.append(self.atmos_latents)
+        if species_latents > 0:
+            self.species_latents = nn.Parameter(torch.randn(species_latents, self.embed_dim, device=device))
+            latent_list.append(self.species_latents)
+        if land_latents > 0:
+            self.land_latents = nn.Parameter(torch.randn(land_latents, self.embed_dim, device=device))
+            latent_list.append(self.land_latents)
+        if agri_latents > 0:
+            self.agri_latents = nn.Parameter(torch.randn(agri_latents, self.embed_dim, device=device))
+            latent_list.append(self.agri_latents)
+        if forest_latents > 0:
+            self.forest_latents = nn.Parameter(torch.randn(forest_latents, self.embed_dim, device=device))
+            latent_list.append(self.forest_latents)
+
+        # initialize Perceiver IO with total latents
+        total_latents = sum(self.latent_sizes.values())
+
+        # combine all latents for backward compatibility
+        self.latents = nn.Parameter(
+            torch.cat(latent_list, dim=0) if latent_list else torch.randn(total_latents, self.embed_dim, device=device)
+        )
+
+        # Initialize Perceiver IO
+        self.perceiver_io = PerceiverIO(
+            num_layers=self.depth,
+            dim=self.embed_dim,
+            queries_dim=self.embed_dim,
+            logits_dimension=None,
+            num_latent_tokens=total_latents,
+            latent_dimension=self.embed_dim,
+            cross_attention_heads=self.num_heads,
+            latent_attention_heads=self.num_heads,
+            cross_attention_head_dim=self.head_dim,
+            latent_attention_head_dim=self.head_dim,
+            sequence_dropout_prob=self.drop_rate,
+            num_fourier_bands=self.num_fourier_bands,
+            max_frequency=self.max_frequency,
+            num_input_axes=self.num_input_axes,
             position_encoding_type=self.position_encoding_type,
-            index_dims=shape[1:-1],
+        ).to(device)
+
+    def _apply_position_encoding(self, input_data):
+        """apply position encoding"""
+        if self.position_encoding_type in ["fourier", "trainable"]:
+            pos_encoder = self._build_position_encoding(input_data.shape)
+            pos_encoding = pos_encoder(batch_size=input_data.shape[0])
+            self._check_tensor(pos_encoding, "Position encoding")
+
+            input_data = torch.cat((input_data, pos_encoding), dim=-1)
+
+        return input_data
+
+    def _check_tensor(self, tensor, name, replace_values=True, group=None):
+        """check tensor for NaN, inf, and extreme values with optional group context"""
+        stats = {
+            "nan_count": torch.isnan(tensor).sum().item(),
+            "inf_count": torch.isinf(tensor).sum().item(),
+            "mean": tensor.mean().item() if not torch.isnan(tensor.mean()) else "NaN",
+            "std": tensor.std().item() if not torch.isnan(tensor.std()) else "NaN",
+            "min": tensor.min().item() if not torch.isnan(tensor.min()) else "NaN",
+            "max": tensor.max().item() if not torch.isnan(tensor.max()) else "NaN",
+        }
+
+        # uncomment the below to see some extra information of what is happening in our input data
+        # group_context = f" in {group}" if group else ""
+        has_issues = stats["nan_count"] > 0 or stats["inf_count"] > 0
+
+        if has_issues:
+            # print(f"\nISSUES DETECTED in {name}{group_context}:",
+            #       f"Shape: {tensor.shape}",
+            #       f"NaN count: {stats['nan_count']}",
+            #       f"Inf count: {stats['inf_count']}",
+            #       f"Mean: {stats['mean']}",
+            #       f"Std: {stats['std']}",
+            #       f"Min: {stats['min']}",
+            #       f"Max: {stats['max']}")
+
+            if replace_values:
+                # print("Attempting to fix issues...")
+                tensor = torch.nan_to_num(tensor, nan=0.0, posinf=1e6, neginf=-1e6)
+                # print("After fixing:")
+                # print(f"NaN count: {torch.isnan(tensor).sum().item()}")
+                # print(f"Inf count: {torch.isinf(tensor).sum().item()}")
+
+        return tensor if replace_values else has_issues
+
+    def process_variable_group(self, variables, token_embeds, group_name):
+        if not variables:
+            print(f"\n{group_name}: No variables found")
+            return None
+
+        # stack variables
+        values = tuple(variables.values())
+        x = torch.stack(values, dim=0)
+        x = self._check_tensor(x, f"{group_name} initial stack")
+
+        # reshape and check
+        x = rearrange(x, "v t (h p1) (w p2) -> (h w) (v t p1 p2)", p1=self.patch_size, p2=self.patch_size)
+        x = self._check_tensor(x, f"{group_name} after rearrange")
+
+        # apply token embedding and check
+        x = token_embeds(x)
+        x = self._check_tensor(x, f"{group_name} after embedding")
+
+        return x
+
+    def forward(self, batch, lead_time):
+        """forward pass of the encoder with structured latent handling"""
+        B = 1  # the assumption is that we are taking one batch at a time, but that can be changed of course
+        H, W = batch.batch_metadata.latitudes.shape[0], batch.batch_metadata.longitudes.shape[0]
+
+        if not hasattr(self, "perceiver_io"):
+            self._initialize_perceiver(H, W)
+
+        # process each variable group
+        embeddings = []
+        embedding_groups = {}
+
+        surface_embed = self.process_variable_group(
+            batch.surface_variables, self.surface_token_embeds, "Surface Variables"
+        )  # shape: [num_patches, embed_dim]
+        if surface_embed is not None:
+            embeddings.append(surface_embed)
+            embedding_groups["surface"] = surface_embed
+
+        single_embed = self.process_variable_group(
+            batch.single_variables, self.single_token_embeds, "Single Variables"
+        )  # shape: [num_patches, embed_dim]
+        if single_embed is not None:
+            embeddings.append(single_embed)
+            embedding_groups["single"] = single_embed
+
+        # Handle atmospheric variables
+        atmos = []
+        if batch.atmospheric_variables:
+            for level_idx, level in enumerate(self.atmos_levels):
+                level_vars = {k: v[:, level_idx] for k, v in batch.atmospheric_variables.items()}
+                level_embed = self.process_variable_group(
+                    level_vars, self.atmos_token_embeds, f"Atmospheric Level {level}"
+                )  # shape: [num_patches, embed_dim]
+                if level_embed is not None:
+                    atmos.append(level_embed)
+
+            if len(atmos) > 0:
+                stacked_atmos = torch.stack(atmos, dim=0)  # shape: [num_levels, num_patches, embed_dim]
+                embeddings.append(stacked_atmos)
+                embedding_groups["atmos"] = stacked_atmos
+
+        species_embed = self.process_variable_group(
+            batch.species_extinction_variables, self.species_token_embeds, "Species Variables"
+        )  # shape: [num_patches, embed_dim]
+        if species_embed is not None:
+            embeddings.append(species_embed)
+            embedding_groups["species"] = species_embed
+
+        land_embed = self.process_variable_group(
+            batch.land_variables, self.land_token_embeds, "Land Variables"
+        )  # shape: [num_patches, embed_dim]
+        if land_embed is not None:
+            embeddings.append(land_embed)
+            embedding_groups["land"] = land_embed
+
+        agriculture_embed = self.process_variable_group(
+            batch.agriculture_variables, self.agriculture_token_embeds, "Agriculture Variables"
+        )  # shape: [num_patches, embed_dim]
+        if agriculture_embed is not None:
+            embeddings.append(agriculture_embed)
+            embedding_groups["agriculture"] = agriculture_embed
+
+        forest_embed = self.process_variable_group(
+            batch.forest_variables, self.forest_token_embeds, "Forest Variables"
+        )  # shape: [num_patches, embed_dim]
+        if forest_embed is not None:
+            embeddings.append(forest_embed)
+            embedding_groups["forest"] = forest_embed
+
+        # Combine embeddings while maintaining group structure
+        x = torch.cat(
+            [emb.view(1, -1, self.embed_dim) for emb in embeddings], dim=1
+        )  # shape: [batch_size, num_patches * num_variable_groups, embed_dim]
+        x = self._check_tensor(x, "Combined embeddings")
+
+        # add position encodings
+        lat, lon = batch.batch_metadata.latitudes, batch.batch_metadata.longitudes
+        lat_grid, lon_grid = torch.meshgrid(lat, lon, indexing="ij")
+        pos_input = torch.stack((lat_grid, lon_grid), dim=-1).to(x.device)
+
+        # reshape to patches
+        H, W = pos_input.shape[:2]
+        pos_input = pos_input.reshape(H // self.patch_size, self.patch_size, W // self.patch_size, self.patch_size, 2)
+        pos_input = pos_input[:, self.patch_size // 2, :, self.patch_size // 2, :]
+
+        # flatten patches before position encoding
+        pos_input_flat = pos_input.reshape(-1, 2)  # shape: [num_patches, 2]
+
+        # build position encoder and move to correct device
+        pos_encoder = build_position_encoding(
+            position_encoding_type=self.position_encoding_type,
+            index_dims=(3040,),
             fourier_position_encoding_kwargs={
                 "num_bands": self.num_fourier_bands,
                 "max_freq": self.max_frequency,
                 "concat_pos": True,
                 "sine_only": False,
             },
+        ).to(x.device)
+
+        # normalize positions to [-1, 1] range
+        pos_input_norm = (
+            2 * (pos_input_flat - pos_input_flat.min(dim=0)[0]) / (pos_input_flat.max(dim=0)[0] - pos_input_flat.min(dim=0)[0])
+            - 1
         )
 
-    def _apply_position_encoding(self, input_data):
-        batch_size, *_, device = *input_data.shape, input_data.device
-        if self.position_encoding_type in ["fourier", "trainable"]:
-            pos_encoder = self._build_position_encoding(input_data.shape)
-            pos_encoding = pos_encoder(batch_size=batch_size).to(device)
-            input_data = torch.cat((input_data, pos_encoding), dim=-1)
-        return input_data
+        # add batch dimension and apply position encoding
+        pos_input_norm = pos_input_norm.unsqueeze(0)  # [1, num_patches, 2]
+        pos_encode = pos_encoder(batch_size=1, pos=pos_input_norm)  # shape: [batch_size, num_patches, pos_encoding_dim]
 
-    def forward(self, batch, lead_time):
-        surf_vars = self.surf_vars
-        static_vars = self.static_vars
-        atmos_vars = self.atmos_vars
-        atmos_levels = batch.metadata.atmos_levels
-        print(f"Surface variables: {surf_vars}")
-        print(f"Static variables: {static_vars}")
-        print(f"Atmospheric variables: {atmos_vars}")
-        print(f"Atmospheric levels: {atmos_levels}")
+        # apply linear embedding
+        pos_encode = pos_encode.squeeze(0)
+        pos_encode = self.pos_embed(pos_encode)  # shape: [num_patches, embed_dim]
 
-        x_surf = torch.stack(tuple(batch.surf_vars.values()), dim=2)
-        x_atmos = torch.stack(tuple(batch.atmos_vars.values()), dim=2)
-        print(f"x_surf shape: {x_surf.shape}")
-        print(f"x_atmos shape: {x_atmos.shape}")
+        # add batch dimension and expand for variable groups
+        pos_encode = pos_encode.unsqueeze(0)  # [1, 3040, embed_dim]
+        num_var_groups = x.shape[1] // (H // self.patch_size * W // self.patch_size)
+        pos_encode = pos_encode.repeat_interleave(
+            num_var_groups, dim=1
+        )  # shape: [batch_size, num_patches * num_variable_groups, embed_dim]  (middle dimension - rough estimate, since we have atmos levels)
 
-        B, T, _, C, H, W = x_atmos.size()
-        print(f"Batch size (B): {B}, Time steps (T): {T}, Atmos levels (C): {C}, Height (H): {H}, Width (W): {W}")
+        # add position encoding
+        x = x + pos_encode
+        x = self._check_tensor(
+            x, "After adding position encoding"
+        )  # shape: [batch_size, num_patches * num_variable_groups, embed_dim]
 
-        if static_vars:
-            print("Processing static variables")
-            x_static = torch.stack(tuple(batch.static_vars.values()), dim=0)
-            x_static = x_static.unsqueeze(0).unsqueeze(0).expand(B, T, -1, H, W)
-            x_surf = torch.cat((x_surf, x_static), dim=2)
-            print(f"x_surf shape after adding static vars: {x_surf.shape}")
-
-        if self.perceiver_io is None:
-            self._initialize_perceiver(H, W)
-
-        lat, lon = batch.metadata.lat, batch.metadata.lon
-        print(f"lat shape: {lat.shape}, lon shape: {lon.shape}")
-
-        # Create 2D grid of lat and lon
-        lat_grid, lon_grid = torch.meshgrid(lat, lon, indexing="ij")
-        print(f"Lat grid shape: {lat_grid.shape}, Lon grid shape: {lon_grid.shape}")
-        pos_input = torch.stack((lat_grid, lon_grid), dim=-1)
-        print(f"Position input shape: {pos_input.shape}")
-
-        # Add position encoding
-        pos_encode = self._apply_position_encoding(pos_input)
-        pos_encode = self.pos_embed(pos_encode)
-        pos_encode = pos_encode.view(1, H * W, -1)
-        pos_encode = F.interpolate(
-            pos_encode.transpose(1, 2), size=(H // self.patch_size) * (W // self.patch_size), mode="linear", align_corners=False
-        )
-        pos_encode = pos_encode.transpose(1, 2)
-        print(f"Position encoding shape: {pos_encode.shape}")
-
-        # Process surface variables
-        x_surf = rearrange(x_surf, "b t v (h p1) (w p2) -> (b h w) (v t p1 p2)", p1=self.patch_size, p2=self.patch_size)
-        x_surf = self.surf_token_embeds(x_surf)
-        x_surf = rearrange(x_surf, "(b h w) d -> b (h w) d", h=H // self.patch_size, w=W // self.patch_size)
-        x_surf = x_surf + self.surf_level_encoding[None, None, :]
-        print(f"x_surf shape after processing: {x_surf.shape}")
-
-        # Process atmospheric variables
-        x_atmos = rearrange(x_atmos, "b t v c (h p1) (w p2) -> (b c h w) (v t p1 p2)", p1=self.patch_size, p2=self.patch_size)
-        x_atmos = self.atmos_token_embeds(x_atmos)
-        x_atmos = rearrange(x_atmos, "(b c h w) d -> b c (h w) d", b=B, c=C, h=H // self.patch_size, w=W // self.patch_size)
-
-        # Add atmospheric level embeddings
-        atmos_levels_tensor = torch.tensor(atmos_levels, device=x_atmos.device)
-        atmos_levels_encode = self._apply_position_encoding(atmos_levels_tensor.unsqueeze(0).unsqueeze(-1))
-        atmos_levels_encode = atmos_levels_encode[..., :-1]
-        atmos_levels_embed = self.atmos_levels_embed(atmos_levels_encode.squeeze(0))
-        atmos_levels_embed = atmos_levels_embed.unsqueeze(0).unsqueeze(2).expand_as(x_atmos)
-        x_atmos = x_atmos + atmos_levels_embed
-        print(f"x_atmos shape after processing: {x_atmos.shape}")
-
-        # Combine surface and atmospheric data
-        x = torch.cat((x_surf.unsqueeze(1), x_atmos), dim=1)
-        print(f"Combined x shape: {x.shape}")
-
-        # Add position encoding
-        x = x + pos_encode.unsqueeze(1)
-
-        # Add lead time embedding
+        # add time embeddings
         lead_hours = lead_time.total_seconds() / 3600
         lead_times = lead_hours * torch.ones(B, dtype=x.dtype, device=x.device)
-        lead_time_encode = self._time_encoding(lead_times)
-        lead_time_emb = self.lead_time_embed(lead_time_encode)
-        x = x + lead_time_emb.unsqueeze(1).unsqueeze(1)
+        lead_time_encode = self._time_encoding(lead_times)  # shape: [batch_size, embed_dim]
+        lead_time_encode = self._check_tensor(lead_time_encode, "Lead time encoding")
+        lead_time_emb = self.lead_time_embed(lead_time_encode)  # shape: [batch_size, embed_dim]
+        lead_time_emb = self._check_tensor(lead_time_emb, "Lead time embedding")
+        x = x + lead_time_emb.unsqueeze(1)  # shape: [batch_size, num_patches * num_variable_groups, embed_dim]
+        x = self._check_tensor(x, "After adding time embedding")
 
-        # Add absolute time embedding
-        absolute_times = torch.tensor(
-            [[t.timestamp() / 3600 for t in time_list] for time_list in batch.metadata.time], dtype=torch.float32, device=x.device
-        )
-        absolute_time_encode = self._time_encoding(absolute_times)
-        absolute_time_embed = self.absolute_time_embed(absolute_time_encode)
-        absolute_time_embed = absolute_time_embed.mean(dim=1, keepdim=True)
-        x = x + absolute_time_embed.unsqueeze(1)
+        # normalize before Perceiver IO
+        x = self.pre_perceiver_norm(x)
+        self._check_tensor(x, "Normalized input")
 
-        print(f"x shape after adding all embeddings: {x.shape}")
-
-        # Flatten the input for Perceiver IO
-        x = x.flatten(1, 2)  # shape: [B, (C+1)*L, D]
-        print(f"Flattened x shape: {x.shape}")
-
-        # Create latent queries
-        # latents = torch.cat([self.surf_level_encoding.unsqueeze(0), self.atmos_latents], dim=0)
-        # latents = latents.unsqueeze(0).expand(B, -1, -1)  # (B, latent_levels, D)
+        # Apply Perceiver IO with structured latents
         latents = self.latents.to(x.device)
-        self.perceiver_io.to(x.device)
+        latents = self._check_tensor(latents, "Latent queries")  # shape: [num_latents, embed_dim]
 
-        latents = latents.unsqueeze(0).expand(B, -1, -1)  # shape: [B, perceiver_latents, D]
+        # Track latent splits for potential future use
+        current_idx = 0
+        structured_latents = {}
+        for group, size in self.latent_sizes.items():
+            if size > 0:
+                structured_latents[group] = latents[current_idx : current_idx + size]
+                current_idx += size
 
-        # Apply Perceiver IO
+        latents = latents.unsqueeze(0).expand(B, -1, -1)  # shape: [batch_size, num_latents, embed_dim]
         x = self.perceiver_io(x, queries=latents)
-        print(f"Final output shape: {x.shape}")
+        x = self._check_tensor(x, "After Perceiver IO")  # shape: [batch_size, num_latents, embed_dim]
 
         x = self.pos_drop(x)
+        x = self._check_tensor(x, "Final output")  # shape: [batch_size, num_latents, embed_dim]
+
         return x
 
     def _time_encoding(self, times):
@@ -272,7 +441,7 @@ class BFMEncoder(nn.Module):
         emb = math.log(10000) / (half_dim - 1)
         emb = torch.exp(torch.arange(half_dim, device=device) * -emb)
 
-        # Modify this part to handle 2D input
+        # handle 2D input
         if times.dim() == 2:
             emb = times.unsqueeze(-1) * emb.unsqueeze(0).unsqueeze(0)
         else:
@@ -283,40 +452,97 @@ class BFMEncoder(nn.Module):
 
 
 def main():
-    from collections import namedtuple
     from datetime import datetime, timedelta
 
-    Batch = namedtuple("Batch", ["surf_vars", "static_vars", "atmos_vars", "metadata"])
-    Metadata = namedtuple("Metadata", ["lat", "lon", "time", "atmos_levels"])
+    import torch.cuda as cuda
 
-    B, T, V_s, V_a, C, H, W = 32, 2, 3, 5, 13, 32, 64
-    surf_vars = {f"surf_var_{i}": torch.randn(B, T, H, W) for i in range(V_s)}
-    static_vars = {f"static_var_{i}": torch.randn(H, W) for i in range(2)}
-    atmos_vars = {f"atmos_var_{i}": torch.randn(B, T, C, H, W) for i in range(V_a)}
+    # set device
+    device = torch.device("cuda:2" if cuda.is_available() else "cpu")
+    print(f"\nUsing device: {device}")
 
-    print("Input shapes:")
-    print(f"surf_vars: {', '.join([f'{k}: {v.shape}' for k, v in surf_vars.items()])}")
-    print(f"static_vars: {', '.join([f'{k}: {v.shape}' for k, v in static_vars.items()])}")
-    print(f"atmos_vars: {', '.join([f'{k}: {v.shape}' for k, v in atmos_vars.items()])}")
+    # load batches from data
+    print("\nLoading batches...")
+    batches = load_batches("data/", device=device)
+    print(f"Loaded {len(batches)} batches")
 
-    lat = torch.linspace(-90, 90, H)
-    lon = torch.linspace(0, 360, W)
-    time = [[datetime.now() + timedelta(hours=i) for i in range(T)] for _ in range(B)]
-    atmos_levels = [1000, 925, 850, 700, 600, 500, 400, 300, 250, 200, 150, 100, 50]
+    # get first batch
+    batch = batches[0]
 
-    metadata = Metadata(lat=lat, lon=lon, time=time, atmos_levels=atmos_levels)
-    batch = Batch(surf_vars=surf_vars, static_vars=static_vars, atmos_vars=atmos_vars, metadata=metadata)
+    # crop dimensions to be divisible by patch size
+    patch_size = 4
+    H, W = batch.batch_metadata.latitudes.shape[0], batch.batch_metadata.longitudes.shape[0]
+    new_H = (H // patch_size) * patch_size
+    new_W = (W // patch_size) * patch_size
 
+    def crop_variables(variables):
+        processed_vars = {}
+        for k, v in variables.items():
+            # crop dimensions
+            cropped = v[..., :new_H, :new_W]
+
+            # handle infinities and NaNs
+            inf_mask = torch.isinf(cropped)
+            nan_mask = torch.isnan(cropped)
+
+            # fix issues!
+            valid_values = cropped[~inf_mask & ~nan_mask]
+            if len(valid_values) > 0:
+                mean_val = valid_values.mean().item()
+                cropped = torch.nan_to_num(cropped, nan=mean_val, posinf=1e6, neginf=-1e6)
+            else:
+                print(f"Warning: No valid values found in {k}")
+                cropped = torch.zeros_like(cropped)
+
+            processed_vars[k] = cropped
+        return processed_vars
+
+    print("\nProcessing batches...")
+    for i, batch in enumerate(batches):
+        print(f"\nProcessing batch {i+1}/{len(batches)}")
+        batch.surface_variables = crop_variables(batch.surface_variables)
+        batch.single_variables = crop_variables(batch.single_variables)
+        batch.atmospheric_variables = crop_variables(batch.atmospheric_variables)
+        batch.species_extinction_variables = crop_variables(batch.species_extinction_variables)
+        batch.land_variables = crop_variables(batch.land_variables)
+        batch.agriculture_variables = crop_variables(batch.agriculture_variables)
+        batch.forest_variables = crop_variables(batch.forest_variables)
+
+        # crop metadata dimensions
+        batch.batch_metadata.latitudes = batch.batch_metadata.latitudes[:new_H]
+        batch.batch_metadata.longitudes = batch.batch_metadata.longitudes[:new_W]
+
+    # init encoder
+    print("\nInitializing encoder...")
     encoder = BFMEncoder(
-        surf_vars=tuple(surf_vars.keys()),
-        static_vars=tuple(static_vars.keys()),
-        atmos_vars=tuple(atmos_vars.keys()),
-        atmos_levels=atmos_levels,
-    )
+        surface_vars=tuple(batch.surface_variables.keys()),
+        single_vars=tuple(batch.single_variables.keys()),
+        atmos_vars=tuple(batch.atmospheric_variables.keys()),
+        species_vars=tuple(batch.species_extinction_variables.keys()),
+        land_vars=tuple(batch.land_variables.keys()),
+        agriculture_vars=tuple(batch.agriculture_variables.keys()),
+        forest_vars=tuple(batch.forest_variables.keys()),
+        atmos_levels=batch.batch_metadata.pressure_levels,
+        patch_size=patch_size,
+    ).to(device)
 
-    lead_time = timedelta(hours=6)
-    output = encoder(batch, lead_time)
-    print(f"Encoder output shape: {output.shape}")
+    # process each batch
+    print("\nRunning forward pass on batches...")
+    for i, batch in enumerate(batches):
+        print(f"\nProcessing batch {i+1}/{len(batches)}")
+
+        # find lead time
+        t1, t2 = batch.batch_metadata.timestamp
+        lead_time = t2 - t1
+
+        try:
+            with torch.no_grad():
+                output = encoder(batch, lead_time)
+                print(f"Successfully processed batch {i+1}, shape: {output.shape}")
+
+        except Exception as e:
+            print(f"\nError processing batch {i+1}:")
+            print(f"Error message: {str(e)}")
+            raise e
 
 
 if __name__ == "__main__":
