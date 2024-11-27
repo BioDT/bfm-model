@@ -2722,6 +2722,34 @@ files = [
 six = ">=1.5"
 
 [[package]]
+name = "pytorch-forecasting"
+version = "1.2.0"
+description = "Forecasting timeseries with PyTorch - dataloaders, normalizers, metrics and models"
+optional = false
+python-versions = "<3.13,>=3.9"
+files = [
+    {file = "pytorch_forecasting-1.2.0-py3-none-any.whl", hash = "sha256:7566c7d68c71586c0ea5476a5ae8c40edb953a2be1becb034e54770182ca1ca3"},
+    {file = "pytorch_forecasting-1.2.0.tar.gz", hash = "sha256:48610ae91546e0e751f57684d842b5e83924768a0019f54f9ce629573e8cbe2a"},
+]
+
+[package.dependencies]
+lightning = ">=2.0.0,<3.0.0"
+numpy = "<=3.0.0"
+pandas = ">=1.3.0,<3.0.0"
+scikit-learn = ">=1.2,<2.0"
+scipy = ">=1.8,<2.0"
+torch = ">=2.0.0,<2.0.1 || >2.0.1,<3.0.0"
+
+[package.extras]
+all-extras = ["cpflows", "matplotlib", "optuna (>=3.1.0,<5.0.0)", "optuna-integration", "pytorch-optimizer (>=2.5.1,<4.0.0)", "statsmodels"]
+dev = ["black[jupyter]", "coverage", "invoke", "ipykernel", "ipywidgets (>=8.0.1,<9.0.0)", "mypy", "nbconvert", "nbsphinx", "pandoc (>=2.3,<3.0.0)", "pre-commit (>=3.2.0,<5.0.0)", "pyarrow", "pydata-sphinx-theme", "pydocstyle (>=6.1.1,<7.0.0)", "pylint", "pytest", "pytest-cov", "pytest-dotenv (>=0.5.2,<1.0.0)", "pytest-sugar", "pytest-xdist", "recommonmark", "ruff", "sphinx", "tensorboard (>=2.12.1,<3.0.0)"]
+docs = ["docutils", "nbconvert", "nbsphinx", "pandoc", "pydata-sphinx-theme", "recommonmark", "sphinx (>3.2)"]
+github-actions = ["pytest-github-actions-annotate-failures"]
+graph = ["networkx"]
+mqf2 = ["cpflows"]
+tuning = ["optuna (>=3.1.0,<5.0.0)", "optuna-integration", "statsmodels"]
+
+[[package]]
 name = "pytorch-lightning"
 version = "1.9.5"
 description = "PyTorch Lightning is the lightweight PyTorch wrapper for ML researchers. Scale your models. Write less boilerplate."
@@ -3906,5 +3934,5 @@ type = ["pytest-mypy"]
 
 [metadata]
 lock-version = "2.0"
-python-versions = "^3.10"
-content-hash = "a14b8b9f22e86d97a04397d997b003167ee022da8d765d8deeb887a92771110f"
+python-versions = ">=3.10,<3.13"
+content-hash = "fd70363bd0298558896ec051db685ca4dafd33ee5e547ef4bdadfc06f3939f1b"

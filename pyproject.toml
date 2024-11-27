@@ -7,7 +7,7 @@ readme = "README.md"
 # package-mode = false # for now, let's keep poetry just for the goal of requirements management
 
 [tool.poetry.dependencies]
-python = "^3.10"
+python = ">=3.10,<3.13"
 numpy = "^1.26.4"
 torch = "^2.3.1"
 torchvision = "^0.18.1"
@@ -32,6 +32,7 @@ plotly = "^5.24.1"
 timm = "^1.0.9"
 fvcore = "^0.1.5"
 openpyxl = "^3.1.5"
+pytorch-forecasting = "^1.2.0"
 
 [build-system]
 requires = ["poetry-core"]
