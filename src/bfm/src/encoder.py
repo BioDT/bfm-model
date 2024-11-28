@@ -36,6 +36,8 @@ class BFMEncoder(nn.Module):
         max_frequency: float = 224.0,
         num_input_axes: int = 1,
         position_encoding_type: str = "fourier",
+        H: int = 152,
+        W: int = 320,
     ):
         super().__init__()
         # basic config
@@ -105,6 +107,15 @@ class BFMEncoder(nn.Module):
 
         # add normalization layer
         self.pre_perceiver_norm = nn.LayerNorm(embed_dim)
+
+        # Add H and W as instance variables
+        self.H = H
+        self.W = W
+
+    @property
+    def patch_shape(self):
+        """Calculate the patch shape based on current dimensions"""
+        return (self.perceiver_latents, self.H // self.patch_size, self.W // self.patch_size)
 
     def _calculate_pos_encoding_dim(self):
         """get dimension for positional encoding"""
@@ -523,6 +534,8 @@ def main():
         forest_vars=tuple(batch.forest_variables.keys()),
         atmos_levels=batch.batch_metadata.pressure_levels,
         patch_size=patch_size,
+        H=new_H,
+        W=new_W,
     ).to(device)
 
     # process each batch
