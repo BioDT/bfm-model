@@ -5,18 +5,68 @@ from typing import Literal
 import torch
 import torch.nn as nn
 
+from src.bfm.src.dataset_basics import load_batches
 from src.bfm.src.decoder import BFMDecoder
 from src.bfm.src.encoder import BFMEncoder
 from src.mvit.mvit_model import MViT
 from src.swin_transformer.core.swim_core_v2 import Swin3DTransformer
 
 
+def crop_variables(variables, new_H, new_W):
+    processed_vars = {}
+    for k, v in variables.items():
+        # crop dimensions
+        cropped = v[..., :new_H, :new_W]
+
+        # infinities first
+        inf_mask = torch.isinf(cropped)
+        inf_count = inf_mask.sum().item()
+        if inf_count > 0:
+            print(f"\nHandling Inf values in {k}:")
+            print(f"Inf count: {inf_count}")
+            valid_values = cropped[~inf_mask & ~torch.isnan(cropped)]
+            if len(valid_values) > 0:
+                max_val = valid_values.max().item()
+                min_val = valid_values.min().item()
+                cropped = torch.clip(cropped, min_val, max_val)
+            else:
+                cropped = torch.clip(cropped, -1e6, 1e6)
+
+        # handle NaNs
+        nan_mask = torch.isnan(cropped)
+        nan_count = nan_mask.sum().item()
+        if nan_count > 0:
+            print(f"\nHandling NaN values in {k}:")
+            print(f"Shape: {cropped.shape}")
+            print(f"Total NaN count: {nan_count}")
+            valid_values = cropped[~nan_mask & ~torch.isinf(cropped)]
+            if len(valid_values) > 0:
+                mean_val = valid_values.mean().item()
+                std_val = valid_values.std().item()
+                # use mean +- 2*std as clipping bounds
+                clip_min = mean_val - 2 * std_val
+                clip_max = mean_val + 2 * std_val
+                # replace NaNs with clipped mean
+                cropped = torch.nan_to_num(cropped, nan=mean_val)
+                cropped = torch.clip(cropped, clip_min, clip_max)
+            else:
+                cropped = torch.nan_to_num(cropped, nan=0.0)
+                cropped = torch.clip(cropped, -1.0, 1.0)
+
+        processed_vars[k] = cropped
+    return processed_vars
+
+
 class BFM(nn.Module):
     def __init__(
         self,
-        surf_vars: tuple[str, ...],
-        static_vars: tuple[str, ...],
+        surface_vars: tuple[str, ...],
+        single_vars: tuple[str, ...],
         atmos_vars: tuple[str, ...],
+        species_vars: tuple[str, ...],
+        land_vars: tuple[str, ...],
+        agriculture_vars: tuple[str, ...],
+        forest_vars: tuple[str, ...],
         atmos_levels: list[int],
         H: int = 32,
         W: int = 64,
@@ -26,12 +76,22 @@ class BFM(nn.Module):
         **kwargs,
     ):
         super().__init__()
+        self.H = H
+        self.W = W
+
         self.encoder = BFMEncoder(
-            surf_vars=surf_vars,
-            static_vars=static_vars,
+            surface_vars=surface_vars,
+            single_vars=single_vars,
             atmos_vars=atmos_vars,
-            latent_levels=num_latent_tokens,
+            species_vars=species_vars,
+            land_vars=land_vars,
+            agriculture_vars=agriculture_vars,
+            forest_vars=forest_vars,
+            atmos_levels=atmos_levels,
+            patch_size=kwargs.get("patch_size", 4),
             embed_dim=embed_dim,
+            H=H,
+            W=W,
             **kwargs,
         )
 
@@ -44,7 +104,7 @@ class BFM(nn.Module):
                 encoder_num_heads=(8, 16),
                 decoder_depths=(2, 2),
                 decoder_num_heads=(32, 16),
-                window_size=(1, 2, 2),
+                window_size=(1, 1, 2),
                 mlp_ratio=4.0,
                 qkv_bias=True,
                 drop_rate=0.0,
@@ -78,68 +138,125 @@ class BFM(nn.Module):
 
         self.backbone_type = backbone_type
         self.decoder = BFMDecoder(
-            surf_vars=surf_vars, atmos_vars=atmos_vars, atmos_levels=atmos_levels, H=H, W=W, embed_dim=embed_dim, **kwargs
+            surface_vars=surface_vars,
+            single_vars=single_vars,
+            atmos_vars=atmos_vars,
+            species_vars=species_vars,
+            land_vars=land_vars,
+            agriculture_vars=agriculture_vars,
+            forest_vars=forest_vars,
+            atmos_levels=atmos_levels,
+            H=H,
+            W=W,
+            embed_dim=embed_dim,
+            **kwargs,
         )
 
-    def forward(self, batch, lead_time: timedelta):
-        # Encode
+    def forward(self, batch, lead_time):
         encoded = self.encoder(batch, lead_time)
 
-        # Process through backbone
-        patch_shape = self.encoder.patch_shape
+        # calculate number of patches in 2D
+        num_patches_h = self.H // self.encoder.patch_size
+        num_patches_w = self.W // self.encoder.patch_size
+        total_patches = num_patches_h * num_patches_w  # noqa
+
+        # calculate depth to match the sequence length
+        depth = encoded.shape[1] // (num_patches_h * num_patches_w)
+        patch_shape = (
+            depth,  # depth dimension matches sequence length / (H*W)
+            num_patches_h,  # height in patches
+            num_patches_w,  # width in patches
+        )
 
         if self.backbone_type == "mvit":
-            # Reshape for MViT
             encoded = encoded.view(encoded.size(0), -1, self.encoder.embed_dim)
+            print(f"Reshaped encoded for MViT: {encoded.shape}")
 
         backbone_output = self.backbone(encoded, lead_time=lead_time, rollout_step=0, patch_shape=patch_shape)
 
-        # Decode
+        # decode
         output = self.decoder(backbone_output, batch, lead_time)
 
         return output
 
 
-def create_test_input():
-    Batch = namedtuple("Batch", ["surf_vars", "static_vars", "atmos_vars", "metadata"])
-    Metadata = namedtuple("Metadata", ["lat", "lon", "time", "atmos_levels", "rollout_step"])
-
-    B, T, V_s, V_a, C, H, W = 32, 2, 3, 5, 13, 32, 64
-    surf_vars = {f"surf_var_{i}": torch.randn(B, T, H, W) for i in range(V_s)}
-    static_vars = {f"static_var_{i}": torch.randn(H, W) for i in range(2)}
-    atmos_vars = {f"atmos_var_{i}": torch.randn(B, T, C, H, W) for i in range(V_a)}
-
-    lat = torch.linspace(-90, 90, H)
-    lon = torch.linspace(0, 360, W)
-    time = [[datetime.now() + timedelta(hours=i) for i in range(T)] for _ in range(B)]
-    atmos_levels = [1000, 925, 850, 700, 600, 500, 400, 300, 250, 200, 150, 100, 50]
-
-    metadata = Metadata(lat=lat, lon=lon, time=time, atmos_levels=atmos_levels, rollout_step=0)
-    batch = Batch(surf_vars=surf_vars, static_vars=static_vars, atmos_vars=atmos_vars, metadata=metadata)
-
-    lead_time = timedelta(hours=6)
-
-    return batch, lead_time
-
-
 def main():
-    batch, lead_time = create_test_input()
+    device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu")
+    print(f"\nUsing device: {device}")
 
+    print("\nLoading batches...")
+    batches = load_batches("data/", device=device)
+    print(f"Loaded {len(batches)} batches")
+
+    # some info about the first batch
+    batch = batches[0]
+    print("\nFirst batch variable counts:")
+    print(f"Surface variables: {len(batch.surface_variables)} vars")
+    print(f"Single variables: {len(batch.single_variables)} vars")
+    print(f"Atmospheric variables: {len(batch.atmospheric_variables)} vars × {len(batch.batch_metadata.pressure_levels)} levels")
+    print(f"Species variables: {len(batch.species_extinction_variables)} vars")
+    print(f"Land variables: {len(batch.land_variables)} vars")
+    print(f"Agriculture variables: {len(batch.agriculture_variables)} vars")
+    print(f"Forest variables: {len(batch.forest_variables)} vars")
+
+    # crop dimensions to be divisible by patch size (or just set patch size to 1)
+    patch_size = 4
+    H, W = batch.batch_metadata.latitudes.shape[0], batch.batch_metadata.longitudes.shape[0]
+    new_H = (H // patch_size) * patch_size
+    new_W = (W // patch_size) * patch_size
+
+    print(f"\nOriginal spatial dimensions: {H}×{W}")
+    print(f"Cropped spatial dimensions: {new_H}×{new_W}")
+
+    print("\nProcessing batches...")
+    for i, batch in enumerate(batches):
+        print(f"\nProcessing batch {i+1}/{len(batches)}")
+        batch.surface_variables = crop_variables(batch.surface_variables, new_H, new_W)
+        batch.single_variables = crop_variables(batch.single_variables, new_H, new_W)
+        batch.atmospheric_variables = crop_variables(batch.atmospheric_variables, new_H, new_W)
+        batch.species_extinction_variables = crop_variables(batch.species_extinction_variables, new_H, new_W)
+        batch.land_variables = crop_variables(batch.land_variables, new_H, new_W)
+        batch.agriculture_variables = crop_variables(batch.agriculture_variables, new_H, new_W)
+        batch.forest_variables = crop_variables(batch.forest_variables, new_H, new_W)
+
+        # crop metadata dimensions
+        batch.batch_metadata.latitudes = batch.batch_metadata.latitudes[:new_H]
+        batch.batch_metadata.longitudes = batch.batch_metadata.longitudes[:new_W]
+
+    print("\nSpatial dimensions after cropping:")
+    print(f"Grid size: {new_H}×{new_W}")
+    print(f"Number of patches: {new_H//patch_size}×{new_W//patch_size}")
+
+    # init model
     model = BFM(
-        surf_vars=tuple(batch.surf_vars.keys()),
-        static_vars=tuple(batch.static_vars.keys()),
-        atmos_vars=tuple(batch.atmos_vars.keys()),
-        atmos_levels=batch.metadata.atmos_levels,
-        backbone_type="swin",  # or "mvit"
-    )
+        surface_vars=tuple(batch.surface_variables.keys()),
+        single_vars=tuple(batch.single_variables.keys()),
+        atmos_vars=tuple(batch.atmospheric_variables.keys()),
+        species_vars=tuple(batch.species_extinction_variables.keys()),
+        land_vars=tuple(batch.land_variables.keys()),
+        agriculture_vars=tuple(batch.agriculture_variables.keys()),
+        forest_vars=tuple(batch.forest_variables.keys()),
+        atmos_levels=batch.batch_metadata.pressure_levels,
+        H=new_H,
+        W=new_W,
+        backbone_type="mvit",  # or "swin"
+    ).to(device)
 
-    output = model(batch, lead_time)
+    # pass each batch through the model
+    for i, batch in enumerate(batches):
+        print(f"\nProcessing batch {i+1}/{len(batches)}")
+        t1, t2 = batch.batch_metadata.timestamp
+        lead_time = t2 - t1
 
-    print("Model output:")
-    for var_type, vars_dict in output.items():
-        print(f"{var_type}:")
-        for var_name, var_tensor in vars_dict.items():
-            print(f"  {var_name}: {var_tensor.shape}")
+        try:
+            with torch.no_grad():
+                output = model(batch, lead_time)  # noqa
+
+        except Exception as e:
+            print(f"\nError processing batch {i+1}:")
+            print(f"Error type: {type(e).__name__}")
+            print(f"Error message: {str(e)}")
+            raise
 
 
 if __name__ == "__main__":
