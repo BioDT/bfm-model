@@ -82,13 +82,3 @@ Then you can observe mlflow with the same bind command:
 ```bash
 ssh -i .ssh/snelius_key -L 0.0.0.0:<desired_port_on_local>:gcn<node_id>:<mlflow_port_on_remote> <user_name>@snellius.surf.nl
 ```
-
-
-## TODOs
-
-- [ ] Export new requirements.txt
-- [ ] Make the output folder system coherent
-- [ ] Add more logging points
-- [ ] Add checkpointing
-- [ ] Test multi-node, multi-gpu runs
-- [ ] Cleanup, remove prints etc.

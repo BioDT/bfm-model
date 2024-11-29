@@ -1,3 +1,37 @@
+"""
+BFM (Biodiversity Foundation Model) Decoder Module.
+
+This module contains the decoder component of the BFM architecture, responsible for transforming
+encoded latent representations back into interpretable climate and biosphere variables.
+
+The decoder uses a Perceiver IO architecture to process queries for different variable types
+and outputs predictions in a spatially-organized format.
+
+Key Components:
+    - Position encoding using Fourier features
+    - Time encoding for both lead time and absolute time
+    - Variable-specific token projections
+    - Perceiver IO for flexible decoding
+    - Multi-category variable handling (surface, atmospheric, species, etc.)
+
+Example usage:
+    decoder = BFMDecoder(
+        surface_vars=('temperature', 'pressure'),
+        single_vars=('humidity',),
+        atmos_vars=('wind_u', 'wind_v'),
+        species_vars=('species_1', 'species_2'),
+        land_vars=('soil_moisture',),
+        agriculture_vars=('crop_yield',),
+        forest_vars=('tree_coverage',),
+        atmos_levels=[1000, 850, 700],
+        patch_size=4,
+        embed_dim=128,
+        H=32,
+        W=64
+    )
+    output = decoder(encoded_data, batch, lead_time)
+"""
+
 import math
 from collections import namedtuple
 from datetime import datetime, timedelta
@@ -14,6 +48,52 @@ from src.perceiver_core.perceiver_io import PerceiverIO
 
 
 class BFMDecoder(nn.Module):
+    """
+    Biodiversity Foundation Model Decoder.
+
+    This decoder takes encoded representations and transforms them back into interpretable
+    climate and biosphere variables using a Perceiver IO architecture.
+
+    Args:
+        surface_vars (tuple[str, ...]): Names of surface-level variables
+        single_vars (tuple[str, ...]): Names of single-level variables
+        atmos_vars (tuple[str, ...]): Names of atmospheric variables
+        species_vars (tuple[str, ...]): Names of species-related variables
+        land_vars (tuple[str, ...]): Names of land-related variables
+        agriculture_vars (tuple[str, ...]): Names of agriculture-related variables
+        forest_vars (tuple[str, ...]): Names of forest-related variables
+        atmos_levels (list[int]): Pressure levels for atmospheric variables
+        patch_size (int, optional): Size of spatial patches. Defaults to 4.
+        embed_dim (int, optional): Embedding dimension. Defaults to 1024.
+        num_heads (int, optional): Number of attention heads. Defaults to 16.
+        head_dim (int, optional): Dimension of each attention head. Defaults to 64.
+        drop_rate (float, optional): Dropout rate. Defaults to 0.1.
+        depth (int, optional): Number of transformer layers. Defaults to 2.
+        mlp_ratio (float, optional): Ratio for MLP hidden dimension. Defaults to 4.0.
+        perceiver_ln_eps (float, optional): Layer norm epsilon. Defaults to 1e-5.
+        num_fourier_bands (int, optional): Number of Fourier bands for position encoding. Defaults to 64.
+        max_frequency (float, optional): Maximum frequency for Fourier features. Defaults to 224.0.
+        num_input_axes (int, optional): Number of input axes. Defaults to 1.
+        position_encoding_type (str, optional): Type of position encoding. Defaults to "fourier".
+        H (int, optional): Height of output grid. Defaults to 32.
+        W (int, optional): Width of output grid. Defaults to 64.
+
+    Attributes:
+        var_maps (dict): Mappings from variable names to indices for each category
+        pos_embed (nn.Linear): Position embedding layer
+        lead_time_embed (nn.Linear): Lead time embedding layer
+        absolute_time_embed (nn.Linear): Absolute time embedding layer
+        surface_token_proj (nn.Linear): Projection layer for surface variables
+        single_token_proj (nn.Linear): Projection layer for single variables
+        atmos_token_proj (nn.Linear): Projection layer for atmospheric variables
+        species_token_proj (nn.Linear): Projection layer for species variables
+        land_token_proj (nn.Linear): Projection layer for land variables
+        agriculture_token_proj (nn.Linear): Projection layer for agriculture variables
+        forest_token_proj (nn.Linear): Projection layer for forest variables
+        perceiver_io (PerceiverIO): Main Perceiver IO model
+        pos_drop (nn.Dropout): Position dropout layer
+    """
+
     def __init__(
         self,
         surface_vars: tuple[str, ...],
@@ -120,9 +200,15 @@ class BFMDecoder(nn.Module):
         self.apply(self._init_weights)
 
     def _calculate_pos_encoding_dim(self):
+        """Calculate dimension of position encoding."""
         return 2 * self.num_fourier_bands + 1
 
     def _init_weights(self, m):
+        """Initialize weights for linear and layer norm layers.
+
+        Args:
+            m (nn.Module): Module to initialize
+        """
         if isinstance(m, nn.Linear):
             nn.init.trunc_normal_(m.weight, std=0.02)
             if m.bias is not None:
@@ -132,6 +218,14 @@ class BFMDecoder(nn.Module):
             nn.init.constant_(m.weight, 1.0)
 
     def _build_position_encoding(self, shape):
+        """Build position encoding based on specified type.
+
+        Args:
+            shape (tuple): Shape of input tensor
+
+        Returns:
+            callable: Position encoding function
+        """
         if self.position_encoding_type is None:
             return None
         return build_position_encoding(
@@ -146,6 +240,14 @@ class BFMDecoder(nn.Module):
         )
 
     def _apply_position_encoding(self, input_data):
+        """Apply position encoding to input data.
+
+        Args:
+            input_data (torch.Tensor): Input tensor
+
+        Returns:
+            torch.Tensor: Position-encoded input tensor
+        """
         batch_size, *_, device = *input_data.shape, input_data.device
         if self.position_encoding_type in ["fourier", "trainable"]:
             pos_encoder = self._build_position_encoding(input_data.shape)
@@ -154,6 +256,14 @@ class BFMDecoder(nn.Module):
         return input_data
 
     def _time_encoding(self, times):
+        """Generate time encoding using sinusoidal features.
+
+        Args:
+            times (torch.Tensor): Time values to encode
+
+        Returns:
+            torch.Tensor: Time encoding
+        """
         device = times.device
         half_dim = self.embed_dim // 2
         emb = math.log(10000) / (half_dim - 1)
@@ -169,6 +279,24 @@ class BFMDecoder(nn.Module):
         return emb
 
     def forward(self, x, batch, lead_time):
+        """
+        Forward pass of the decoder.
+
+        Args:
+            x (torch.Tensor): Encoded input tensor of shape (batch_size, sequence_length, dimension)
+            batch: Batch object containing metadata and variables
+            lead_time (timedelta): Time difference between input and target
+
+        Returns:
+            dict: Dictionary containing decoded outputs for each variable category:
+                - surface_variables
+                - single_variables
+                - atmospheric_variables
+                - species_extinction_variables
+                - land_variables
+                - agriculture_variables
+                - forest_variables
+        """
         B, L, D = x.shape
         print(f"Input shape: {x.shape}")
 
@@ -305,6 +433,7 @@ class BFMDecoder(nn.Module):
 
 
 def main():
+    """Main function for testing the BFM decoder implementation."""
     import torch.cuda as cuda
 
     from src.bfm.src.encoder import BFMEncoder

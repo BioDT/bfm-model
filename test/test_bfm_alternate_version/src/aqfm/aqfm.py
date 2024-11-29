@@ -1,3 +1,32 @@
+"""
+AQFM (Air Quality Foundation Model) Main Module.
+
+This module contains the main AQFM architecture, combining encoder, backbone and decoder components
+to process air quality sensor data and related environmental variables.
+
+The model uses either a Swin or MViT backbone architecture to process encoded representations
+before decoding back to the original variable space.
+
+Key Components:
+    - Variable preprocessing and encoding
+    - Encoder for initial representation learning
+    - Backbone (Swin or MViT) for temporal processing
+    - Decoder for reconstructing variables
+    - Multi-category variable handling (sensor readings, ground truth, physical measurements)
+
+Example usage:
+    model = AQFM(
+        feature_names={
+            'sensor': ['PT08.S1(CO)', 'PT08.S2(NMHC)'],
+            'ground_truth': ['CO(GT)', 'NMHC(GT)'],
+            'physical': ['T', 'RH', 'AH']
+        },
+        embed_dim=512,
+        backbone_type='mvit'
+    )
+    predictions = model(batch, lead_time)
+"""
+
 from datetime import timedelta
 from test.test_bfm_alternate_version.src.aqfm.decoder import AQDecoder
 from test.test_bfm_alternate_version.src.aqfm.encoder import AQEncoder
@@ -11,6 +40,48 @@ from src.swin_transformer.core.swim_core_v2 import Swin3DTransformer
 
 
 class AQFM(nn.Module):
+    """
+    Air Quality Foundation Model.
+
+    This model combines encoder, backbone and decoder components to process air quality sensor data
+    and related environmental variables.
+
+    Can be technically be called as a sibbling of the BFM, as it is a simplified version of it, and for a simpler dataset/task.
+
+    Args:
+        feature_names (dict[str, list[str]]): Dictionary mapping feature categories to lists of feature names
+        embed_dim (int, optional): Embedding dimension. Defaults to 512.
+        num_latent_tokens (int, optional): Number of latent tokens. Defaults to 8.
+        backbone_type (Literal["swin", "mvit"], optional): Type of backbone architecture. Defaults to "mvit".
+        max_history_size (int, optional): Maximum number of historical timesteps. Defaults to 24.
+        encoder_num_heads (int, optional): Number of attention heads in encoder. Defaults to 16.
+        encoder_head_dim (int, optional): Dimension of each encoder attention head. Defaults to 64.
+        encoder_depth (int, optional): Number of encoder layers. Defaults to 2.
+        encoder_drop_rate (float, optional): Dropout rate in encoder. Defaults to 0.1.
+        encoder_mlp_ratio (float, optional): MLP ratio in encoder. Defaults to 4.0.
+        backbone_depth (int, optional): Number of backbone layers. Defaults to 4.
+        backbone_num_heads (int, optional): Number of attention heads in backbone. Defaults to 1.
+        backbone_mlp_ratio (float, optional): MLP ratio in backbone. Defaults to 4.0.
+        backbone_drop_rate (float, optional): Dropout rate in backbone. Defaults to 0.1.
+        mvit_attn_mode (str, optional): Attention mode for MViT backbone. Defaults to "conv".
+        mvit_pool_first (bool, optional): Whether to pool before attention in MViT. Defaults to False.
+        mvit_rel_pos (bool, optional): Whether to use relative positional encoding in MViT. Defaults to False.
+        mvit_res_pool (bool, optional): Whether to use residual pooling in MViT. Defaults to True.
+        mvit_dim_mul_attn (bool, optional): Whether to multiply dimensions in MViT attention. Defaults to False.
+        decoder_num_heads (int, optional): Number of attention heads in decoder. Defaults to 16.
+        decoder_head_dim (int, optional): Dimension of each decoder attention head. Defaults to 64.
+        decoder_depth (int, optional): Number of decoder layers. Defaults to 2.
+        decoder_drop_rate (float, optional): Dropout rate in decoder. Defaults to 0.1.
+        decoder_mlp_ratio (float, optional): MLP ratio in decoder. Defaults to 4.0.
+        **kwargs: Additional arguments passed to components
+
+    Attributes:
+        encoder (AQEncoder): Encoder component
+        backbone (nn.Module): Backbone network (Swin or MViT)
+        decoder (AQDecoder): Decoder component
+        backbone_type (str): Type of backbone being used
+    """
+
     def __init__(
         self,
         feature_names: dict[str, list[str]],
@@ -108,6 +179,16 @@ class AQFM(nn.Module):
         )
 
     def forward(self, batch, lead_time: timedelta) -> dict[str, torch.Tensor]:
+        """
+        Forward pass of the AQFM model.
+
+        Args:
+            batch: Batch object containing input variables and metadata
+            lead_time (timedelta): Time difference between input and target
+
+        Returns:
+            dict[str, torch.Tensor]: Dictionary mapping feature names to predicted values
+        """
         encoded = self.encoder(batch, lead_time)
 
         patch_shape = [self.encoder.latent_tokens, 1, 1]
@@ -120,6 +201,7 @@ class AQFM(nn.Module):
 
 
 def main():
+    """Main function for testing the AQFM implementation."""
     from datetime import timedelta
     from pathlib import Path
     from test.test_bfm_alternate_version.src.data_set import (

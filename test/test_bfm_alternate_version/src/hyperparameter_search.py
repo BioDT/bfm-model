@@ -25,6 +25,37 @@ SEQUENCE_LENGTHS = [48, 72, 96, 120, 144]
 
 
 class AQFMPredictor(pl.LightningModule):
+    """
+    PyTorch Lightning module for training and evaluating the AQFM model.
+
+    This class wraps the AQFM model and provides training, validation and testing functionality
+    through the PyTorch Lightning framework. It handles model initialization, optimization,
+    metric computation and logging.
+
+    Args:
+        feature_names: Dictionary containing feature group names and their corresponding features
+        embed_dim: Dimension of the embedding space
+        num_latent_tokens: Number of latent tokens used in the model
+        backbone_type: Type of backbone network to use ('swin' or 'mvit')
+        max_history_size: Maximum number of historical timesteps to consider
+        learning_rate: Learning rate for optimization
+        checkpoint_path: Optional path to load model checkpoint from
+        encoder_num_heads: Number of attention heads in encoder
+        encoder_head_dim: Dimension of each attention head in encoder
+        encoder_depth: Number of transformer layers in encoder
+        encoder_drop_rate: Dropout rate in encoder
+        encoder_mlp_ratio: MLP expansion ratio in encoder
+        backbone_depth: Number of layers in backbone network
+        backbone_num_heads: Number of attention heads in backbone
+        backbone_mlp_ratio: MLP expansion ratio in backbone
+        backbone_drop_rate: Dropout rate in backbone
+        decoder_num_heads: Number of attention heads in decoder
+        decoder_head_dim: Dimension of each attention head in decoder
+        decoder_depth: Number of transformer layers in decoder
+        decoder_drop_rate: Dropout rate in decoder
+        decoder_mlp_ratio: MLP expansion ratio in decoder
+    """
+
     def __init__(
         self,
         feature_names,
@@ -93,6 +124,7 @@ class AQFMPredictor(pl.LightningModule):
         self.test_step_outputs = []
 
     def forward(self, batch):
+        """Forward pass through the model"""
         return self.model(batch, timedelta(hours=1))
 
     def _compute_metrics(
@@ -101,7 +133,17 @@ class AQFMPredictor(pl.LightningModule):
         targets,
         prefix: Optional[Literal["train_", "val_", "test_"]] = "",  # what kind of metrics are we computing? train, test, val?
     ):
-        """compute mse, mae and other metrics for predictions vs targets"""
+        """
+        Compute various metrics between predictions and targets.
+
+        Args:
+            predictions: Dictionary of model predictions
+            targets: Dictionary of ground truth values
+            prefix: Optional prefix for metric names (e.g. 'train_', 'val_', 'test_')
+
+        Returns:
+            Tuple of (losses, metrics) dictionaries
+        """
         losses = defaultdict(list)
         metrics = defaultdict(list)
         total_loss = 0
@@ -131,6 +173,7 @@ class AQFMPredictor(pl.LightningModule):
         return losses, metrics
 
     def training_step(self, batch_obj, _):
+        """Training step"""
         batch, targets = batch_obj
         predictions = self(batch)
 
@@ -145,6 +188,7 @@ class AQFMPredictor(pl.LightningModule):
         return losses["averaged_train_total_loss"]
 
     def validation_step(self, batch_obj, _):
+        """Validation step"""
         batch, targets = batch_obj
         predictions = self(batch)
 
@@ -161,6 +205,7 @@ class AQFMPredictor(pl.LightningModule):
         return losses["averaged_val_total_loss"]
 
     def on_validation_epoch_end(self):
+        """Compute epoch-level validation metrics"""
         # compute epoch averages for metrics
         for metric_name, values in self.current_epoch_metrics.items():
             if "train_" in metric_name:
@@ -173,6 +218,7 @@ class AQFMPredictor(pl.LightningModule):
         self.current_epoch_metrics.clear()
 
     def test_step(self, batch_obj, _):
+        """Test step"""
         batch, targets = batch_obj
         predictions = self(batch)
 
@@ -186,6 +232,7 @@ class AQFMPredictor(pl.LightningModule):
         return output
 
     def on_test_epoch_end(self):
+        """Compute final test metrics"""
         outputs = self.test_step_outputs
 
         test_metrics = {}
@@ -198,6 +245,7 @@ class AQFMPredictor(pl.LightningModule):
         self.log_dict(test_metrics)
 
     def configure_optimizers(self):
+        """Configure optimizer and learning rate scheduler"""
         optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate)
         lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer=optimizer, mode="min", factor=0.2, patience=3, verbose=True
@@ -212,6 +260,7 @@ class AQFMPredictor(pl.LightningModule):
         }
 
     def get_metrics_history(self):
+        """Get training and validation metrics history"""
         return {
             **{f"epoch_{k}": np.array(v) for k, v in self.train_metrics_history.items()},
             **{f"epoch_{k}": np.array(v) for k, v in self.val_metrics_history.items()},
@@ -219,7 +268,13 @@ class AQFMPredictor(pl.LightningModule):
 
 
 class SimpleModelPruning(Callback):
-    """callback for early stopping trials that aren't promising"""
+    """
+    PyTorch Lightning callback for early stopping trials that aren't promising.
+
+    Args:
+        trial: Optuna trial object
+        monitor: Metric to monitor for pruning decisions
+    """
 
     def __init__(self, trial, monitor="averaged_val_total_loss"):
         super().__init__()
@@ -228,6 +283,7 @@ class SimpleModelPruning(Callback):
         self._epoch = 0
 
     def on_validation_end(self, trainer, pl_module):
+        """Check pruning condition after validation"""
         self._epoch += 1
         metrics = trainer.callback_metrics
         current_score = metrics.get(self.monitor)
@@ -240,7 +296,15 @@ class SimpleModelPruning(Callback):
 
 
 def generate_trial_name(trial):
-    """generate descriptive name for the trial"""
+    """
+    Generate descriptive name for the trial.
+
+    Args:
+        trial: Optuna trial object
+
+    Returns:
+        String containing trial parameters
+    """
     return (
         f"trial_{trial.number}_"
         f"backbone={trial.params['backbone_type']}_"
@@ -251,7 +315,16 @@ def generate_trial_name(trial):
 
 
 def save_best_hyperparameters(study, save_dir):
-    """save best hyperparameters from study to json"""
+    """
+    Save best hyperparameters from study to json file.
+
+    Args:
+        study: Completed Optuna study
+        save_dir: Directory to save results
+
+    Returns:
+        Path to saved hyperparameters file
+    """
     save_dir = Path(save_dir)
     save_dir.mkdir(exist_ok=True)
 
@@ -279,7 +352,17 @@ def save_best_hyperparameters(study, save_dir):
 
 
 def objective(trial, data_params, remote_server_uri):
-    """optimization objective function"""
+    """
+    Optimization objective function.
+
+    Args:
+        trial: Optuna trial object
+        data_params: Dictionary of dataset parameters
+        remote_server_uri: URI of MLflow tracking server
+
+    Returns:
+        Final validation loss for the trial
+    """
     # select sequence length for this trial
     sequence_length = trial.suggest_categorical("sequence_length", SEQUENCE_LENGTHS)
     data_params["sequence_length"] = sequence_length
@@ -430,7 +513,12 @@ def objective(trial, data_params, remote_server_uri):
 
 
 def main():
-    """main optimization routine"""
+    """
+    Main optimization routine.
+
+    Sets up MLflow tracking, creates Optuna study, runs hyperparameter optimization,
+    and saves results and visualizations.
+    """
     remote_server_uri = "http://0.0.0.0:8082"
 
     # setup directories for results and models

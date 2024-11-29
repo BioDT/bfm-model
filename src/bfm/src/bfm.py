@@ -1,3 +1,36 @@
+"""
+BFM (Biodiversity Foundation Model) Main Module.
+
+This module contains the main BFM architecture, combining encoder, backbone and decoder components
+to process climate and biodiversity-related variables.
+
+The model uses either a Swin or MViT backbone architecture to process encoded representations
+before decoding back to the original variable space.
+
+Key Components:
+    - Variable preprocessing and cropping
+    - Encoder for initial representation learning
+    - Backbone (Swin or MViT) for temporal-spatial processing
+    - Decoder for reconstructing variables
+    - Multi-category variable handling (surface, atmospheric, species, etc.)
+
+Example usage:
+    model = BFM(
+        surface_vars=('temperature', 'pressure'),
+        single_vars=('humidity',),
+        atmos_vars=('wind_u', 'wind_v'),
+        species_vars=('species_1', 'species_2'),
+        land_vars=('soil_moisture',),
+        agriculture_vars=('crop_yield',),
+        forest_vars=('tree_coverage',),
+        atmos_levels=[1000, 850, 700],
+        H=32,
+        W=64,
+        backbone_type='mvit'
+    )
+    output = model(batch, lead_time)
+"""
+
 from collections import namedtuple
 from datetime import datetime, timedelta
 from typing import Literal
@@ -13,6 +46,17 @@ from src.swin_transformer.core.swim_core_v2 import Swin3DTransformer
 
 
 def crop_variables(variables, new_H, new_W):
+    """
+    Crop and clean variables to specified dimensions, handling NaN and Inf values.
+
+    Args:
+        variables (dict): Dictionary of variable tensors to process
+        new_H (int): Target height dimension
+        new_W (int): Target width dimension
+
+    Returns:
+        dict: Processed variables with cleaned and cropped tensors
+    """
     processed_vars = {}
     for k, v in variables.items():
         # crop dimensions
@@ -58,6 +102,34 @@ def crop_variables(variables, new_H, new_W):
 
 
 class BFM(nn.Module):
+    """
+    Biodiversity Foundation Model.
+
+    This model combines encoder, backbone and decoder components to process climate and biodiversity-related variables.
+
+    Args:
+        surface_vars (tuple[str, ...]): Names of surface-level variables
+        single_vars (tuple[str, ...]): Names of single-level variables
+        atmos_vars (tuple[str, ...]): Names of atmospheric variables
+        species_vars (tuple[str, ...]): Names of species-related variables
+        land_vars (tuple[str, ...]): Names of land-related variables
+        agriculture_vars (tuple[str, ...]): Names of agriculture-related variables
+        forest_vars (tuple[str, ...]): Names of forest-related variables
+        atmos_levels (list[int]): Pressure levels for atmospheric variables
+        H (int, optional): Height of output grid. Defaults to 32.
+        W (int, optional): Width of output grid. Defaults to 64.
+        embed_dim (int, optional): Embedding dimension. Defaults to 1024.
+        num_latent_tokens (int, optional): Number of latent tokens. Defaults to 8.
+        backbone_type (Literal["swin", "mvit"], optional): Type of backbone architecture. Defaults to "mvit".
+        **kwargs: Additional arguments passed to encoder and decoder
+
+    Attributes:
+        encoder (BFMEncoder): Encoder component
+        backbone (nn.Module): Backbone network (Swin or MViT)
+        decoder (BFMDecoder): Decoder component
+        backbone_type (str): Type of backbone being used
+    """
+
     def __init__(
         self,
         surface_vars: tuple[str, ...],
@@ -153,6 +225,16 @@ class BFM(nn.Module):
         )
 
     def forward(self, batch, lead_time):
+        """
+        Forward pass of the model.
+
+        Args:
+            batch: Batch object containing input variables and metadata
+            lead_time (timedelta): Time difference between input and target
+
+        Returns:
+            dict: Dictionary containing decoded outputs for each variable category
+        """
         encoded = self.encoder(batch, lead_time)
 
         # calculate number of patches in 2D
@@ -181,6 +263,7 @@ class BFM(nn.Module):
 
 
 def main():
+    """Main function for testing the BFM implementation."""
     device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu")
     print(f"\nUsing device: {device}")
 

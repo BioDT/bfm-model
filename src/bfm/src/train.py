@@ -1,3 +1,8 @@
+"""
+Training script for the BFM (Biodiversity Foundation Model).
+TODO: Adapt it according to the new data format. The current version was using a toy format, and was just for testing purposes.
+"""
+
 from collections import namedtuple
 from datetime import datetime, timedelta
 

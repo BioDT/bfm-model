@@ -19,12 +19,27 @@ from pytorch_forecasting.models.temporal_fusion_transformer.tuning import (
 
 
 class MSELoss(MultiHorizonMetric):
-    """mean squared error loss for tft predictions"""
+    """
+    Mean squared error loss for TFT predictions.
+
+    Args:
+        reduction (str, optional): Reduction method for the loss. Defaults to "mean".
+    """
 
     def __init__(self, reduction="mean"):
         super().__init__(reduction=reduction)
 
     def loss(self, y_pred, target):
+        """
+        Calculate MSE loss between predictions and targets.
+
+        Args:
+            y_pred (Union[torch.Tensor, tuple, list]): Model predictions
+            target (Union[torch.Tensor, tuple, list]): Ground truth values
+
+        Returns:
+            torch.Tensor: MSE loss value
+        """
         if isinstance(y_pred, (tuple, list)):
             y_pred = y_pred[0]
         if isinstance(target, (tuple, list)):
@@ -38,6 +53,26 @@ class MSELoss(MultiHorizonMetric):
 
 
 class TFTPredictor(pl.LightningModule):
+    """
+    Temporal Fusion Transformer Predictor for Air Quality Forecasting.
+
+    This model uses the Temporal Fusion Transformer architecture to predict air quality metrics
+    based on historical sensor data, ground truth measurements, and physical parameters.
+
+    Args:
+        feature_names (dict): Dictionary containing lists of feature names categorized by type
+            (sensor, ground_truth, physical)
+        **kwargs: Additional model parameters including learning_rate, hidden_size,
+            attention_head_size, dropout, and hidden_continuous_size
+
+    Attributes:
+        model (TemporalFusionTransformer): The underlying TFT model
+        current_epoch_metrics (defaultdict): Stores metrics for current training epoch
+        train_metrics_history (defaultdict): Historical training metrics
+        val_metrics_history (defaultdict): Historical validation metrics
+        test_step_outputs (list): Stores test step outputs for final evaluation
+    """
+
     def __init__(self, feature_names, **kwargs):
         super().__init__()
         self.save_hyperparameters(ignore=["loss", "logging_metrics"])
@@ -50,7 +85,17 @@ class TFTPredictor(pl.LightningModule):
         self.test_step_outputs = []
 
     def _compute_metrics(self, predictions, targets, prefix: Optional[Literal["train_", "val_", "test_"]] = ""):
-        """compute metrics for tft predictions"""
+        """
+        Compute evaluation metrics for model predictions.
+
+        Args:
+            predictions (Union[torch.Tensor, list]): Model predictions
+            targets (Union[torch.Tensor, list]): Ground truth values
+            prefix (Optional[Literal["train_", "val_", "test_"]]): Prefix for metric names
+
+        Returns:
+            tuple[dict, dict]: Dictionaries containing computed losses and metrics
+        """
         losses = defaultdict(list)
         metrics = defaultdict(list)
         total_loss = 0
@@ -82,7 +127,7 @@ class TFTPredictor(pl.LightningModule):
         return losses, metrics
 
     def setup(self, stage=None):
-        """initialize datasets and model"""
+        """Initialize datasets and model architecture."""
         if self.model is None:
             self.prepare_data()
 
@@ -108,19 +153,22 @@ class TFTPredictor(pl.LightningModule):
                 self.model.trainer = self.trainer
 
     def on_fit_start(self):
+        """Ensure trainer is properly set before fitting."""
         if self.trainer is not None:
             self.model.trainer = self.trainer
 
     def on_test_start(self):
+        """Ensure trainer is properly set before testing."""
         if self.trainer is not None:
             self.model.trainer = self.trainer
 
     def on_validation_start(self):
+        """Ensure trainer is properly set before validation."""
         if self.trainer is not None:
             self.model.trainer = self.trainer
 
     def prepare_data(self):
-        """convert airqualitydataset to timeseriesset format"""
+        """Convert AirQualityDataset to TimeSeriesDataSet format."""
         aq_dataset = AirQualityDataset(
             xlsx_path=Path(__file__).parent.parent / "data/AirQuality.xlsx", sequence_length=48, prediction_horizon=1
         )
@@ -160,16 +208,24 @@ class TFTPredictor(pl.LightningModule):
         self.test_dataset = TimeSeriesDataSet.from_dataset(self.train_dataset, df[int(0.9 * len(df)) :], predict=True)
 
     def train_dataloader(self):
+        """Return training dataloader."""
         return self.train_dataset.to_dataloader(batch_size=8, num_workers=16)
 
     def val_dataloader(self):
+        """Return validation dataloader."""
         return self.val_dataset.to_dataloader(batch_size=8, num_workers=16)
 
     def test_dataloader(self):
+        """Return test dataloader."""
         return self.test_dataset.to_dataloader(batch_size=8, num_workers=16)
 
     def configure_optimizers(self):
-        """Match AQFM's optimizer configuration"""
+        """
+        Configure optimizer and learning rate scheduler.
+
+        Returns:
+            dict: Configuration for optimizer and scheduler
+        """
         optimizer = torch.optim.AdamW(
             self.model.parameters(), lr=self.model_params.get("learning_rate", 0.001), weight_decay=0.01
         )
@@ -177,9 +233,20 @@ class TFTPredictor(pl.LightningModule):
         return {"optimizer": optimizer, "lr_scheduler": {"scheduler": scheduler, "monitor": "averaged_val_total_loss"}}
 
     def forward(self, x):
+        """Forward pass through the model."""
         return self.model(x)
 
     def training_step(self, batch, batch_idx):
+        """
+        Training step logic.
+
+        Args:
+            batch (tuple): Input batch containing features and targets
+            batch_idx (int): Index of current batch
+
+        Returns:
+            torch.Tensor: Training loss
+        """
         x, y = batch
         out = self.model(x)
         predictions = out.prediction
@@ -193,6 +260,16 @@ class TFTPredictor(pl.LightningModule):
         return losses["averaged_train_total_loss"]
 
     def validation_step(self, batch, batch_idx):
+        """
+        Validation step logic.
+
+        Args:
+            batch (tuple): Input batch containing features and targets
+            batch_idx (int): Index of current batch
+
+        Returns:
+            torch.Tensor: Validation loss
+        """
         x, y = batch
         out = self.model(x)
         predictions = out.prediction
@@ -205,6 +282,16 @@ class TFTPredictor(pl.LightningModule):
         return losses["averaged_val_total_loss"]
 
     def test_step(self, batch, batch_idx):
+        """
+        Test step logic.
+
+        Args:
+            batch (tuple): Input batch containing features and targets
+            batch_idx (int): Index of current batch
+
+        Returns:
+            dict: Dictionary containing predictions and targets
+        """
         x, y = batch
         out = self.model(x)
         predictions = out.prediction
@@ -226,6 +313,7 @@ class TFTPredictor(pl.LightningModule):
         return output
 
     def on_validation_epoch_end(self):
+        """Compute and store validation epoch metrics."""
         for metric_name, values in self.current_epoch_metrics.items():
             if "train_" in metric_name:
                 epoch_avg = torch.stack(values).mean()
@@ -237,6 +325,7 @@ class TFTPredictor(pl.LightningModule):
         self.current_epoch_metrics.clear()
 
     def on_test_epoch_end(self):
+        """Compute and log final test metrics."""
         outputs = self.test_step_outputs
         test_metrics = {}
 
@@ -266,6 +355,12 @@ class TFTPredictor(pl.LightningModule):
             self.test_step_outputs.clear()
 
     def get_metrics_history(self):
+        """
+        Get historical metrics for training and validation.
+
+        Returns:
+            dict: Dictionary containing arrays of historical metrics
+        """
         return {
             **{f"epoch_{k}": np.array(v) for k, v in self.train_metrics_history.items()},
             **{f"epoch_{k}": np.array(v) for k, v in self.val_metrics_history.items()},
@@ -273,10 +368,20 @@ class TFTPredictor(pl.LightningModule):
 
 
 def sanitize_name(name):
+    """
+    Sanitize variable names by replacing special characters.
+
+    Args:
+        name (str): Original variable name
+
+    Returns:
+        str: Sanitized variable name
+    """
     return name.replace(".", "_").replace("(", "_").replace(")", "_")
 
 
 def main():
+    """Main function to train and evaluate the TFT model."""
     remote_server_uri = "http://0.0.0.0:8082"
     experiment_name = "AQFM_TFT_comparison"
 

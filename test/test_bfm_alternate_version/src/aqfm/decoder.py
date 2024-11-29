@@ -16,6 +16,33 @@ from src.perceiver_core.perceiver_io import PerceiverIO
 
 
 class AQDecoder(nn.Module):
+    """
+    Air Quality Foundation Model Decoder.
+
+    This decoder takes encoded representations from the AQFM encoder and transforms them back into
+    predictions for air quality ground truth variables using a Perceiver IO architecture.
+
+    Args:
+        feature_names (dict[str, list[str]]): Dictionary mapping feature categories to lists of feature names
+        embed_dim (int, optional): Embedding dimension. Defaults to 512.
+        num_heads (int, optional): Number of attention heads. Defaults to 16.
+        head_dim (int, optional): Dimension of each attention head. Defaults to 64.
+        depth (int, optional): Number of transformer layers. Defaults to 2.
+        mlp_ratio (float, optional): Ratio for MLP hidden dimension. Defaults to 4.0.
+        drop_rate (float, optional): Dropout rate. Defaults to 0.1.
+        perceiver_ln_eps (float, optional): Layer norm epsilon. Defaults to 1e-5.
+
+    Attributes:
+        feature_names (dict): Original feature names mapping
+        embed_dim (int): Embedding dimension
+        target_names (dict): Mapping from original ground truth names to safe internal names
+        perceiver (PerceiverIO): Main Perceiver IO model
+        prediction_heads (nn.ModuleDict): Prediction heads for each target variable
+        query_tokens (nn.Parameter): Learnable query tokens for each target
+        lead_time_embed (nn.Linear): Lead time embedding layer
+        pos_drop (nn.Dropout): Position dropout layer
+    """
+
     def __init__(
         self,
         feature_names: dict[str, list[str]],
@@ -76,14 +103,16 @@ class AQDecoder(nn.Module):
 
     def forward(self, x: torch.Tensor, batch, lead_time: timedelta) -> dict[str, torch.Tensor]:
         """
+        Forward pass of the AQFM decoder.
+
         Args:
-            x: Encoded representation from encoder [B, L, D]
-            batch: Original batch data
-            lead_time: Prediction horizon
+            x (torch.Tensor): Encoded representation from encoder [B, L, D]
+            batch: Original batch data containing input variables and metadata
+            lead_time (timedelta): Time difference between input and target
 
         Returns:
-            Dictionary mapping ground truth variable names to their predictions
-            Each prediction has shape [B, 1] for one-step-ahead forecasting
+            dict[str, torch.Tensor]: Dictionary mapping ground truth variable names to their predictions.
+                                   Each prediction has shape [B, 1] for one-step-ahead forecasting.
         """
         B = x.shape[0]
         device = x.device
