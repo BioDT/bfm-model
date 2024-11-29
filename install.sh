@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 module purge
-module load 2023 
+module load 2023
 # module load poetry/1.5.1-GCCcore-12.3.0
 module load Python/3.11.3-GCCcore-12.3.0
 # module load Python-bundle-PyPI/2023.06-GCCcore-12.3.0
@@ -21,4 +21,3 @@ pip install -e .
 
 # OPTIONAL: For CUDA capable machines
 pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
-

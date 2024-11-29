@@ -2,7 +2,7 @@
 
 First steps towards developing an Artificial Intelligence Foundation Model for Biodiversity research and conservation.
 
-This repository contains a self-contained implementation of the underlying architecture of the BFM. 
+This repository contains a self-contained implementation of the underlying architecture of the BFM.
 
 ## Installation
 
@@ -26,7 +26,12 @@ pip3 install torch torchvision torchaudio --index-url https://download.pytorch.o
 
 2) With poetry. (Make sure you have [Poetry](https://python-poetry.org/docs/#installation) installed)
 
-Just run in a terminal
+To install poetry, you can simply run
+```bash
+curl -sSL https://install.python-poetry.org | python3 -
+```
+
+Afterwards, just run in a terminal
 ```bash
 poetry install
 ```
@@ -42,12 +47,14 @@ Start an MLFLow server
 # change here port if you get [Errno 98] Address already in use
 # also change port in the src/bfm/src/configs
 # & - optional, for interactive mode
-mlflow server --host 0.0.0.0 --port 8081 [&] 
+mlflow server --host 0.0.0.0 --port 8082 [&]
 ```
 On another terminal (if not running in interactive mode), run the train recipe
-```
+```bash
 python src/bfm/src/train.py
 ```
+
+In case of running the AQFM training script, make sure that the port you defined in it corresponds to the port of the MLFlow running server.
 
 ## Connection
 
@@ -61,7 +68,7 @@ salloc -p gpu_h100 --gpus-per-node=1 -t 01:00:00
 # Forwarding the node mlflow instance to the local machine
 # N.B.: Make sure to specify the host on the local machine, as specifying just the port might results in "Permission denied" errors.
 # N.B.2.: If specifying the host 0.0.0.0 on the local machine, access by using `localhost:<port_id>`.
-ssh -i .ssh/snelius_key -L 0.0.0.0:<desired_port_on_local>:gcn<node_id>:<mlflow_port_on_remote> <user_name>@snellius.surf.nl
+ssh -i .ssh/snelius_key -L 0.0.0.0:<desired_port_on_local>:[gcn|tcn]<node_id>:<mlflow_port_on_remote> <user_name>@snellius.surf.nl
 
 ```
 
@@ -75,13 +82,3 @@ Then you can observe mlflow with the same bind command:
 ```bash
 ssh -i .ssh/snelius_key -L 0.0.0.0:<desired_port_on_local>:gcn<node_id>:<mlflow_port_on_remote> <user_name>@snellius.surf.nl
 ```
-
-
-## TODOs
-
-- [ ] Export new requirements.txt
-- [ ] Make the output folder system coherent
-- [ ] Add more logging points
-- [ ] Add checkpointing 
-- [ ] Test multi-node, multi-gpu runs
-- [ ] Cleanup, remove prints etc.

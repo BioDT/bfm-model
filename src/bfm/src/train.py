@@ -1,3 +1,8 @@
+"""
+Training script for the BFM (Biodiversity Foundation Model).
+TODO: Adapt it according to the new data format. The current version was using a toy format, and was just for testing purposes.
+"""
+
 from collections import namedtuple
 from datetime import datetime, timedelta
 
@@ -146,11 +151,12 @@ def main(cfg: DictConfig):
         surf_vars=tuple(f"surf_var_{i}" for i in range(cfg.model.V_s)),
         static_vars=tuple(f"static_var_{i}" for i in range(2)),
         atmos_vars=tuple(f"atmos_var_{i}" for i in range(cfg.model.V_a)),
+        atmos_levels=cfg.data.atmos_levels,
         H=cfg.model.H,
         W=cfg.model.W,
         embed_dim=cfg.model.embed_dim,
         num_latent_tokens=cfg.model.num_latent_tokens,
-        atmos_levels=cfg.data.atmos_levels,
+        patch_size=cfg.model.patch_size,
     )
 
     # Setup logger
