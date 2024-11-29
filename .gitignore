@@ -171,3 +171,4 @@ mlruns
 # Log-related (e.g., lightning, surf etc.)
 lightning_logs/
 slurm-*
+checkpoints

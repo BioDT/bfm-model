@@ -1,0 +1,31 @@
+{
+    "best_parameters": {
+        "sequence_length": 48,
+        "backbone_type": "swin",
+        "embed_dim": 512,
+        "num_latent_tokens": 12,
+        "learning_rate": 2.094423778555706e-05,
+        "batch_size": 8,
+        "gradient_clip_val": 0.1798532667725321,
+        "encoder_num_heads": 16,
+        "encoder_head_dim": 96,
+        "encoder_depth": 1,
+        "encoder_drop_rate": 0.19893525393198722,
+        "encoder_mlp_ratio": 3.558116123345253,
+        "decoder_num_heads": 8,
+        "decoder_head_dim": 128,
+        "decoder_depth": 1,
+        "decoder_drop_rate": 0.02980146737808109,
+        "decoder_mlp_ratio": 2.297798087112605,
+        "backbone_depth": 5,
+        "backbone_num_heads": 4,
+        "backbone_mlp_ratio": 5.434369914345605,
+        "backbone_drop_rate": 0.12491259272867103
+    },
+    "best_validation_loss": 0.14191687107086182,
+    "parameters_amount": 71506185,
+    "optimization_finished": "2024-11-23_20-43-10",
+    "n_trials": 124,
+    "study_name": "aqfm_optimization",
+    "backbone_type": "swin"
+}

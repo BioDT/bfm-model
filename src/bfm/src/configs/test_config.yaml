@@ -1,13 +1,14 @@
 model:
-  B: 32
-  T: 2
-  V_s: 3
-  V_a: 5
-  C: 13
-  H: 32
-  W: 64
-  embed_dim: 1024
-  num_latent_tokens: 7
+  B: 32  # Batch size
+  T: 2   # Time steps
+  V_s: 3 # Number of surface variables
+  V_a: 5 # Number of atmospheric variables
+  C: 13  # Number of atmospheric levels
+  H: 32  # Height
+  W: 64  # Width
+  embed_dim: 512
+  num_latent_tokens: 4
+  patch_size: 4
 
 data:
   atmos_levels: [1000, 925, 850, 700, 600, 500, 400, 300, 250, 200, 150, 100, 50]

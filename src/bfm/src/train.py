@@ -1,14 +1,17 @@
+"""
+Training script for the BFM (Biodiversity Foundation Model).
+TODO: Adapt it according to the new data format. The current version was using a toy format, and was just for testing purposes.
+"""
+
 from collections import namedtuple
 from datetime import datetime, timedelta
 
-from omegaconf import DictConfig, OmegaConf
 import hydra
-
 import lightning as L
+import torch
 from lightning.pytorch import LightningModule, seed_everything
 from lightning.pytorch.loggers import MLFlowLogger
-
-import torch
+from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader, Dataset
 from torch.utils.data._utils.collate import default_collate
 
@@ -125,6 +128,7 @@ class BFMTrainer(LightningModule):
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=150000, eta_min=self.learning_rate / 10)
         return [optimizer], [scheduler]
 
+
 @hydra.main(version_base=None, config_path="configs", config_name="test_config")
 def main(cfg: DictConfig):
     # Setup config
@@ -139,17 +143,20 @@ def main(cfg: DictConfig):
     seed_everything(42, workers=True)
 
     dataset = AuroraDataset(cfg.model.B, cfg.model.T, cfg.model.V_s, cfg.model.V_a, cfg.model.C, cfg.model.H, cfg.model.W)
-    dataloader = DataLoader(dataset, batch_size=cfg.training.batch_size, num_workers=cfg.training.workers, collate_fn=custom_collate)
+    dataloader = DataLoader(
+        dataset, batch_size=cfg.training.batch_size, num_workers=cfg.training.workers, collate_fn=custom_collate
+    )
 
     model = BFM(
         surf_vars=tuple(f"surf_var_{i}" for i in range(cfg.model.V_s)),
         static_vars=tuple(f"static_var_{i}" for i in range(2)),
         atmos_vars=tuple(f"atmos_var_{i}" for i in range(cfg.model.V_a)),
+        atmos_levels=cfg.data.atmos_levels,
         H=cfg.model.H,
         W=cfg.model.W,
         embed_dim=cfg.model.embed_dim,
         num_latent_tokens=cfg.model.num_latent_tokens,
-        atmos_levels=cfg.data.atmos_levels,
+        patch_size=cfg.model.patch_size,
     )
 
     # Setup logger
