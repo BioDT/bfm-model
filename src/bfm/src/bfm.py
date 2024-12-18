@@ -44,6 +44,7 @@ from src.bfm.src.encoder import BFMEncoder
 from src.mvit.mvit_model import MViT
 from src.swin_transformer.core.swim_core_v2 import Swin3DTransformer
 
+DEVICE = "cuda:1"
 
 def crop_variables(variables, new_H, new_W):
     """
@@ -264,7 +265,7 @@ class BFM(nn.Module):
 
 def main():
     """Main function for testing the BFM implementation."""
-    device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu")
+    device = torch.device(DEVICE if torch.cuda.is_available() else "cpu")
     print(f"\nUsing device: {device}")
 
     print("\nLoading batches...")
