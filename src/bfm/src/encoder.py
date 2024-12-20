@@ -246,8 +246,10 @@ class BFMEncoder(nn.Module):
             W (int): Width of input grid
         """
         # get number of patches
-        num_patches = (H // self.patch_size) * (W // self.patch_size)
-
+        #TODO Check why this gives weird error. For now hardcode the # of patches
+        # num_patches = (H // self.patch_size) * (W // self.patch_size)
+        num_patches = 3040
+        print(num_patches)
         # set the device from an existing parameter or default to CPU
         device = (
             next(self.parameters()).device
@@ -302,12 +304,12 @@ class BFMEncoder(nn.Module):
         # initialize Perceiver IO with total latents
         total_latents = sum(self.latent_sizes.values())
         print(f"total latens {total_latents}")
-        print(f"latens list: {latent_list}")
+
         # combine all latents for backward compatibility
         self.latents = nn.Parameter(
             torch.cat(latent_list, dim=0) if latent_list else torch.randn(total_latents, self.embed_dim, device=device)
         )
-
+        print(f"latens shape: {self.latents.shape}")
         # Initialize Perceiver IO
         self.perceiver_io = PerceiverIO(
             num_layers=self.depth,

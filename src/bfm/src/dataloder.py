@@ -3,6 +3,7 @@ from torch.utils.data import Dataset, DataLoader, default_collate
 from datetime import datetime
 import os
 from collections import namedtuple
+from src.bfm.src.dataset_basics import *
 
 # Namedtuple definitions
 Batch = namedtuple("Batch", [
@@ -20,6 +21,7 @@ Metadata = namedtuple("Metadata", [
     "latitudes",
     "longitudes",
     "timestamp",
+    "lead_time",
     "pressure_levels",
 ])
 
@@ -64,11 +66,13 @@ def custom_collate(batch_list):
         timestamps_all = [b.batch_metadata.timestamp for b in batch_list]
         # If each sample has a single timestamp, we get a list of timestamps:
         timestamps = [ts[0] for ts in timestamps_all]
+        lead_time = batch_list[0].batch_metadata.lead_time
 
         metadata = Metadata(
             latitudes=latitudes,
             longitudes=longitudes,
             timestamp=timestamps,  # a list of timestamps, one per sample
+            lead_time=lead_time,
             pressure_levels=pressure_levels
         )
 
@@ -93,6 +97,66 @@ def custom_collate(batch_list):
 
     # Fallback for other types if encountered
     return default_collate(batch_list)
+
+
+def crop_variables(variables, new_H, new_W):
+    """
+    Crop and clean variables to specified dimensions, handling NaN and Inf values.
+
+    Args:
+        variables (dict): Dictionary of variable tensors to process
+        new_H (int): Target height dimension
+        new_W (int): Target width dimension
+
+    Returns:
+        dict: Processed variables with cleaned and cropped tensors
+    """
+    processed_vars = {}
+    for k, v in variables.items():
+        # crop dimensions
+        cropped = v[..., :new_H, :new_W]
+
+        # infinities first
+        inf_mask = torch.isinf(cropped)
+        inf_count = inf_mask.sum().item()
+        if inf_count > 0:
+            print(f"\nHandling Inf values in {k}:")
+            print(f"Inf count: {inf_count}")
+            valid_values = cropped[~inf_mask & ~torch.isnan(cropped)]
+            if len(valid_values) > 0:
+                max_val = valid_values.max().item()
+                min_val = valid_values.min().item()
+                cropped = torch.clip(cropped, min_val, max_val)
+            else:
+                cropped = torch.clip(cropped, -1e6, 1e6)
+
+        # handle NaNs
+        nan_mask = torch.isnan(cropped)
+        nan_count = nan_mask.sum().item()
+        if nan_count > 0:
+            print(f"\nHandling NaN values in {k}:")
+            print(f"Shape: {cropped.shape}")
+            print(f"Total NaN count: {nan_count}")
+            valid_values = cropped[~nan_mask & ~torch.isinf(cropped)]
+            if len(valid_values) > 0:
+                mean_val = valid_values.mean().item()
+                std_val = valid_values.std().item()
+                # use mean +- 2*std as clipping bounds
+                clip_min = mean_val - 2 * std_val
+                clip_max = mean_val + 2 * std_val
+                # replace NaNs with clipped mean
+                cropped = torch.nan_to_num(cropped, nan=mean_val)
+                # TODO This is nasty, may be using a lot of memory
+                # TODO Check the advantages and why the data are in this regime
+                cropped = cropped.to(torch.float32)
+                cropped = torch.clip(cropped, clip_min, clip_max)
+
+            else:
+                cropped = torch.nan_to_num(cropped, nan=0.0)
+                cropped = torch.clip(cropped, -1.0, 1.0)
+
+        processed_vars[k] = cropped
+    return processed_vars
 
 
 class LargeClimateDataset(Dataset):
@@ -125,39 +189,47 @@ class LargeClimateDataset(Dataset):
 
         latitudes = data["batch_metadata"]["latitudes"]
         longitudes = data["batch_metadata"]["longitudes"]
-        timestamps = [data["batch_metadata"]["timestamp"]]  # If it's a single sample, possibly a single timestamp or a list
+        timestamps = data["batch_metadata"]["timestamp"]  # If it's a single sample, possibly a single timestamp or a list
         pressure_levels = data["batch_metadata"]["pressure_levels"]
 
+        # Determine original spatial dimensions from metadata lists
+        H = len(data["batch_metadata"]["latitudes"])
+        W = len(data["batch_metadata"]["longitudes"])
+
+        # crop dimensions to be divisible by patch size
+        patch_size = 4 # TODO make this configurable
+        new_H = (H // patch_size) * patch_size
+        new_W = (W // patch_size) * patch_size
+
+        surface_vars = crop_variables(data["surface_variables"], new_H, new_W)
+        single_vars = crop_variables(data["single_variables"], new_H, new_W)
+        atmospheric_vars = crop_variables(data["atmospheric_variables"], new_H, new_W)
+        species_ext_vars = crop_variables(data["species_extinction_variables"], new_H, new_W)
+        land_vars = crop_variables(data["land_variables"], new_H, new_W)
+        agriculture_vars = crop_variables(data["agriculture_variables"], new_H, new_W)
+        forest_vars = crop_variables(data["forest_variables"], new_H, new_W)
+
+        # crop metadata dimensions
+        latitude_var = torch.tensor(latitudes[:new_H])
+        longitude_var = torch.tensor(longitudes[:new_W])
+
+        # Calculate lead time
+        dt_format = "%Y-%m-%dT%H:%M:%S"
+        # Convert the two timestamps into datetime objects
+        start = datetime.strptime(timestamps[0], dt_format)
+        end = datetime.strptime(timestamps[1], dt_format)
+
+        # Compute lead time in hours
+        lead_time_hours = (end - start).total_seconds() / 3600.0
+
+
         metadata = Metadata(
-            latitudes=latitudes,
-            longitudes=longitudes,
+            latitudes=latitude_var,
+            longitudes=longitude_var,
             timestamp=timestamps,
+            lead_time=lead_time_hours,
             pressure_levels=pressure_levels
         )
-
-        def index_dict(d):
-            # Each file is a single sample, no indexing needed
-            # The data should already be a single sample.
-            # If the variables are still higher-dimensional, assume the first dimension is sample, we index [0].
-            # If there's no extra dimension, just return them as is.
-            # Let's try indexing in case dimension 0 corresponds to sample:
-            for k, v in d.items():
-                if isinstance(v, torch.Tensor) and v.dim() > 0:
-                    # Attempt to index the first dimension if it represents a batch dimension
-                    # If the file truly contains only one sample (no batch dimension), no indexing is required.
-                    # We'll try without indexing first. If needed, modify here.
-                    pass
-            return d
-
-        # Since each file has a single sample, we assume no indexing is needed.
-        # Just return them as is.
-        surface_vars = index_dict(data["surface_variables"])
-        single_vars = index_dict(data["single_variables"])
-        atmospheric_vars = index_dict(data["atmospheric_variables"])
-        species_ext_vars = index_dict(data["species_extinction_variables"])
-        land_vars = index_dict(data["land_variables"])
-        agriculture_vars = index_dict(data["agriculture_variables"])
-        forest_vars = index_dict(data["forest_variables"])
 
         return Batch(
             batch_metadata=metadata,
@@ -179,7 +251,7 @@ def test_dataset_and_dataloader(data_dir):
     dataset = LargeClimateDataset(data_dir)
     dataloader = DataLoader(
         dataset,
-        batch_size=4,        # Fetch two samples for testing
+        batch_size=1,        # Fetch two samples for testing
         num_workers=0,       # For debugging, keep workers=0 to avoid async complexity
         pin_memory=False,
         collate_fn=custom_collate,
@@ -187,6 +259,9 @@ def test_dataset_and_dataloader(data_dir):
     )
 
     batch = next(iter(dataloader))
+
+    print_batch_shapes(batch)
+    print_nan_counts(batch)
 
     print("=== Test Dataloader Output ===")
     print("Batch Metadata:")

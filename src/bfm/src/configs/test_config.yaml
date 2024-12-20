@@ -13,7 +13,7 @@ model:
   embed_dim: 512
   num_latent_tokens: 4
   patch_size: 4
-  backbone: "swin"
+  backbone: "swin" # mvit
 
 data:
   atmos_levels: [50, 500, 1000]
@@ -23,11 +23,11 @@ training:
   workers: 0
   epochs: 20
   accelerator: cuda
-  precision: bf16
+  precision: bf16-mixed
   devices: [1]
   strategy: fsdp # ddp
   gradient_clip: 1.0
-  log_steps: 10
+  log_steps: 1
 
 general:
   do_eval: True

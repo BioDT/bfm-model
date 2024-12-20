@@ -98,7 +98,11 @@ def crop_variables(variables, new_H, new_W):
                 clip_max = mean_val + 2 * std_val
                 # replace NaNs with clipped mean
                 cropped = torch.nan_to_num(cropped, nan=mean_val)
+                # TODO This is nasty, may be using a lot of memory
+                # TODO Check the advantages and why the data are in this regime
+                cropped = cropped.to(torch.float32)
                 cropped = torch.clip(cropped, clip_min, clip_max)
+
             else:
                 cropped = torch.nan_to_num(cropped, nan=0.0)
                 cropped = torch.clip(cropped, -1.0, 1.0)
@@ -286,23 +290,26 @@ def main():
     print(f"\nUsing device: {device}")
 
     print("\nLoading batches...")
-    batches = load_batches("data/", device=device)
+    batches = load_batches("data/")
     print(f"Loaded {len(batches)} batches")
 
     # some info about the first batch
     batch = batches[0]
     print("\nFirst batch variable counts:")
-    print(f"Surface variables: {len(batch.surface_variables)} vars")
-    print(f"Single variables: {len(batch.single_variables)} vars")
-    print(f"Atmospheric variables: {len(batch.atmospheric_variables)} vars × {len(batch.batch_metadata.pressure_levels)} levels")
-    print(f"Species variables: {len(batch.species_extinction_variables)} vars")
-    print(f"Land variables: {len(batch.land_variables)} vars")
-    print(f"Agriculture variables: {len(batch.agriculture_variables)} vars")
-    print(f"Forest variables: {len(batch.forest_variables)} vars")
+    print(f"Surface variables: {len(batch['surface_variables'])} vars")
+    print(f"Single variables: {len(batch['single_variables'])} vars")
+    print(f"Atmospheric variables: {len(batch['atmospheric_variables'])} vars × {len(batch['batch_metadata']['pressure_levels'])} levels")
+    print(f"Species variables: {len(batch['species_extinction_variables'])} vars")
+    print(f"Land variables: {len(batch['land_variables'])} vars")
+    print(f"Agriculture variables: {len(batch['agriculture_variables'])} vars")
+    print(f"Forest variables: {len(batch['forest_variables'])} vars")
 
-    # crop dimensions to be divisible by patch size (or just set patch size to 1)
+    # Determine original spatial dimensions from metadata lists
+    H = len(batch["batch_metadata"]["latitudes"])
+    W = len(batch["batch_metadata"]["longitudes"])
+
+    # crop dimensions to be divisible by patch size
     patch_size = 4
-    H, W = batch.batch_metadata.latitudes, batch.batch_metadata.longitudes
     new_H = (H // patch_size) * patch_size
     new_W = (W // patch_size) * patch_size
 
@@ -312,32 +319,33 @@ def main():
     print("\nProcessing batches...")
     for i, batch in enumerate(batches):
         print(f"\nProcessing batch {i+1}/{len(batches)}")
-        batch.surface_variables = crop_variables(batch.surface_variables, new_H, new_W)
-        batch.single_variables = crop_variables(batch.single_variables, new_H, new_W)
-        batch.atmospheric_variables = crop_variables(batch.atmospheric_variables, new_H, new_W)
-        batch.species_extinction_variables = crop_variables(batch.species_extinction_variables, new_H, new_W)
-        batch.land_variables = crop_variables(batch.land_variables, new_H, new_W)
-        batch.agriculture_variables = crop_variables(batch.agriculture_variables, new_H, new_W)
-        batch.forest_variables = crop_variables(batch.forest_variables, new_H, new_W)
+        batch["surface_variables"] = crop_variables(batch["surface_variables"], new_H, new_W)
+        batch["single_variables"] = crop_variables(batch["single_variables"], new_H, new_W)
+        batch["atmospheric_variables"] = crop_variables(batch["atmospheric_variables"], new_H, new_W)
+        batch["species_extinction_variables"] = crop_variables(batch["species_extinction_variables"], new_H, new_W)
+        batch["land_variables"] = crop_variables(batch["land_variables"], new_H, new_W)
+        batch["agriculture_variables"] = crop_variables(batch["agriculture_variables"], new_H, new_W)
+        batch["forest_variables"] = crop_variables(batch["forest_variables"], new_H, new_W)
 
         # crop metadata dimensions
-        batch.batch_metadata.latitudes = batch.batch_metadata.latitudes[:new_H]
-        batch.batch_metadata.longitudes = batch.batch_metadata.longitudes[:new_W]
+        batch["batch_metadata"]["latitudes"] = batch["batch_metadata"]["latitudes"][:new_H]
+        batch["batch_metadata"]["longitudes"] = batch["batch_metadata"]["longitudes"][:new_W]
 
     print("\nSpatial dimensions after cropping:")
     print(f"Grid size: {new_H}×{new_W}")
     print(f"Number of patches: {new_H//patch_size}×{new_W//patch_size}")
 
+
     # init model
     model = BFM(
-        surface_vars=tuple(batch.surface_variables.keys()),
-        single_vars=tuple(batch.single_variables.keys()),
-        atmos_vars=tuple(batch.atmospheric_variables.keys()),
-        species_vars=tuple(batch.species_extinction_variables.keys()),
-        land_vars=tuple(batch.land_variables.keys()),
-        agriculture_vars=tuple(batch.agriculture_variables.keys()),
-        forest_vars=tuple(batch.forest_variables.keys()),
-        atmos_levels=batch.batch_metadata.pressure_levels,
+        surface_vars=tuple(batch['surface_variables'].keys()),
+        single_vars=tuple(batch['single_variables'].keys()),
+        atmos_vars=tuple(batch['atmospheric_variables'].keys()),
+        species_vars=tuple(batch['species_extinction_variables'].keys()),
+        land_vars=tuple(batch['land_variables'].keys()),
+        agriculture_vars=tuple(batch['agriculture_variables'].keys()),
+        forest_vars=tuple(batch['forest_variables'].keys()),
+        atmos_levels=batch['batch_metadata']['pressure_levels'],
         H=new_H,
         W=new_W,
         backbone_type="mvit",  # or "swin"
@@ -352,13 +360,22 @@ def main():
     # pass each batch through the model
     for i, batch in enumerate(batches):
         print(f"\nProcessing batch {i+1}/{len(batches)}")
-        t1, t2 = batch.batch_metadata.timestamp
-        lead_time = t2 - t1
+        timestamp = batch['batch_metadata']['timestamp']
 
+        dt_format = "%Y-%m-%dT%H:%M:%S"
+
+        # Convert the two timestamps into datetime objects
+        start = datetime.strptime(timestamp[0], dt_format)
+        end = datetime.strptime(timestamp[1], dt_format)
+
+        # Compute lead time in hours
+        lead_time_hours = (end - start).total_seconds() / 3600.0
+
+        print("Lead time (hours):", lead_time_hours)
         try:
             with torch.no_grad():
-                output = model(batch, lead_time)  # noqa
-
+                output = model(batch, lead_time_hours)  # noqa
+                print(output)
         except Exception as e:
             print(f"\nError processing batch {i+1}:")
             print(f"Error type: {type(e).__name__}")
@@ -366,5 +383,5 @@ def main():
             raise
 
 
-if __name__ == "__main__":
-    main()
+# if __name__ == "__main__":
+#     main()
