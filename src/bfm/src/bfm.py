@@ -34,9 +34,14 @@ Example usage:
 from collections import namedtuple
 from datetime import datetime, timedelta
 from typing import Literal
+import os
 
 import torch
 import torch.nn as nn
+
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+import torch.distributed as dist
+import torch.multiprocessing as mp
 
 from src.bfm.src.dataset_basics import load_batches
 from src.bfm.src.decoder import BFMDecoder
@@ -146,6 +151,7 @@ class BFM(nn.Module):
         embed_dim: int = 1024,
         num_latent_tokens: int = 8,
         backbone_type: Literal["swin", "mvit"] = "mvit",
+        patch_size: int = 4,
         **kwargs,
     ):
         super().__init__()
@@ -161,7 +167,8 @@ class BFM(nn.Module):
             agriculture_vars=agriculture_vars,
             forest_vars=forest_vars,
             atmos_levels=atmos_levels,
-            patch_size=kwargs.get("patch_size", 4),
+            # patch_size=kwargs.get("patch_size", 4),
+            patch_size=patch_size,
             embed_dim=embed_dim,
             H=H,
             W=W,
@@ -262,6 +269,16 @@ class BFM(nn.Module):
 
         return output
 
+def setup(rank, world_size):
+    os.environ['MASTER_ADDR'] = 'localhost'
+    os.environ['MASTER_PORT'] = '12355'
+
+    # initialize the process group
+    dist.init_process_group("nccl", rank=rank, world_size=world_size)
+
+def cleanup():
+    dist.destroy_process_group()
+
 
 def main():
     """Main function for testing the BFM implementation."""
@@ -285,7 +302,7 @@ def main():
 
     # crop dimensions to be divisible by patch size (or just set patch size to 1)
     patch_size = 4
-    H, W = batch.batch_metadata.latitudes.shape[0], batch.batch_metadata.longitudes.shape[0]
+    H, W = batch.batch_metadata.latitudes, batch.batch_metadata.longitudes
     new_H = (H // patch_size) * patch_size
     new_W = (W // patch_size) * patch_size
 
@@ -324,8 +341,14 @@ def main():
         H=new_H,
         W=new_W,
         backbone_type="mvit",  # or "swin"
-    ).to(device)
+    )
 
+    # RANK = 1
+    # torch.cuda.set_device(RANK)
+
+    # model = model.to(RANK)
+    # model = FSDP(model)
+    model.eval()
     # pass each batch through the model
     for i, batch in enumerate(batches):
         print(f"\nProcessing batch {i+1}/{len(batches)}")

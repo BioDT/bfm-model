@@ -1,25 +1,31 @@
 model:
   B: 32  # Batch size
   T: 2   # Time steps
-  V_s: 3 # Number of surface variables
-  V_a: 5 # Number of atmospheric variables
-  C: 13  # Number of atmospheric levels
+  V_surf: 2 # Number of surface variables
+  V_atmos: 2 # Number of atmospheric variables
+  C: 3  # Number of atmospheric levels
+  V_spec: 1 # Number of extinct_species variables
+  V_land: 2 # Number of land variables
+  V_agri: 4 # Number of agriculture variables
+  V_forest: 1 # Number of forest variables
   H: 32  # Height
   W: 64  # Width
   embed_dim: 512
   num_latent_tokens: 4
   patch_size: 4
+  backbone: "swin"
 
 data:
-  atmos_levels: [1000, 925, 850, 700, 600, 500, 400, 300, 250, 200, 150, 100, 50]
+  atmos_levels: [50, 500, 1000]
 
 training:
   batch_size: 1
-  workers: 4
+  workers: 0
   epochs: 20
-  accelerator: auto
+  accelerator: cuda
   precision: bf16
-  devices: 1
+  devices: [1]
+  strategy: fsdp # ddp
   gradient_clip: 1.0
   log_steps: 10
 

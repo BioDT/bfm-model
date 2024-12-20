@@ -11,11 +11,14 @@ import lightning as L
 import torch
 from lightning.pytorch import LightningModule, seed_everything
 from lightning.pytorch.loggers import MLFlowLogger
+from lightning.pytorch.strategies import FSDPStrategy
+
 from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader, Dataset
 from torch.utils.data._utils.collate import default_collate
 
 from src.bfm.src.bfm import BFM
+from src.bfm.src.dataloder import LargeClimateDataset
 
 Batch = namedtuple("Batch", ["surf_vars", "static_vars", "atmos_vars", "metadata"])
 Metadata = namedtuple("Metadata", ["lat", "lon", "time", "atmos_levels"])
@@ -142,20 +145,25 @@ def main(cfg: DictConfig):
     # Seed the experiment for numpy, torch and python.random.
     seed_everything(42, workers=True)
 
-    dataset = AuroraDataset(cfg.model.B, cfg.model.T, cfg.model.V_s, cfg.model.V_a, cfg.model.C, cfg.model.H, cfg.model.W)
+    dataset = AuroraDataset(cfg.model.B, cfg.model.T, cfg.model.V_surf, cfg.model.V_atmos, cfg.model.C, cfg.model.H, cfg.model.W)
+    # dataset = LargeClimateDataset(data_dir='data/')
     dataloader = DataLoader(
-        dataset, batch_size=cfg.training.batch_size, num_workers=cfg.training.workers, collate_fn=custom_collate
-    )
+        dataset, batch_size=cfg.training.batch_size, num_workers=cfg.training.workers)
 
     model = BFM(
-        surf_vars=tuple(f"surf_var_{i}" for i in range(cfg.model.V_s)),
-        static_vars=tuple(f"static_var_{i}" for i in range(2)),
-        atmos_vars=tuple(f"atmos_var_{i}" for i in range(cfg.model.V_a)),
+        surface_vars=tuple(f"surf_var_{i}" for i in range(cfg.model.V_surf)),
+        single_vars=tuple(f"static_var_{i}" for i in range(1)),
+        atmos_vars=tuple(f"atmos_var_{i}" for i in range(cfg.model.V_atmos)),
+        species_vars=tuple(f"species_extinction_var_{i}" for i in range(cfg.model.V_spec)),
+        land_vars=tuple(f"land_var_{i}" for i in range(cfg.model.V_land)),
+        agriculture_vars=tuple(f"agticulture_var_{i}" for i in range(cfg.model.V_agri)),
+        forest_vars=tuple(f"forest_var_{i}" for i in range(cfg.model.V_forest)),
         atmos_levels=cfg.data.atmos_levels,
         H=cfg.model.H,
         W=cfg.model.W,
         embed_dim=cfg.model.embed_dim,
         num_latent_tokens=cfg.model.num_latent_tokens,
+        backbone_type=cfg.model.backbone,
         patch_size=cfg.model.patch_size,
     )
 
@@ -166,18 +174,25 @@ def main(cfg: DictConfig):
     # Setup trainer
     trainer = BFMTrainer(model)
 
+    if cfg.training.strategy == "fsdp":
+        distr_strategy = FSDPStrategy()
+        
+
     pl_trainer = L.Trainer(
         max_epochs=cfg.training.epochs,
         accelerator=cfg.training.accelerator,
         devices=cfg.training.devices,
+        # devices=[1],
+        strategy=distr_strategy,
         precision=cfg.training.precision,
         gradient_clip_val=cfg.training.gradient_clip,
         log_every_n_steps=cfg.training.log_steps,
-        logger=mlf_logger,
+        # logger=mlf_logger,
     )
 
     pl_trainer.fit(trainer, train_dataloaders=dataloader)
-
+    print("Finished training successfully")
+    pl_trainer.print(torch.cuda.memory_summary())
 
 if __name__ == "__main__":
     main()

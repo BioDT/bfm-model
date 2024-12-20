@@ -301,7 +301,8 @@ class BFMEncoder(nn.Module):
 
         # initialize Perceiver IO with total latents
         total_latents = sum(self.latent_sizes.values())
-
+        print(f"total latens {total_latents}")
+        print(f"latens list: {latent_list}")
         # combine all latents for backward compatibility
         self.latents = nn.Parameter(
             torch.cat(latent_list, dim=0) if latent_list else torch.randn(total_latents, self.embed_dim, device=device)
@@ -421,7 +422,7 @@ class BFMEncoder(nn.Module):
             Shape: [batch_size, num_latents, embed_dim]
         """
         B = 1  # the assumption is that we are taking one batch at a time, but that can be changed of course
-        H, W = batch.batch_metadata.latitudes.shape[0], batch.batch_metadata.longitudes.shape[0]
+        H, W = batch.batch_metadata.latitudes[0], batch.batch_metadata.longitudes[0]
 
         if not hasattr(self, "perceiver_io"):
             self._initialize_perceiver(H, W)
