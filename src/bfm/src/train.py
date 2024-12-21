@@ -136,22 +136,16 @@ class BFMTrainer(LightningModule):
 def main(cfg: DictConfig):
     # Setup config
     print(OmegaConf.to_yaml(cfg))
-    # hyperparams -> moved to config file
-    # TODO Adapt this way of handling parameters
-    # B, T, V_s, V_a, C, H, W = 32, 2, 3, 5, 13, 32, 64
-    # embed_dim = 1024
-    # num_latent_tokens = 7
 
     # Seed the experiment for numpy, torch and python.random.
     seed_everything(42, workers=True)
 
+    print('Setting up Dataloader ...')
     # dataset = AuroraDataset(cfg.model.B, cfg.model.T, cfg.model.V_surf, cfg.model.V_atmos, cfg.model.C, cfg.model.H, cfg.model.W)
     dataset = LargeClimateDataset(data_dir='data/')
     dataloader = DataLoader(
         dataset, batch_size=cfg.training.batch_size, num_workers=cfg.training.workers)
 
-    print('Setting up Dataloader ...')
-    # batch = next(iter(dataloader))
     print('Done \n Setting up the BFM')
     model = BFM(
         surface_vars=tuple(f"surf_var_{i}" for i in range(cfg.model.V_surf)),
@@ -161,13 +155,6 @@ def main(cfg: DictConfig):
         land_vars=tuple(f"land_var_{i}" for i in range(cfg.model.V_land)),
         agriculture_vars=tuple(f"agticulture_var_{i}" for i in range(cfg.model.V_agri)),
         forest_vars=tuple(f"forest_var_{i}" for i in range(cfg.model.V_forest)),
-        # surface_vars=tuple(batch['surface_variables'].keys()),
-        # single_vars=tuple(batch['single_variables'].keys()),
-        # atmos_vars=tuple(batch['atmospheric_variables'].keys()),
-        # species_vars=tuple(batch['species_extinction_variables'].keys()),
-        # land_vars=tuple(batch['land_variables'].keys()),
-        # agriculture_vars=tuple(batch['agriculture_variables'].keys()),
-        # forest_vars=tuple(batch['forest_variables'].keys()),
         atmos_levels=cfg.data.atmos_levels,
         H=cfg.model.H,
         W=cfg.model.W,

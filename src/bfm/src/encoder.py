@@ -379,37 +379,90 @@ class BFMEncoder(nn.Module):
 
         return tensor if replace_values else has_issues
 
+    # def process_variable_group(self, variables, token_embeds, group_name):
+    #     """
+    #     Process a group of variables through tokenization and embedding.
+
+    #     Args:
+    #         variables (dict): Dictionary of variables to process
+    #         token_embeds (nn.Module): Token embedding layer
+    #         group_name (str): Name of variable group for logging
+
+    #     Returns:
+    #         torch.Tensor: Processed and embedded tensor
+    #         Shape: [num_patches, embed_dim]
+    #     """
+    #     if not variables:
+    #         print(f"\n{group_name}: No variables found")
+    #         return None
+
+    #     # stack variables
+    #     values = tuple(variables.values())
+    #     x = torch.stack(values, dim=0)
+    #     print("x shape after stacking vars", x.shape)
+    #     x = x[:, 0]
+    #     # x = x.squeeze(1)
+    #     x = self._check_tensor(x, f"{group_name} initial stack")
+    #     print("x shape before rearange:", x.shape)
+    #     # reshape and check
+    #     x = rearrange(x, "v t (h p1) (w p2) -> (h w) (v t p1 p2)", p1=self.patch_size, p2=self.patch_size)
+    #     x = self._check_tensor(x, f"{group_name} after rearrange")
+    #     print("x shape after reshape:", x.shape)
+    #     # apply token embedding and check
+    #     x = token_embeds(x)
+    #     x = self._check_tensor(x, f"{group_name} after embedding")
+    #     print("x shape after embedding:", x.shape)
+    #     return x
+
     def process_variable_group(self, variables, token_embeds, group_name):
-        """
-        Process a group of variables through tokenization and embedding.
+            """
+            Process a group of variables through tokenization and embedding.
+            This function expects each var to shape [B, H, W] or [B, T, H, W] depending on your design.
+            But no 'level' dimension here, since we separate that out for 'atmospheric' in the forward.
+            """
+            if not variables:
+                print(f"\n{group_name}: No variables found")
+                return None
 
-        Args:
-            variables (dict): Dictionary of variables to process
-            token_embeds (nn.Module): Token embedding layer
-            group_name (str): Name of variable group for logging
+            # stack variables --> shape [v, B, H, W] if each var is [B, H, W]
+            # e.g. if v=2, shape might be [2, 1, 152, 320]
+            values = tuple(variables.values())
+            x = torch.stack(values, dim=0)
+            print(f"{group_name}: after stacking vars => {x.shape}")
 
-        Returns:
-            torch.Tensor: Processed and embedded tensor
-            Shape: [num_patches, embed_dim]
-        """
-        if not variables:
-            print(f"\n{group_name}: No variables found")
-            return None
+            # possibly remove batch dimension if B=1
+            # so [v, 1, H, W] -> [v, H, W]
+            if x.shape[1] == 1:
+                x = x[:, 0]
+                print(f"{group_name}: removing batch dimension => {x.shape}")
 
-        # stack variables
-        values = tuple(variables.values())
-        x = torch.stack(values, dim=0)
-        x = self._check_tensor(x, f"{group_name} initial stack")
+            # Now x is [v, H, W], or [v, T, H, W] if you also have time
+            # Suppose T=1 or T=some small integer
+            # We'll guess your pattern expects "v t (h p1) (w p2)"
+            # If you truly only have [v, H, W], treat T=1 artificially
+            if x.dim() == 3:
+                # Insert a time dimension
+                x = x.unsqueeze(1)  # shape [v, t=1, H, W]
+                print(f"{group_name}: artificially added time dimension => {x.shape}")
 
-        # reshape and check
-        x = rearrange(x, "v t (h p1) (w p2) -> (h w) (v t p1 p2)", p1=self.patch_size, p2=self.patch_size)
-        x = self._check_tensor(x, f"{group_name} after rearrange")
+            print(f"{group_name}: shape before rearrange => {x.shape}")
+            # Example pattern: "v t (h p1) (w p2) -> (h w) (v t p1 p2)"
+            # with patch_size = self.patch_size
+            # Make sure H, W are multiples of patch_size
+            x = rearrange(
+                x,
+                "v t (h p1) (w p2) -> (h w) (v t p1 p2)",
+                p1=self.patch_size,
+                p2=self.patch_size
+            )
+            print(f"{group_name}: shape after rearrange => {x.shape}")
 
-        # apply token embedding and check
-        x = token_embeds(x)
-        x = self._check_tensor(x, f"{group_name} after embedding")
+            # Now x has shape [num_patches, v * t * p1 * p2]
+            # The linear embed expects [*, in_features]
+            x = token_embeds(x)  # => [num_patches, embed_dim]
+            print(f"{group_name}: shape after embedding => {x.shape}")
 
-        return x
+            return x
 
     def forward(self, batch, lead_time):
         """
@@ -432,51 +485,83 @@ class BFMEncoder(nn.Module):
         # process each variable group
         embeddings = []
         embedding_groups = {}
-
+        print("process surface")
         surface_embed = self.process_variable_group(
             batch.surface_variables, self.surface_token_embeds, "Surface Variables"
         )  # shape: [num_patches, embed_dim]
         if surface_embed is not None:
             embeddings.append(surface_embed)
             embedding_groups["surface"] = surface_embed
-
+        print("process signle")
         single_embed = self.process_variable_group(
             batch.single_variables, self.single_token_embeds, "Single Variables"
         )  # shape: [num_patches, embed_dim]
         if single_embed is not None:
             embeddings.append(single_embed)
             embedding_groups["single"] = single_embed
+        print("process atmospheric")
 
+        # V1, wasnt working ! to be removed
         # Handle atmospheric variables
+        # atmos = []
+        # if batch.atmospheric_variables:
+        #     for level_idx, level in enumerate(self.atmos_levels):
+        #         level_vars = {k: v[:, level_idx] for k, v in batch.atmospheric_variables.items()}
+        #         print(level_vars)
+        #         level_embed = self.process_variable_group(
+        #             level_vars, self.atmos_token_embeds, f"Atmospheric Level {level}"
+        #         )  # shape: [num_patches, embed_dim]
+        #         if level_embed is not None:
+        #             atmos.append(level_embed)
+
+        #     if len(atmos) > 0:
+        #         stacked_atmos = torch.stack(atmos, dim=0)  # shape: [num_levels, num_patches, embed_dim]
+        #         embeddings.append(stacked_atmos)
+        #         embedding_groups["atmos"] = stacked_atmos
+
         atmos = []
         if batch.atmospheric_variables:
             for level_idx, level in enumerate(self.atmos_levels):
-                level_vars = {k: v[:, level_idx] for k, v in batch.atmospheric_variables.items()}
+            # For each variable in atmospheric_variables, slice out dimension=2 (the levels)
+            # shape => [v, b, H, W] for that single level.
+                level_vars = {}
+                for var_name, var_data in batch.atmospheric_variables.items():
+                    # var_data is [v, b, l, H, W], but typically v=1 if "var_data" is truly one variable
+                    # or if we're grouping multiple variables. 
+                    # We slice out the level dimension at index 2:
+                    sliced = var_data[..., level_idx, :, :]  # shape: [v, b, H, W]
+                    level_vars[var_name] = sliced
+
+                # Now pass that dictionary (one level) to the correct embedding
                 level_embed = self.process_variable_group(
-                    level_vars, self.atmos_token_embeds, f"Atmospheric Level {level}"
-                )  # shape: [num_patches, embed_dim]
+                    level_vars,
+                    self.atmos_token_embeds,  # sized for 2 variables, 1 level at a time
+                    f"Atmospheric Level {level}"
+                )
                 if level_embed is not None:
                     atmos.append(level_embed)
 
-            if len(atmos) > 0:
-                stacked_atmos = torch.stack(atmos, dim=0)  # shape: [num_levels, num_patches, embed_dim]
-                embeddings.append(stacked_atmos)
-                embedding_groups["atmos"] = stacked_atmos
+            # If we processed any levels, stack them [L, num_patches, embed_dim]
+                if len(atmos) > 0:
+                    stacked_atmos = torch.stack(atmos, dim=0)  # shape: [num_levels, num_patches, embed_dim]
+                    embeddings.append(stacked_atmos)
+                    embedding_groups["atmos"] = stacked_atmos
 
+        print("process species")
         species_embed = self.process_variable_group(
             batch.species_extinction_variables, self.species_token_embeds, "Species Variables"
         )  # shape: [num_patches, embed_dim]
         if species_embed is not None:
             embeddings.append(species_embed)
             embedding_groups["species"] = species_embed
-
+        print("process land")
         land_embed = self.process_variable_group(
             batch.land_variables, self.land_token_embeds, "Land Variables"
         )  # shape: [num_patches, embed_dim]
         if land_embed is not None:
             embeddings.append(land_embed)
             embedding_groups["land"] = land_embed
-
+        print("process agri")
         agriculture_embed = self.process_variable_group(
             batch.agriculture_variables, self.agriculture_token_embeds, "Agriculture Variables"
         )  # shape: [num_patches, embed_dim]
@@ -498,9 +583,10 @@ class BFMEncoder(nn.Module):
         x = self._check_tensor(x, "Combined embeddings")
 
         # add position encodings
-        lat, lon = batch.batch_metadata.latitudes, batch.batch_metadata.longitudes
+        lat, lon = batch.batch_metadata.latitudes.squeeze(), batch.batch_metadata.longitudes.squeeze()
         lat_grid, lon_grid = torch.meshgrid(lat, lon, indexing="ij")
         pos_input = torch.stack((lat_grid, lon_grid), dim=-1).to(x.device)
+        # make the positions grid
 
         # reshape to patches
         H, W = pos_input.shape[:2]
@@ -611,101 +697,101 @@ class BFMEncoder(nn.Module):
         return emb
 
 
-def main():
-    from datetime import datetime, timedelta
+# def main():
+#     from datetime import datetime, timedelta
 
-    import torch.cuda as cuda
+#     import torch.cuda as cuda
 
-    # set device
-    device = torch.device("cuda:2" if cuda.is_available() else "cpu")
-    print(f"\nUsing device: {device}")
+#     # set device
+#     device = torch.device("cuda:2" if cuda.is_available() else "cpu")
+#     print(f"\nUsing device: {device}")
 
-    # load batches from data
-    print("\nLoading batches...")
-    batches = load_batches("data/", device=device)
-    print(f"Loaded {len(batches)} batches")
+#     # load batches from data
+#     print("\nLoading batches...")
+#     batches = load_batches("data/", device=device)
+#     print(f"Loaded {len(batches)} batches")
 
-    # get first batch
-    batch = batches[0]
+#     # get first batch
+#     batch = batches[0]
 
-    # crop dimensions to be divisible by patch size
-    patch_size = 4
-    H, W = batch.batch_metadata.latitudes.shape[0], batch.batch_metadata.longitudes.shape[0]
-    new_H = (H // patch_size) * patch_size
-    new_W = (W // patch_size) * patch_size
+#     # crop dimensions to be divisible by patch size
+#     patch_size = 4
+#     H, W = batch.batch_metadata.latitudes.shape[0], batch.batch_metadata.longitudes.shape[0]
+#     new_H = (H // patch_size) * patch_size
+#     new_W = (W // patch_size) * patch_size
 
-    def crop_variables(variables):
-        processed_vars = {}
-        for k, v in variables.items():
-            # crop dimensions
-            cropped = v[..., :new_H, :new_W]
+#     def crop_variables(variables):
+#         processed_vars = {}
+#         for k, v in variables.items():
+#             # crop dimensions
+#             cropped = v[..., :new_H, :new_W]
 
-            # handle infinities and NaNs
-            inf_mask = torch.isinf(cropped)
-            nan_mask = torch.isnan(cropped)
+#             # handle infinities and NaNs
+#             inf_mask = torch.isinf(cropped)
+#             nan_mask = torch.isnan(cropped)
 
-            # fix issues!
-            valid_values = cropped[~inf_mask & ~nan_mask]
-            if len(valid_values) > 0:
-                mean_val = valid_values.mean().item()
-                cropped = torch.nan_to_num(cropped, nan=mean_val, posinf=1e6, neginf=-1e6)
-            else:
-                print(f"Warning: No valid values found in {k}")
-                cropped = torch.zeros_like(cropped)
+#             # fix issues!
+#             valid_values = cropped[~inf_mask & ~nan_mask]
+#             if len(valid_values) > 0:
+#                 mean_val = valid_values.mean().item()
+#                 cropped = torch.nan_to_num(cropped, nan=mean_val, posinf=1e6, neginf=-1e6)
+#             else:
+#                 print(f"Warning: No valid values found in {k}")
+#                 cropped = torch.zeros_like(cropped)
 
-            processed_vars[k] = cropped
-        return processed_vars
+#             processed_vars[k] = cropped
+#         return processed_vars
 
-    print("\nProcessing batches...")
-    for i, batch in enumerate(batches):
-        print(f"\nProcessing batch {i+1}/{len(batches)}")
-        batch.surface_variables = crop_variables(batch.surface_variables)
-        batch.single_variables = crop_variables(batch.single_variables)
-        batch.atmospheric_variables = crop_variables(batch.atmospheric_variables)
-        batch.species_extinction_variables = crop_variables(batch.species_extinction_variables)
-        batch.land_variables = crop_variables(batch.land_variables)
-        batch.agriculture_variables = crop_variables(batch.agriculture_variables)
-        batch.forest_variables = crop_variables(batch.forest_variables)
+#     print("\nProcessing batches...")
+#     for i, batch in enumerate(batches):
+#         print(f"\nProcessing batch {i+1}/{len(batches)}")
+#         batch.surface_variables = crop_variables(batch.surface_variables)
+#         batch.single_variables = crop_variables(batch.single_variables)
+#         batch.atmospheric_variables = crop_variables(batch.atmospheric_variables)
+#         batch.species_extinction_variables = crop_variables(batch.species_extinction_variables)
+#         batch.land_variables = crop_variables(batch.land_variables)
+#         batch.agriculture_variables = crop_variables(batch.agriculture_variables)
+#         batch.forest_variables = crop_variables(batch.forest_variables)
 
-        # crop metadata dimensions
-        batch.batch_metadata.latitudes = batch.batch_metadata.latitudes[:new_H]
-        batch.batch_metadata.longitudes = batch.batch_metadata.longitudes[:new_W]
+#         # crop metadata dimensions
+#         batch.batch_metadata.latitudes = batch.batch_metadata.latitudes[:new_H]
+#         batch.batch_metadata.longitudes = batch.batch_metadata.longitudes[:new_W]
 
-    # init encoder
-    print("\nInitializing encoder...")
-    encoder = BFMEncoder(
-        surface_vars=tuple(batch.surface_variables.keys()),
-        single_vars=tuple(batch.single_variables.keys()),
-        atmos_vars=tuple(batch.atmospheric_variables.keys()),
-        species_vars=tuple(batch.species_extinction_variables.keys()),
-        land_vars=tuple(batch.land_variables.keys()),
-        agriculture_vars=tuple(batch.agriculture_variables.keys()),
-        forest_vars=tuple(batch.forest_variables.keys()),
-        atmos_levels=batch.batch_metadata.pressure_levels,
-        patch_size=patch_size,
-        H=new_H,
-        W=new_W,
-    ).to(device)
+#     # init encoder
+#     print("\nInitializing encoder...")
+#     encoder = BFMEncoder(
+#         surface_vars=tuple(batch.surface_variables.keys()),
+#         single_vars=tuple(batch.single_variables.keys()),
+#         atmos_vars=tuple(batch.atmospheric_variables.keys()),
+#         species_vars=tuple(batch.species_extinction_variables.keys()),
+#         land_vars=tuple(batch.land_variables.keys()),
+#         agriculture_vars=tuple(batch.agriculture_variables.keys()),
+#         forest_vars=tuple(batch.forest_variables.keys()),
+#         atmos_levels=batch.batch_metadata.pressure_levels,
+#         patch_size=patch_size,
+#         H=new_H,
+#         W=new_W,
+#     ).to(device)
 
-    # process each batch
-    print("\nRunning forward pass on batches...")
-    for i, batch in enumerate(batches):
-        print(f"\nProcessing batch {i+1}/{len(batches)}")
+#     # process each batch
+#     print("\nRunning forward pass on batches...")
+#     for i, batch in enumerate(batches):
+#         print(f"\nProcessing batch {i+1}/{len(batches)}")
 
-        # find lead time
-        t1, t2 = batch.batch_metadata.timestamp
-        lead_time = t2 - t1
+#         # find lead time
+#         t1, t2 = batch.batch_metadata.timestamp
+#         lead_time = t2 - t1
 
-        try:
-            with torch.no_grad():
-                output = encoder(batch, lead_time)
-                print(f"Successfully processed batch {i+1}, shape: {output.shape}")
+#         try:
+#             with torch.no_grad():
+#                 output = encoder(batch, lead_time)
+#                 print(f"Successfully processed batch {i+1}, shape: {output.shape}")
 
-        except Exception as e:
-            print(f"\nError processing batch {i+1}:")
-            print(f"Error message: {str(e)}")
-            raise e
+#         except Exception as e:
+#             print(f"\nError processing batch {i+1}:")
+#             print(f"Error message: {str(e)}")
+#             raise e
 
 
-if __name__ == "__main__":
-    main()
+# if __name__ == "__main__":
+#     main()
