@@ -1,5 +1,5 @@
 model:
-  B: 32  # Batch size
+  B: 1  # Batch size
   T: 2   # Time steps
   V_surf: 2 # Number of surface variables
   V_atmos: 2 # Number of atmospheric variables
@@ -8,9 +8,9 @@ model:
   V_land: 2 # Number of land variables
   V_agri: 4 # Number of agriculture variables
   V_forest: 1 # Number of forest variables
-  H: 32  # Height
-  W: 64  # Width
-  embed_dim: 512
+  H: 152  # Height
+  W: 320  # Width
+  embed_dim: 16
   num_latent_tokens: 4
   patch_size: 4
   backbone: "swin" # mvit
@@ -24,7 +24,7 @@ training:
   epochs: 20
   accelerator: cuda
   precision: bf16-mixed
-  devices: [1]
+  devices: [0, 1]
   strategy: fsdp # ddp
   gradient_clip: 1.0
   log_steps: 1

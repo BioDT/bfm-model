@@ -109,16 +109,18 @@ class BFMTrainer(LightningModule):
 
     def compute_loss(self, output, batch):
         loss_S = 0
-        for k, v in output["surf_vars"].items():
-            target = batch.surf_vars[k][:, -1]  # last time step
+        print("output:", output)
+        for k, v in output["surface_variables"].items():
+            print("k, v", k, v)
+            target = batch.surface_variables[k][:, -1]  # last time step
             loss_S += self.w_S.get(k, 1.0) * torch.mean(torch.abs(v - target))
-        loss_S /= len(output["surf_vars"])
+        loss_S /= len(output["surface_variables"])
 
         loss_A = 0
-        for k, v in output["atmos_vars"].items():
-            target = batch.atmos_vars[k][:, -1]  # also last time step
+        for k, v in output["atmospheric_variables"].items():
+            target = batch.atmospheric_variables[k][:, -1]  # also last time step
             loss_A += self.w_A.get(k, 1.0) * torch.mean(torch.abs(v - target))
-        loss_A /= len(output["atmos_vars"])
+        loss_A /= len(output["atmospheric_variables"])
 
         # assuming all data in a batch is from the same dataset
         gamma = self.gamma.get("ERA5", 1.0)  # default to 1.0 if dataset not specified
@@ -146,15 +148,16 @@ def main(cfg: DictConfig):
     dataloader = DataLoader(
         dataset, batch_size=cfg.training.batch_size, num_workers=cfg.training.workers)
 
+
     print('Done \n Setting up the BFM')
     model = BFM(
-        surface_vars=tuple(f"surf_var_{i}" for i in range(cfg.model.V_surf)),
-        single_vars=tuple(f"static_var_{i}" for i in range(1)),
-        atmos_vars=tuple(f"atmos_var_{i}" for i in range(cfg.model.V_atmos)),
-        species_vars=tuple(f"species_extinction_var_{i}" for i in range(cfg.model.V_spec)),
-        land_vars=tuple(f"land_var_{i}" for i in range(cfg.model.V_land)),
-        agriculture_vars=tuple(f"agticulture_var_{i}" for i in range(cfg.model.V_agri)),
-        forest_vars=tuple(f"forest_var_{i}" for i in range(cfg.model.V_forest)),
+        surface_vars=("t2m", "msl"),
+        single_vars=("lsm",),
+        atmos_vars=("z", "t"),
+        species_vars=("ExtinctionValue",),
+        land_vars=("Land", "NDVI"),
+        agriculture_vars=("AgricultureLand", "AgricultureIrrLand", "ArableLand", "Cropland"),
+        forest_vars=("Forest",),
         atmos_levels=cfg.data.atmos_levels,
         H=cfg.model.H,
         W=cfg.model.W,

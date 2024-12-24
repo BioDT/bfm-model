@@ -302,7 +302,7 @@ class BFMDecoder(nn.Module):
 
         # get dimensions from batch metadata
         H, W = self.H, self.W
-        lat, lon = batch.batch_metadata.latitudes, batch.batch_metadata.longitudes
+        lat, lon = batch.batch_metadata.latitudes.squeeze(), batch.batch_metadata.longitudes.squeeze()
         print(f"Grid dimensions (H×W): {H}×{W}")
         print(f"lat shape: {lat.shape}, lon shape: {lon.shape}")
 
@@ -340,16 +340,31 @@ class BFMDecoder(nn.Module):
         lead_time_emb = self.lead_time_embed(lead_time_encode)
         queries = queries + lead_time_emb.unsqueeze(1)
 
-        # Add absolute time embedding
-        absolute_times = torch.tensor(
-            [[t.timestamp() / 3600 for t in time_list] for time_list in [batch.batch_metadata.timestamp]],
-            dtype=torch.float32,
-            device=x.device,
-        )
-        absolute_time_encode = self._time_encoding(absolute_times)
-        absolute_time_embed = self.absolute_time_embed(absolute_time_encode)
-        absolute_time_embed = absolute_time_embed.mean(dim=1, keepdim=True)
-        queries = queries + absolute_time_embed
+
+        # V1
+        # # Add absolute time embedding
+        # absolute_times = torch.tensor(
+        #     [[t.timestamp() / 3600 for t in time_list] for time_list in [batch.batch_metadata.timestamp]],
+        #     dtype=torch.float32,
+        #     device=x.device,
+        # )
+        # V2
+        ## TODO FIX IT , tuple and str 
+        # a_time_mod =[[
+        #         datetime.strptime(t_str, "%Y-%m-%dT%H:%M:%S").timestamp() / 3600.0
+        #         for t_str in time_list
+        #     ]
+        #     for time_list in [batch.batch_metadata.timestamp]
+        # ]
+        
+        # absolute_times = torch.tensor(a_time_mod, dtype=torch.float32, device=x.device)
+        # absolute_times = torch.tensor([1, 2], dtype=torch.float32, device=x.device)
+
+        #V1
+        # absolute_time_encode = self._time_encoding(absolute_times)
+        # absolute_time_embed = self.absolute_time_embed(absolute_time_encode)
+        # absolute_time_embed = absolute_time_embed.mean(dim=1, keepdim=True)
+        # queries = queries + absolute_time_embed
 
         # Apply Perceiver IO
         decoded = self.perceiver_io(x, queries=queries)
@@ -591,5 +606,5 @@ def main():
             raise
 
 
-if __name__ == "__main__":
-    main()
+# if __name__ == "__main__":
+#     main()

@@ -63,15 +63,16 @@ def custom_collate(batch_list):
         longitudes = batch_list[0].batch_metadata.longitudes
         pressure_levels = batch_list[0].batch_metadata.pressure_levels
         # Each sample has its own timestamp (list)
-        timestamps_all = [b.batch_metadata.timestamp for b in batch_list]
+        timestamps = [b.batch_metadata.timestamp for b in batch_list]
+        # timestamps_all = [b.batch_metadata.timestamp for b in batch_list]
         # If each sample has a single timestamp, we get a list of timestamps:
-        timestamps = [ts[0] for ts in timestamps_all]
+        # timestamps = [ts[0] for ts in timestamps_all]
         lead_time = batch_list[0].batch_metadata.lead_time
 
         metadata = Metadata(
             latitudes=latitudes,
             longitudes=longitudes,
-            timestamp=timestamps,  # a list of timestamps, one per sample
+            timestamp=timestamps[0],  # a list of timestamps, one per sample
             lead_time=lead_time,
             pressure_levels=pressure_levels
         )
@@ -260,15 +261,28 @@ def test_dataset_and_dataloader(data_dir):
 
     batch = next(iter(dataloader))
 
-    print_batch_shapes(batch)
-    print_nan_counts(batch)
+    # print_batch_shapes(batch)
+    # print_nan_counts(batch)
 
     print("=== Test Dataloader Output ===")
     print("Batch Metadata:")
     print("  Latitudes length:", len(batch.batch_metadata.latitudes))
     print("  Longitudes length:", len(batch.batch_metadata.longitudes))
     print("  Timestamps:", batch.batch_metadata.timestamp)
+    print(" Datatype of timestamps", type(batch.batch_metadata.timestamp), type(batch.batch_metadata.timestamp[0]))
     print("  Pressure Levels:", batch.batch_metadata.pressure_levels)
+
+
+    a_time_mod =[[
+            datetime.strptime(t_str, "%Y-%m-%dT%H:%M:%S").timestamp() / 3600.0
+            for t_str in time_list
+        ]
+        for time_list in [batch.batch_metadata.timestamp]
+    ]
+
+    print(a_time_mod)
+    timestamp_tensor = torch.tensor(a_time_mod[0])
+    print("timestamp tensor", timestamp_tensor, timestamp_tensor.shape)
 
     if batch.surface_variables:
         var_name, var_data = next(iter(batch.surface_variables.items()))
@@ -303,6 +317,6 @@ def test_dataset_and_dataloader(data_dir):
     print("\nTest completed successfully.")
 
 
-# if __name__ == "__main__":
-#     data_dir = "data/"  # Replace this with the actual directory path
-#     test_dataset_and_dataloader(data_dir)
+if __name__ == "__main__":
+    data_dir = "data/"  # Replace this with the actual directory path
+    test_dataset_and_dataloader(data_dir)
