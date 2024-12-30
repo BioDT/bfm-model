@@ -6,6 +6,8 @@ from einops import rearrange, repeat
 
 from src.perceiver_components.helpers_io import (
     Attention,
+    GQAttention,
+    BuiltinGQAttention,
     FeedForward,
     PreNorm,
     cache_fn,
@@ -32,9 +34,10 @@ class PerceiverIO(nn.Module):
         num_latent_tokens: int = 512,
         latent_dimension: int = 512,
         cross_attention_heads: int = 1,
-        latent_attention_heads: int = 8,
+        latent_attention_heads: int = 16,
         cross_attention_head_dim: int = 64,
         latent_attention_head_dim: int = 64,
+        num_kv_heads: int = 8,
         weight_tie_layers: bool = False,
         decoder_feedforward: bool = False,
         sequence_dropout_prob: float = 0.0,
@@ -115,17 +118,17 @@ class PerceiverIO(nn.Module):
 
         # Build cross-attention blocks at the beginnging of the model
         self.cross_attend_blocks = self._build_cross_attention_blocks(
-            latent_dimension, cross_attention_heads, cross_attention_head_dim
+            latent_dimension, cross_attention_heads, cross_attention_head_dim, num_kv_heads
         )
 
         # Build the latent transformer layers
         self.layers = self._build_latent_transformer(
-            num_layers, latent_dimension, latent_attention_heads, latent_attention_head_dim, weight_tie_layers
+            num_layers, latent_dimension, latent_attention_heads, latent_attention_head_dim, num_kv_heads, weight_tie_layers
         )
 
         # Build the decoder cross-attention and feedforward (optional) layers
         self.decoder_cross_attn = self._build_decoder_cross_attention(
-            queries_dim, latent_dimension, cross_attention_heads, cross_attention_head_dim
+            queries_dim, latent_dimension, cross_attention_heads, cross_attention_head_dim, num_kv_heads
         )
         self.decoder_feedforward = self._build_decoder_feedforward(queries_dim) if decoder_feedforward else None
 
@@ -143,7 +146,7 @@ class PerceiverIO(nn.Module):
         return (self.num_input_axes * ((self.num_fourier_bands * 2) + 1)) if self.position_encoding_type == "fourier" else 0
 
     def _build_cross_attention_blocks(
-        self, latent_dimension: int, cross_attention_heads: int, cross_attention_head_dim: int
+        self, latent_dimension: int, cross_attention_heads: int, cross_attention_head_dim: int, num_kv_heads: int,
     ) -> nn.ModuleList:
         """
         Build the cross-attention blocks for the encoder.
@@ -156,12 +159,24 @@ class PerceiverIO(nn.Module):
         Returns:
             nn.ModuleList: List containing the cross-attention and feedforward layers.
         """
+        # return nn.ModuleList(
+        #     [
+        #         PreNorm(
+        #             latent_dimension,
+        #             Attention(
+        #                 latent_dimension, self.total_input_dim, heads=cross_attention_heads, head_dim=cross_attention_head_dim
+        #             ),
+        #             context_dimension=self.total_input_dim,
+        #         ),
+        #         PreNorm(latent_dimension, FeedForward(latent_dimension)),
+        #     ]
+        # )
         return nn.ModuleList(
             [
                 PreNorm(
                     latent_dimension,
-                    Attention(
-                        latent_dimension, self.total_input_dim, heads=cross_attention_heads, head_dim=cross_attention_head_dim
+                    BuiltinGQAttention(
+                        latent_dimension, self.total_input_dim, n_q_heads=cross_attention_heads, n_kv_heads=num_kv_heads, head_dim=cross_attention_head_dim
                     ),
                     context_dimension=self.total_input_dim,
                 ),
@@ -171,7 +186,7 @@ class PerceiverIO(nn.Module):
 
     @cache_fn
     def _get_latent_attention(
-        self, latent_dimension: int, latent_attention_heads: int, latent_attention_head_dim: int, **kwargs
+        self, latent_dimension: int, latent_attention_heads: int, latent_attention_head_dim: int, num_kv_heads: int, **kwargs
     ) -> PreNorm:
         """
         Get a cached latent attention layer.
@@ -185,9 +200,15 @@ class PerceiverIO(nn.Module):
         Returns:
             PreNorm: Normalized latent attention layer.
         """
+        # return PreNorm(
+        #     latent_dimension, Attention(latent_dimension, heads=latent_attention_heads, head_dim=latent_attention_head_dim)
+        # )
         return PreNorm(
-            latent_dimension, Attention(latent_dimension, heads=latent_attention_heads, head_dim=latent_attention_head_dim)
-        )
+            latent_dimension, BuiltinGQAttention(
+                        latent_dimension, self.total_input_dim, 
+                        n_q_heads=latent_attention_heads, n_kv_heads=num_kv_heads, 
+                        head_dim=latent_attention_head_dim
+                    ))
 
     @cache_fn
     def _get_latent_feedforward(self, latent_dimension: int, **kwargs) -> PreNorm:
@@ -209,6 +230,7 @@ class PerceiverIO(nn.Module):
         latent_dimension: int,
         latent_attention_heads: int,
         latent_attention_head_dim: int,
+        latent_kv_heads: int,
         weight_tie_layers: bool,
     ) -> nn.ModuleList:
         """
@@ -230,7 +252,7 @@ class PerceiverIO(nn.Module):
 
         for _ in range(num_layers):
             latent_attn = self._get_latent_attention(
-                latent_dimension, latent_attention_heads, latent_attention_head_dim, **cache_args
+                latent_dimension, latent_attention_heads, latent_attention_head_dim, latent_kv_heads, **cache_args
             )
             latent_ff = self._get_latent_feedforward(latent_dimension, **cache_args)
 
@@ -239,7 +261,8 @@ class PerceiverIO(nn.Module):
         return layers
 
     def _build_decoder_cross_attention(
-        self, queries_dim: int, latent_dimension: int, cross_attention_heads: int, cross_attention_head_dim: int
+        self, queries_dim: int, latent_dimension: int, cross_attention_heads: int, cross_attention_head_dim: int,
+        num_kv_heads: int
     ) -> PreNorm:
         """
         Build the decoder cross-attention layer.
@@ -255,7 +278,9 @@ class PerceiverIO(nn.Module):
         """
         return PreNorm(
             queries_dim,
-            Attention(queries_dim, latent_dimension, heads=cross_attention_heads, head_dim=cross_attention_head_dim),
+            # Attention(queries_dim, latent_dimension, heads=cross_attention_heads, head_dim=cross_attention_head_dim),
+            BuiltinGQAttention(latent_dimension, self.total_input_dim, n_q_heads=cross_attention_heads, n_kv_heads=num_kv_heads, 
+                        head_dim=cross_attention_head_dim),
             context_dimension=latent_dimension,
         )
 
@@ -519,5 +544,5 @@ def main():
     print(f"Language model (with pos encoding): {sum(p.numel() for p in model_lang_pos.parameters()):,}")
 
 
-if __name__ == "__main__":
-    main()
+# if __name__ == "__main__":
+#     main()

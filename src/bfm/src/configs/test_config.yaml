@@ -24,7 +24,7 @@ training:
   epochs: 20
   accelerator: cuda
   precision: bf16-mixed
-  devices: [0, 1]
+  devices: [1, 2]
   strategy: fsdp # ddp
   gradient_clip: 1.0
   log_steps: 1
