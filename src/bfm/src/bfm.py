@@ -44,72 +44,13 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 
 from src.bfm.src.dataset_basics import load_batches
+from src.bfm.src.dataloder import crop_variables
 from src.bfm.src.decoder import BFMDecoder
 from src.bfm.src.encoder import BFMEncoder
 from src.mvit.mvit_model import MViT
 from src.swin_transformer.core.swim_core_v2 import Swin3DTransformer
 
 DEVICE = "cuda:1"
-
-def crop_variables(variables, new_H, new_W):
-    """
-    Crop and clean variables to specified dimensions, handling NaN and Inf values.
-
-    Args:
-        variables (dict): Dictionary of variable tensors to process
-        new_H (int): Target height dimension
-        new_W (int): Target width dimension
-
-    Returns:
-        dict: Processed variables with cleaned and cropped tensors
-    """
-    processed_vars = {}
-    for k, v in variables.items():
-        # crop dimensions
-        cropped = v[..., :new_H, :new_W]
-
-        # infinities first
-        inf_mask = torch.isinf(cropped)
-        inf_count = inf_mask.sum().item()
-        if inf_count > 0:
-            print(f"\nHandling Inf values in {k}:")
-            print(f"Inf count: {inf_count}")
-            valid_values = cropped[~inf_mask & ~torch.isnan(cropped)]
-            if len(valid_values) > 0:
-                max_val = valid_values.max().item()
-                min_val = valid_values.min().item()
-                cropped = torch.clip(cropped, min_val, max_val)
-            else:
-                cropped = torch.clip(cropped, -1e6, 1e6)
-
-        # handle NaNs
-        nan_mask = torch.isnan(cropped)
-        nan_count = nan_mask.sum().item()
-        if nan_count > 0:
-            print(f"\nHandling NaN values in {k}:")
-            print(f"Shape: {cropped.shape}")
-            print(f"Total NaN count: {nan_count}")
-            valid_values = cropped[~nan_mask & ~torch.isinf(cropped)]
-            if len(valid_values) > 0:
-                mean_val = valid_values.mean().item()
-                std_val = valid_values.std().item()
-                # use mean +- 2*std as clipping bounds
-                clip_min = mean_val - 2 * std_val
-                clip_max = mean_val + 2 * std_val
-                # replace NaNs with clipped mean
-                cropped = torch.nan_to_num(cropped, nan=mean_val)
-                # TODO This is nasty, may be using a lot of memory
-                # TODO Check the advantages and why the data are in this regime
-                cropped = cropped.to(torch.float32)
-                cropped = torch.clip(cropped, clip_min, clip_max)
-
-            else:
-                cropped = torch.nan_to_num(cropped, nan=0.0)
-                cropped = torch.clip(cropped, -1.0, 1.0)
-
-        processed_vars[k] = cropped
-    return processed_vars
-
 
 class BFM(nn.Module):
     """

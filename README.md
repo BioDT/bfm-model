@@ -93,3 +93,5 @@ An interesting discussion: https://github.com/pytorch/pytorch/issues/122057
 Issue PyTorch 2.1.2 vs 2.2.0
 
 Good Trainer example: https://github.com/SeanNaren/min-LLM/blob/fsdp/train.py#L235-L243
+
+Interesting addition for CLI args generation: https://github.com/google/python-fire

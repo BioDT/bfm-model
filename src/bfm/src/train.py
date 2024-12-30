@@ -17,73 +17,16 @@ from lightning.pytorch.strategies import FSDPStrategy
 from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader, Dataset
 from torch.utils.data._utils.collate import default_collate
+from torch.distributed.fsdp.wrap import wrap
 
 from src.bfm.src.bfm import BFM
 from src.bfm.src.dataloder import LargeClimateDataset
 
-Batch = namedtuple("Batch", ["surf_vars", "static_vars", "atmos_vars", "metadata"])
-Metadata = namedtuple("Metadata", ["lat", "lon", "time", "atmos_levels"])
 
-
-def custom_collate(batch):
-    elem = batch[0]
-    if isinstance(elem, Batch):
-        return Batch(
-            surf_vars={k: custom_collate([d.surf_vars[k] for d in batch]) for k in elem.surf_vars},
-            static_vars=elem.static_vars,  # Assuming static_vars are the same for all batch elements
-            atmos_vars={k: custom_collate([d.atmos_vars[k] for d in batch]) for k in elem.atmos_vars},
-            metadata=Metadata(
-                lat=elem.metadata.lat,
-                lon=elem.metadata.lon,
-                time=[d.metadata.time for d in batch],
-                atmos_levels=elem.metadata.atmos_levels,
-            ),
-        )
-    elif isinstance(elem, (list, tuple)):
-        return [custom_collate(samples) for samples in zip(*batch)]
-    elif isinstance(elem, dict):
-        return {key: custom_collate([d[key] for d in batch]) for key in elem}
-    else:
-        return default_collate(batch)
-
-
-class AuroraDataset(Dataset):
-    def __init__(self, B, T, V_s, V_a, C, H, W):
-        self.B = B
-        self.T = T
-        self.V_s = V_s
-        self.V_a = V_a
-        self.C = C
-        self.H = H
-        self.W = W
-
-        self.surf_vars = {f"surf_var_{i}": torch.randn(B, T, H, W) for i in range(V_s)}
-        self.static_vars = {f"static_var_{i}": torch.randn(H, W) for i in range(2)}
-        self.atmos_vars = {f"atmos_var_{i}": torch.randn(B, T, C, H, W) for i in range(V_a)}
-
-        self.lat = torch.linspace(-90, 90, H)
-        self.lon = torch.linspace(0, 360, W)
-        self.time = [datetime.now() + timedelta(hours=i) for i in range(T)]
-        self.atmos_levels = [1000, 925, 850, 700, 600, 500, 400, 300, 250, 200, 150, 100, 50]
-
-    def __len__(self):
-        return self.B
-
-    def __getitem__(self, idx):
-        metadata = Metadata(lat=self.lat, lon=self.lon, time=self.time, atmos_levels=self.atmos_levels)
-
-        return Batch(
-            surf_vars={k: v[idx] for k, v in self.surf_vars.items()},
-            static_vars=self.static_vars,
-            atmos_vars={k: v[idx] for k, v in self.atmos_vars.items()},
-            metadata=metadata,
-        )
-
-
-class BFMTrainer(LightningModule):
-    def __init__(self, model, learning_rate=5e-4, weight_decay=5e-6):
+class BFM_pipe(LightningModule):
+    def __init__(self, cfg, learning_rate=5e-4, weight_decay=5e-6):
         super().__init__()
-        self.model = model
+        self.cfg = cfg
         self.learning_rate = learning_rate
         self.weight_decay = weight_decay
 
@@ -96,6 +39,28 @@ class BFMTrainer(LightningModule):
 
         self.alpha = 0.25  # weight for surface variables
         self.beta = 1.0  # weight for atmospheric variables
+
+    def configure_sharded_model(self) -> None:
+        model = BFM(
+                surface_vars=("t2m", "msl"),
+                single_vars=("lsm",),
+                atmos_vars=("z", "t"),
+                species_vars=("ExtinctionValue",),
+                land_vars=("Land", "NDVI"),
+                agriculture_vars=("AgricultureLand", "AgricultureIrrLand", "ArableLand", "Cropland"),
+                forest_vars=("Forest",),
+                atmos_levels=self.cfg.data.atmos_levels,
+                H=self.cfg.model.H,
+                W=self.cfg.model.W,
+                embed_dim=self.cfg.model.embed_dim,
+                num_latent_tokens=self.cfg.model.num_latent_tokens,
+                backbone_type=self.cfg.model.backbone,
+                patch_size=self.cfg.model.patch_size,
+            )
+
+        #device=self.trainer.strategy.root_device # TODO Need to put the model to devices
+        self.model = wrap(model, device_id=self.trainer.strategy.root_device)
+
 
     def forward(self, batch, lead_time):
         return self.model(batch, lead_time)
@@ -161,37 +126,20 @@ def main(cfg: DictConfig):
     dataloader = DataLoader(
         dataset, batch_size=cfg.training.batch_size, num_workers=cfg.training.workers)
 
-
-    print('Done \n Setting up the BFM')
-    model = BFM(
-        surface_vars=("t2m", "msl"),
-        single_vars=("lsm",),
-        atmos_vars=("z", "t"),
-        species_vars=("ExtinctionValue",),
-        land_vars=("Land", "NDVI"),
-        agriculture_vars=("AgricultureLand", "AgricultureIrrLand", "ArableLand", "Cropland"),
-        forest_vars=("Forest",),
-        atmos_levels=cfg.data.atmos_levels,
-        H=cfg.model.H,
-        W=cfg.model.W,
-        embed_dim=cfg.model.embed_dim,
-        num_latent_tokens=cfg.model.num_latent_tokens,
-        backbone_type=cfg.model.backbone,
-        patch_size=cfg.model.patch_size,
-    )
-
     # Setup logger
     current_time = datetime.now()
     remote_server_uri = f"http://0.0.0.0:{cfg.mlflow.port}"
     mlf_logger = MLFlowLogger(experiment_name="BFM_logs", run_name=f"BFM_{current_time}", tracking_uri=remote_server_uri)
-    # Setup trainer
-    trainer = BFMTrainer(model)
+    # Setup model
+    model = BFM_pipe(cfg=cfg)
+
+    print('Done \n Setting up the BFM')
 
     if cfg.training.strategy == "fsdp":
         distr_strategy = FSDPStrategy()
         
 
-    pl_trainer = L.Trainer(
+    trainer = L.Trainer(
         max_epochs=cfg.training.epochs,
         accelerator=cfg.training.accelerator,
         devices=cfg.training.devices,
@@ -203,9 +151,9 @@ def main(cfg: DictConfig):
         # logger=mlf_logger,
     )
 
-    pl_trainer.fit(trainer, train_dataloaders=dataloader)
+    trainer.fit(model, train_dataloaders=dataloader)
     print("Finished training successfully")
-    pl_trainer.print(torch.cuda.memory_summary())
+    trainer.print(torch.cuda.memory_summary())
 
 if __name__ == "__main__":
     main()
