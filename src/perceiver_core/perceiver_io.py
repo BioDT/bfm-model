@@ -33,7 +33,7 @@ class PerceiverIO(nn.Module):
         logits_dimension: Optional[int] = None,
         num_latent_tokens: int = 512,
         latent_dimension: int = 512,
-        cross_attention_heads: int = 1,
+        cross_attention_heads: int = 16,
         latent_attention_heads: int = 16,
         cross_attention_head_dim: int = 64,
         latent_attention_head_dim: int = 64,
@@ -205,9 +205,8 @@ class PerceiverIO(nn.Module):
         # )
         return PreNorm(
             latent_dimension, BuiltinGQAttention(
-                        latent_dimension, self.total_input_dim, 
-                        n_q_heads=latent_attention_heads, n_kv_heads=num_kv_heads, 
-                        head_dim=latent_attention_head_dim
+                        latent_dimension, n_q_heads=latent_attention_heads, 
+                        n_kv_heads=num_kv_heads, head_dim=latent_attention_head_dim
                     ))
 
     @cache_fn
@@ -279,7 +278,7 @@ class PerceiverIO(nn.Module):
         return PreNorm(
             queries_dim,
             # Attention(queries_dim, latent_dimension, heads=cross_attention_heads, head_dim=cross_attention_head_dim),
-            BuiltinGQAttention(latent_dimension, self.total_input_dim, n_q_heads=cross_attention_heads, n_kv_heads=num_kv_heads, 
+            BuiltinGQAttention(queries_dim, latent_dimension, n_q_heads=cross_attention_heads, n_kv_heads=num_kv_heads, 
                         head_dim=cross_attention_head_dim),
             context_dimension=latent_dimension,
         )

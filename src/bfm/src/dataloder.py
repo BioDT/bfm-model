@@ -317,6 +317,6 @@ def test_dataset_and_dataloader(data_dir):
     print("\nTest completed successfully.")
 
 
-if __name__ == "__main__":
-    data_dir = "data/"  # Replace this with the actual directory path
-    test_dataset_and_dataloader(data_dir)
+# if __name__ == "__main__":
+#     data_dir = "data/"  # Replace this with the actual directory path
+#     test_dataset_and_dataloader(data_dir)

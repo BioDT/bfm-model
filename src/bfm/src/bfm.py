@@ -286,7 +286,7 @@ def cleanup():
 
 def main():
     """Main function for testing the BFM implementation."""
-    device = torch.device(DEVICE if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"\nUsing device: {device}")
 
     print("\nLoading batches...")

@@ -99,9 +99,10 @@ class BFMEncoder(nn.Module):
         atmos_levels: tuple[int, ...],
         patch_size: int = 4,
         perceiver_latents: int = 256,
-        embed_dim: int = 128,
-        num_heads: int = 4,
-        head_dim: int = 16,
+        embed_dim: int = 1024,
+        num_heads: int = 16,
+        kv_heads: int = 8,
+        head_dim: int = 2,
         drop_rate: float = 0.1,
         depth: int = 2,
         mlp_ratio: float = 4.0,
@@ -126,6 +127,7 @@ class BFMEncoder(nn.Module):
         self.position_encoding_type = position_encoding_type
         self.perceiver_latents = perceiver_latents
         self.num_heads = num_heads
+        self.num_kv_heads = kv_heads
         self.head_dim = head_dim
         self.depth = depth
         self.mlp_ratio = mlp_ratio
@@ -322,6 +324,7 @@ class BFMEncoder(nn.Module):
             latent_attention_heads=self.num_heads,
             cross_attention_head_dim=self.head_dim,
             latent_attention_head_dim=self.head_dim,
+            num_kv_heads=self.num_kv_heads,
             sequence_dropout_prob=self.drop_rate,
             num_fourier_bands=self.num_fourier_bands,
             max_frequency=self.max_frequency,

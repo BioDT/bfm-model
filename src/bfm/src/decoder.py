@@ -108,7 +108,7 @@ class BFMDecoder(nn.Module):
         embed_dim: int = 1024,
         num_heads: int = 16,
         kv_heads: int = 8,
-        head_dim: int = 64,
+        head_dim: int = 2,
         drop_rate: float = 0.1,
         depth: int = 2,
         mlp_ratio: float = 4.0,
@@ -117,8 +117,8 @@ class BFMDecoder(nn.Module):
         max_frequency: float = 224.0,
         num_input_axes: int = 1,
         position_encoding_type: str = "fourier",
-        H: int = 32,
-        W: int = 64,
+        H: int = 152,
+        W: int = 320,
     ):
         super().__init__()
         # Store variable names

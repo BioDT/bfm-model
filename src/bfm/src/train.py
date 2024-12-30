@@ -4,6 +4,7 @@ TODO: Adapt it according to the new data format. The current version was using a
 """
 
 from collections import namedtuple
+from typing import Union, Optional
 from datetime import datetime, timedelta
 
 import hydra
@@ -109,9 +110,9 @@ class BFMTrainer(LightningModule):
 
     def compute_loss(self, output, batch):
         loss_S = 0
-        print("output:", output)
+        # print("output:", output)
         for k, v in output["surface_variables"].items():
-            print("k, v", k, v)
+            # print("k, v", k, v)
             target = batch.surface_variables[k][:, -1]  # last time step
             loss_S += self.w_S.get(k, 1.0) * torch.mean(torch.abs(v - target))
         loss_S /= len(output["surface_variables"])
@@ -126,12 +127,24 @@ class BFMTrainer(LightningModule):
         gamma = self.gamma.get("ERA5", 1.0)  # default to 1.0 if dataset not specified
 
         loss = gamma * (self.alpha * loss_S + self.beta * loss_A)
+        print(f"Loss: {loss}")
         return loss
 
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=150000, eta_min=self.learning_rate / 10)
         return [optimizer], [scheduler]
+    
+    # def configure_gradient_clipping(
+    #         self,
+    #         optimizer,
+    #         optimizer_idx: int,
+    #         gradient_clip_val: Optional[Union[int, float]] = None,
+    #         gradient_clip_algorithm: Optional[str] = None,
+    # ):
+    #     assert gradient_clip_algorithm in ('norm', None), gradient_clip_algorithm
+    #     self.model.clip_grad_norm_(gradient_clip_val)
+
 
 
 @hydra.main(version_base=None, config_path="configs", config_name="test_config")
@@ -183,9 +196,9 @@ def main(cfg: DictConfig):
         accelerator=cfg.training.accelerator,
         devices=cfg.training.devices,
         # devices=[1],
-        strategy=distr_strategy,
+        # strategy=distr_strategy,
         precision=cfg.training.precision,
-        gradient_clip_val=cfg.training.gradient_clip,
+        # gradient_clip_val=cfg.training.gradient_clip, # TODO Errors 
         log_every_n_steps=cfg.training.log_steps,
         # logger=mlf_logger,
     )
