@@ -82,3 +82,14 @@ Then you can observe mlflow with the same bind command:
 ```bash
 ssh -i .ssh/snelius_key -L 0.0.0.0:<desired_port_on_local>:gcn<node_id>:<mlflow_port_on_remote> <user_name>@snellius.surf.nl
 ```
+
+
+## OOM Errors:
+
+If experience any, use: `export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`
+
+An interesting discussion: https://github.com/pytorch/pytorch/issues/122057
+
+Issue PyTorch 2.1.2 vs 2.2.0
+
+Good Trainer example: https://github.com/SeanNaren/min-LLM/blob/fsdp/train.py#L235-L243
