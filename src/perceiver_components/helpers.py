@@ -174,7 +174,7 @@ class Attention(nn.Module):
         self.to_q = nn.Linear(q_dim, inner_dim, bias=False)
         self.to_k = nn.Linear(context_dim, inner_dim, bias=False)
         self.to_v = nn.Linear(context_dim, inner_dim, bias=False)
-        print(f"BuiltinAttention q_dim {q_dim} | context dim {context_dim} |num q heads {heads} | head dim {head_dim} | kv_heads {None}" )
+        print(f"BuiltinAttention q_dim {q_dim} | context dim {context_dim} | num q heads {heads} | head dim {head_dim} | kv_heads {None}" )
 
         self.dropout = nn.Dropout(dropout)
         # project attention output back to the query dimension
@@ -422,9 +422,10 @@ class BuiltinGQAAttention(nn.Module):
         self.n_kv_heads = n_kv_heads if n_kv_heads is not None else n_q_heads
         self.head_dim = head_dim
         self.is_causal = is_causal
-        print(f"BuiltinAttention q_dim {q_dim} | context dim {context_dim} |num q heads {n_q_heads} | head dim {head_dim} | kv_heads {n_kv_heads}" )
         self.q_dim = q_dim
-        self.context_dim = context_dim if context_dim is not None else q_dim
+        context_dim = context_dim if context_dim is not None else q_dim
+        self.context_dim = context_dim
+        print(f"BuiltinAttention q_dim {q_dim} | context dim {context_dim} | num q heads {n_q_heads} | head dim {head_dim} | kv_heads {n_kv_heads}" )
 
         self.dropout_p = dropout
 
