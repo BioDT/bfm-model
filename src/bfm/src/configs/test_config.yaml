@@ -10,7 +10,7 @@ model:
   V_forest: 1 # Number of forest variables
   H: 152  # Height
   W: 320  # Width
-  embed_dim: 16
+  embed_dim: 512
   num_latent_tokens: 4
   patch_size: 4
   backbone: "swin" # mvit
@@ -21,10 +21,10 @@ data:
 training:
   batch_size: 1
   workers: 0
-  epochs: 20
-  accelerator: cuda
+  epochs: 2
+  accelerator: gpu
   precision: bf16-mixed
-  devices: [1, 2]
+  devices: [1]
   strategy: fsdp # ddp
   gradient_clip: 1.0
   log_steps: 1

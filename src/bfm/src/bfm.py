@@ -187,7 +187,10 @@ class BFM(nn.Module):
 
         Returns:
             dict: Dictionary containing decoded outputs for each variable category
+
         """
+
+        ### V1 
         encoded = self.encoder(batch, lead_time)
 
         # calculate number of patches in 2D
@@ -197,6 +200,7 @@ class BFM(nn.Module):
 
         # calculate depth to match the sequence length
         depth = encoded.shape[1] // (num_patches_h * num_patches_w)
+        print(f"BFM depth: {depth} | patch_size {self.encoder.patch_shape} | encoder shape {encoded.shape}")
         patch_shape = (
             depth,  # depth dimension matches sequence length / (H*W)
             num_patches_h,  # height in patches
@@ -213,6 +217,264 @@ class BFM(nn.Module):
         output = self.decoder(backbone_output, batch, lead_time)
 
         return output
+
+
+        # 1) Encode input: shape [B_local, L_total, E]
+
+        ### V2 
+        # encoded = self.encoder(batch, lead_time)
+        # B_local, L_total, E = encoded.shape
+
+        # # 2) Calculate number of patches in 2D
+        # num_patches_h = self.H // self.encoder.patch_size
+        # num_patches_w = self.W // self.encoder.patch_size
+        # patches_per_sample = num_patches_h * num_patches_w
+
+        # # ----------------------------------------------------------------
+        # # 3) Fix: Derive "depth" from tokens-per-sample
+        # #    We assume each sample is split into depth * patches_per_sample tokens.
+        # # ----------------------------------------------------------------
+        # if L_total % B_local != 0:
+        #     raise ValueError(
+        #         f"Encoded tokens ({L_total}) not divisible by local batch size ({B_local}). "
+        #         "Check your encoder or batch size setup."
+        #     )
+
+        # tokens_per_sample = L_total // B_local
+        # if tokens_per_sample % patches_per_sample != 0:
+        #     raise ValueError(
+        #         f"tokens_per_sample ({tokens_per_sample}) not divisible by patch count ({patches_per_sample}). "
+        #         "Check your patch size or encoder output."
+        #     )
+
+        # depth = tokens_per_sample // patches_per_sample
+
+        # print(
+        #     f"BFM depth: {depth} | patch_size {self.encoder.patch_shape} | "
+        #     f"encoder shape {encoded.shape}"
+        # )
+        # patch_shape = (depth, num_patches_h, num_patches_w)
+        
+        #########################################
+        ####### V3
+               # ---------------------------------------------------
+        # Step 1: local encoding
+        # ---------------------------------------------------
+        # encoded_local = self.encoder(batch, lead_time)  # [B_local, L_local, E]
+        # B_local, L_local, E = encoded_local.shape
+        # rank = dist.get_rank() if dist.is_initialized() else 0
+
+        # # ---------------------------------------------------
+        # # Step 2: gather all local encodings => global
+        # # ---------------------------------------------------
+        # global_encoded = self._all_gather_encoded_simple(encoded_local)
+        # B_global, L_global, E = global_encoded.shape
+        # print(f"[Rank {rank}] global_encoded shape={global_encoded.shape}")
+
+        # # ---------------------------------------------------
+        # # Step 3: compute patch shape from the global dims
+        # # ---------------------------------------------------
+        # # Suppose each sample has an image of shape (H, W). 
+        # # We do a 2D patching: h = H//patch_size, w = W//patch_size
+        # num_patches_h = self.H // self.encoder.patch_size
+        # num_patches_w = self.W // self.encoder.patch_size
+        # patches_per_sample = num_patches_h * num_patches_w
+
+        # # tokens_per_sample = L_global // B_global
+        # # If we assume each sample is identical in size, do:
+        # if (L_global % B_global) != 0:
+        #     raise ValueError(
+        #         f"L_global={L_global} not divisible by B_global={B_global}. "
+        #         "Check if your data is truly one-sample or multiple-sample."
+        #     )
+        # tokens_per_sample = L_global // B_global
+
+        # # Now, depth is how many tokens remain after accounting for (num_patches_h * num_patches_w)
+        # if (tokens_per_sample % patches_per_sample) != 0:
+        #     raise ValueError(
+        #         f"tokens_per_sample={tokens_per_sample} not divisible by "
+        #         f"patches_per_sample={patches_per_sample}. Adjust patch size or data."
+        #     )
+        # depth = tokens_per_sample // patches_per_sample
+
+        # patch_shape = (depth, num_patches_h, num_patches_w)
+        # print(f"[Rank {rank}] Computed patch_shape={patch_shape}, depth={depth}")
+
+        # #TODO Test this 
+        # if self.backbone_type == "mvit":
+        #     encoded = encoded.view(encoded.size(0), -1, self.encoder.embed_dim)
+        #     print(f"Reshaped encoded for MViT: {encoded.shape}")
+
+        # backbone_output = self.backbone(global_encoded, lead_time=lead_time, rollout_step=0, patch_shape=patch_shape)
+
+        # # decode
+        # output = self.decoder(backbone_output, batch, lead_time)
+
+
+        # ### V4
+        #     # 1) Locally encode: shape [B_local, L_local, E]
+        # encoded_local = self.encoder(batch, lead_time)
+
+        # # 2) If you have a single sample split by tokens, gather along dim=1
+        # global_encoded = self._all_gather_tokens(encoded_local)
+        # B_local, L_global, E = global_encoded.shape
+        # # => B_local is the same as before, L_global = world_size * L_local
+
+        # # 3) If you truly have only 1 local sample per rank => B_local=1
+        # #    Then total "batch" is still 1. 
+        # #    So you can do: B_global = B_local (which might be 1)
+        # #    tokens_per_sample = L_global // B_global = L_global
+        # B_global = B_local  # e.g. 1
+        # tokens_per_sample = L_global // B_global  # e.g. L_global
+
+        # # 4) Now tokens_per_sample should be 27360 if 2 ranks each had 13680 tokens
+        # #    Then patches_per_sample = (H//patch_size) * (W//patch_size) = 3040
+        # #    depth = tokens_per_sample // patches_per_sample = 27360 // 3040 = 9
+        # patches_per_sample = (self.H // self.encoder.patch_size) * (self.W // self.encoder.patch_size)
+        # if tokens_per_sample % patches_per_sample != 0:
+        #     raise ValueError(
+        #         f"tokens_per_sample={tokens_per_sample} not divisible by patches_per_sample={patches_per_sample}"
+        #     )
+        # depth = tokens_per_sample // patches_per_sample
+
+        # # 5) Patch shape
+        # patch_shape = (depth, self.H // self.encoder.patch_size, self.W // self.encoder.patch_size)
+
+        # # 6) Pass to backbone
+        # backbone_output = self.backbone(global_encoded, lead_time=lead_time, rollout_step=0, patch_shape=patch_shape)
+        # output = self.decoder(backbone_output, batch, lead_time)
+        # return output
+
+    def _all_gather_tokens(self, encoded_local: torch.Tensor) -> torch.Tensor:
+        """
+        Gathers partial tokens from each rank along the tokens dimension (dim=1).
+        This is for the case where a single sample is horizontally (or by tokens) split
+        across ranks, so that each rank has [B_local, partial_L, E].
+        
+        After all_gather, we cat on dim=1 -> [B_local, world_size*partial_L, E].
+        """
+        if not dist.is_initialized():
+            return encoded_local  # single process fallback
+
+        # 1) all_gather list
+        world_size = dist.get_world_size()
+        gather_list = [torch.zeros_like(encoded_local) for _ in range(world_size)]
+        dist.all_gather(gather_list, encoded_local)  
+        # gather_list[r] now has shape [B_local, L_local, E] from rank r
+
+        # 2) cat along dim=1 (token dimension)
+        global_encoded = torch.cat(gather_list, dim=1)
+        return global_encoded
+
+
+    def _all_gather_encoded_simple(self, encoded_local: torch.Tensor) -> torch.Tensor:
+        """
+        Gathers each rank's [B_local, L_local, E] into a single global tensor
+        of shape [B_global, L_local, E], where B_global = sum of all B_local.
+        This uses torch.distributed.all_gather(), so each rank ends up with
+        the same final tensor.
+
+        IMPORTANT:
+        - Assumes all ranks have the same (L_local, E) shapes, just different B_local
+            (i.e., if you are sharding by batch).
+        - If your data is sharded differently (e.g. by tokens dimension), adapt accordingly.
+        """
+        if not dist.is_initialized():
+            # Single-process fallback
+            return encoded_local
+
+        world_size = dist.get_world_size()
+
+        # 1) All ranks create a list of placeholders for the gather
+        #    Each element in 'all_list' will have the same shape as 'encoded_local'.
+        all_list = [torch.zeros_like(encoded_local) for _ in range(world_size)]
+
+        # 2) all_gather => after this call, each rank's all_list[i] will contain rank i's local tensor
+        dist.all_gather(all_list, encoded_local)
+
+        # 3) Concatenate along the batch dimension (dim=0), forming [B_global, L_local, E]
+        # We need to concat on the token dimension (dim=1)
+        global_encoded = torch.cat(all_list, dim=1)
+
+        # Now every rank has the same global_encoded
+        return global_encoded
+
+    def _all_gather_encoded(self, encoded_local: torch.Tensor) -> torch.Tensor:
+        """
+        Gathers local encoder outputs [B_local, L_local, E] from all ranks into a single
+        global tensor [B_global, L_global, E], so that your subsequent patch logic won't fail.
+        
+        This method can be adapted to your data distribution (whether you're splitting by batch or tokens).
+        Here we assume you're collecting the entire batch/tokens on rank=0, then broadcasting.
+        """
+        if not dist.is_initialized():
+            # Single-process fallback
+            return encoded_local
+        
+        # Prepare shape info
+        local_shape = torch.tensor(encoded_local.shape, dtype=torch.long, device=encoded_local.device)  # [3]
+        all_shape_list = [torch.zeros_like(local_shape) for _ in range(dist.get_world_size())]
+
+        # Gather shape from all ranks
+        dist.all_gather(all_shape_list, local_shape)
+        shape_tuples = [(s[0].item(), s[1].item(), s[2].item()) for s in all_shape_list]
+
+        # For simplicity, let's assume:
+        #   1) Everyone has the same L_local if it's truly one sample split by batch
+        #   2) We'll sum up B_local for the global B
+        B_locals = [st[0] for st in shape_tuples]
+        L_locals = [st[1] for st in shape_tuples]
+        E_locals = [st[2] for st in shape_tuples]
+
+        # Check that all E are identical, and all L are identical if that's your scenario
+        embed_dim = E_locals[0]
+        if any(e != embed_dim for e in E_locals):
+            raise ValueError("All-gathered embeddings have mismatched E dims among ranks!")
+        # Example: L might also be the same if each rank is chunking by B only
+        # or you might sum L if you chunked by tokens. Adjust as needed.
+        L_global = L_locals[0]  # if the same
+        B_global = sum(B_locals)
+
+        rank = dist.get_rank()
+        world_size = dist.get_world_size()
+        
+        if rank == 0:
+            global_encoded = torch.zeros(
+                (B_global, L_global, embed_dim),
+                dtype=encoded_local.dtype,
+                device=encoded_local.device
+            )
+        else:
+            # allocate minimal placeholder
+            global_encoded = torch.zeros(
+                (1, 1, embed_dim),
+                dtype=encoded_local.dtype,
+                device=encoded_local.device
+            )
+        
+        # Now gather the data content
+        # We'll do a naive gather_by_rank approach
+        # Another approach is "dist.all_gather_into_tensor" if you have a recent PyTorch
+        offset_b = 0
+        for i in range(world_size):
+            b_i = B_locals[i]
+            l_i = L_locals[i]
+            # We'll gather rank i's data
+            if rank == i:
+                # We copy our local data to the global buffer slice (on rank=0)
+                dist.send(encoded_local, dst=0)
+            elif rank == 0:
+                # We receive that slice from rank i
+                tmp = torch.zeros((b_i, l_i, embed_dim), dtype=encoded_local.dtype, device=encoded_local.device)
+                dist.recv(tmp, src=i)
+                global_encoded[offset_b : offset_b + b_i, :l_i, :] = tmp
+            offset_b += b_i
+        
+        # Now broadcast global_encoded from rank=0 back to all ranks
+        dist.broadcast(global_encoded, src=0)
+        
+        return global_encoded
+    
 
 def setup(rank, world_size):
     os.environ['MASTER_ADDR'] = 'localhost'

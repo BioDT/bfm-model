@@ -251,7 +251,7 @@ class BFMEncoder(nn.Module):
         #TODO Check why this gives weird error. For now hardcode the # of patches
         # num_patches = (H // self.patch_size) * (W // self.patch_size)
         num_patches = 3040
-        print(num_patches)
+        print(f"Num of patches in Encoder: {num_patches}")
         # set the device from an existing parameter or default to CPU
         device = (
             next(self.parameters()).device
@@ -654,6 +654,7 @@ class BFMEncoder(nn.Module):
 
         # Apply Perceiver IO with structured latents
         latents = self.latents.to(x.device)
+        print(f"Encoder forward latents shape: {latents.shape}")
         latents = self._check_tensor(latents, "Latent queries")  # shape: [num_latents, embed_dim]
 
         # Track latent splits for potential future use

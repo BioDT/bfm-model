@@ -6,7 +6,8 @@ TODO: Adapt it according to the new data format. The current version was using a
 from collections import namedtuple
 from typing import Union, Optional
 from datetime import datetime, timedelta
-
+import os
+import functools
 import hydra
 import lightning as L
 import torch
@@ -17,15 +18,18 @@ from lightning.pytorch.strategies import FSDPStrategy
 from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader, Dataset
 from torch.utils.data._utils.collate import default_collate
-from torch.distributed.fsdp.wrap import wrap
+from torch.distributed.fsdp.wrap import wrap, size_based_auto_wrap_policy, enable_wrap
 
 from src.bfm.src.bfm import BFM
-from src.bfm.src.dataloder import LargeClimateDataset
+from src.bfm.src.dataloder import LargeClimateDataset, custom_collate
 
+# Optional: Enable distributed debug logs
+# os.environ["TORCH_DISTRIBUTED_DEBUG"] = "DETAIL"
 
 class BFM_pipe(LightningModule):
-    def __init__(self, cfg, learning_rate=5e-4, weight_decay=5e-6):
+    def __init__(self, model, cfg=None, learning_rate=1e-2, weight_decay=5e-6):
         super().__init__()
+        self.model = model
         self.cfg = cfg
         self.learning_rate = learning_rate
         self.weight_decay = weight_decay
@@ -40,26 +44,26 @@ class BFM_pipe(LightningModule):
         self.alpha = 0.25  # weight for surface variables
         self.beta = 1.0  # weight for atmospheric variables
 
-    def configure_sharded_model(self) -> None:
-        model = BFM(
-                surface_vars=("t2m", "msl"),
-                single_vars=("lsm",),
-                atmos_vars=("z", "t"),
-                species_vars=("ExtinctionValue",),
-                land_vars=("Land", "NDVI"),
-                agriculture_vars=("AgricultureLand", "AgricultureIrrLand", "ArableLand", "Cropland"),
-                forest_vars=("Forest",),
-                atmos_levels=self.cfg.data.atmos_levels,
-                H=self.cfg.model.H,
-                W=self.cfg.model.W,
-                embed_dim=self.cfg.model.embed_dim,
-                num_latent_tokens=self.cfg.model.num_latent_tokens,
-                backbone_type=self.cfg.model.backbone,
-                patch_size=self.cfg.model.patch_size,
-            )
+    # def configure_model(self) -> None:
+    #     model = BFM(
+    #             surface_vars=("t2m", "msl"),
+    #             single_vars=("lsm",),
+    #             atmos_vars=("z", "t"),
+    #             species_vars=("ExtinctionValue",),
+    #             land_vars=("Land", "NDVI"),
+    #             agriculture_vars=("AgricultureLand", "AgricultureIrrLand", "ArableLand", "Cropland"),
+    #             forest_vars=("Forest",),
+    #             atmos_levels=self.cfg.data.atmos_levels,
+    #             H=self.cfg.model.H,
+    #             W=self.cfg.model.W,
+    #             embed_dim=self.cfg.model.embed_dim,
+    #             num_latent_tokens=self.cfg.model.num_latent_tokens,
+    #             backbone_type=self.cfg.model.backbone,
+    #             patch_size=self.cfg.model.patch_size,
+    #         )
 
-        #device=self.trainer.strategy.root_device # TODO Need to put the model to devices
-        self.model = wrap(model, device_id=self.trainer.strategy.root_device)
+    #     #device=self.trainer.strategy.root_device # TODO Need to put the model to devices
+    #     self.model = wrap(model) # , device_id=self.trainer.strategy.root_device
 
 
     def forward(self, batch, lead_time):
@@ -124,25 +128,46 @@ def main(cfg: DictConfig):
     # dataset = AuroraDataset(cfg.model.B, cfg.model.T, cfg.model.V_surf, cfg.model.V_atmos, cfg.model.C, cfg.model.H, cfg.model.W)
     dataset = LargeClimateDataset(data_dir='data/')
     dataloader = DataLoader(
-        dataset, batch_size=cfg.training.batch_size, num_workers=cfg.training.workers)
+        dataset, batch_size=cfg.training.batch_size, num_workers=cfg.training.workers, collate_fn=custom_collate, drop_last=True)
 
     # Setup logger
     current_time = datetime.now()
     remote_server_uri = f"http://0.0.0.0:{cfg.mlflow.port}"
     mlf_logger = MLFlowLogger(experiment_name="BFM_logs", run_name=f"BFM_{current_time}", tracking_uri=remote_server_uri)
     # Setup model
-    model = BFM_pipe(cfg=cfg)
+    # model = BFM_pipe(cfg=cfg)
 
     print('Done \n Setting up the BFM')
+    my_auto_wrap_policy = functools.partial(
+        size_based_auto_wrap_policy, min_num_params=100
+    )
 
     if cfg.training.strategy == "fsdp":
-        distr_strategy = FSDPStrategy()
-        
+        distr_strategy = FSDPStrategy(sharding_strategy="FULL_SHARD", auto_wrap_policy=size_based_auto_wrap_policy)
+    
+    model = BFM(
+                surface_vars=("t2m", "msl"),
+                single_vars=("lsm",),
+                atmos_vars=("z", "t"),
+                species_vars=("ExtinctionValue",),
+                land_vars=("Land", "NDVI"),
+                agriculture_vars=("AgricultureLand", "AgricultureIrrLand", "ArableLand", "Cropland"),
+                forest_vars=("Forest",),
+                atmos_levels=cfg.data.atmos_levels,
+                H=cfg.model.H,
+                W=cfg.model.W,
+                embed_dim=cfg.model.embed_dim,
+                num_latent_tokens=cfg.model.num_latent_tokens,
+                backbone_type=cfg.model.backbone,
+                patch_size=cfg.model.patch_size,
+            )
+    train_pipe = BFM_pipe(model)
 
     trainer = L.Trainer(
         max_epochs=cfg.training.epochs,
         accelerator=cfg.training.accelerator,
         devices=cfg.training.devices,
+        # fast_dev_run=True,
         # devices=[1],
         # strategy=distr_strategy,
         precision=cfg.training.precision,
@@ -151,7 +176,11 @@ def main(cfg: DictConfig):
         # logger=mlf_logger,
     )
 
-    trainer.fit(model, train_dataloaders=dataloader)
+    # trainer.fit(model, train_dataloaders=dataloader)
+
+    trainer.fit(train_pipe, train_dataloaders=dataloader)
+
+
     print("Finished training successfully")
     trainer.print(torch.cuda.memory_summary())
 
