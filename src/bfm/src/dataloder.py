@@ -243,6 +243,87 @@ class LargeClimateDataset(Dataset):
             forest_variables=forest_vars
         )
 
+def compute_variable_statistics(tensor: torch.Tensor) -> dict:
+    """
+    Compute basic statistics for a given tensor:
+    - min, max, mean, std
+    - nan_count, inf_count
+    - optional: shape, dtype
+    
+    Args:
+        tensor (torch.Tensor): The tensor to analyze
+    
+    Returns:
+        dict: A dictionary of computed statistics
+    """
+    stats = {}
+    # Ensure float to avoid errors with integer types
+    # (Optional step; .float() is typically safe if you want stats in float precision.)
+    t = tensor.float()
+
+    stats["min"] = float(t.min().item())
+    stats["max"] = float(t.max().item())
+    stats["mean"] = float(t.mean().item())
+    stats["std"] = float(t.std().item())
+    
+    # Count special values
+    stats["nan_count"] = int(torch.isnan(t).sum().item())
+    stats["inf_count"] = int(torch.isinf(t).sum().item())
+
+    # (Optional) Add shape and dtype for reference
+    stats["shape"] = list(tensor.shape)
+    stats["dtype"] = str(tensor.dtype)
+
+    return stats
+
+
+def compute_batch_statistics(batch: Batch) -> dict:
+    """
+    Compute statistics for each sub-dictionary in the batch object.
+    The batch object has the following structure:
+        batch_metadata,
+        surface_variables,
+        single_variables,
+        atmospheric_variables,
+        species_extinction_variables,
+        land_variables,
+        agriculture_variables,
+        forest_variables
+
+    Each of those is a dict of name -> tensor, or a namedtuple for metadata.
+    We skip metadata in this function and focus on actual variable tensors.
+
+    Args:
+        batch (Batch): A namedtuple containing sub-dicts of variables.
+
+    Returns:
+        dict: A nested dictionary of stats for each variable group.
+    """
+    stats_result = {}
+
+    # We'll define a helper to process a sub-dictionary
+    def process_var_dict(var_dict: dict, group_name: str):
+        group_stats = {}
+        for var_name, var_data in var_dict.items():
+            if isinstance(var_data, torch.Tensor):
+                # Compute stats
+                group_stats[var_name] = compute_variable_statistics(var_data)
+            else:
+                # Non-tensor data (e.g. lists). Skip or handle differently if needed
+                group_stats[var_name] = {"note": "Not a tensor, skipping stats."}
+        return group_stats
+
+    # For each field in the Batch namedtuple that is a dictionary, compute stats
+    stats_result["surface_variables"] = process_var_dict(batch.surface_variables, "surface_variables")
+    stats_result["single_variables"] = process_var_dict(batch.single_variables, "single_variables")
+    stats_result["atmospheric_variables"] = process_var_dict(batch.atmospheric_variables, "atmospheric_variables")
+    stats_result["species_extinction_variables"] = process_var_dict(batch.species_extinction_variables, "species_extinction_variables")
+    stats_result["land_variables"] = process_var_dict(batch.land_variables, "land_variables")
+    stats_result["agriculture_variables"] = process_var_dict(batch.agriculture_variables, "agriculture_variables")
+    stats_result["forest_variables"] = process_var_dict(batch.forest_variables, "forest_variables")
+
+    return stats_result
+
 
 def test_dataset_and_dataloader(data_dir):
     """
@@ -260,63 +341,22 @@ def test_dataset_and_dataloader(data_dir):
     )
 
     batch = next(iter(dataloader))
-
-    # print_batch_shapes(batch)
-    # print_nan_counts(batch)
-
-    print("=== Test Dataloader Output ===")
-    print("Batch Metadata:")
-    print("  Latitudes length:", len(batch.batch_metadata.latitudes))
-    print("  Longitudes length:", len(batch.batch_metadata.longitudes))
-    print("  Timestamps:", batch.batch_metadata.timestamp)
-    print(" Datatype of timestamps", type(batch.batch_metadata.timestamp), type(batch.batch_metadata.timestamp[0]))
-    print("  Pressure Levels:", batch.batch_metadata.pressure_levels)
-
-
-    a_time_mod =[[
-            datetime.strptime(t_str, "%Y-%m-%dT%H:%M:%S").timestamp() / 3600.0
-            for t_str in time_list
-        ]
-        for time_list in [batch.batch_metadata.timestamp]
-    ]
-
-    print(a_time_mod)
-    timestamp_tensor = torch.tensor(a_time_mod[0])
-    print("timestamp tensor", timestamp_tensor, timestamp_tensor.shape)
-
-    if batch.surface_variables:
-        var_name, var_data = next(iter(batch.surface_variables.items()))
-        # var_data might be a tensor or a list of tensors if batch_size > 1
-        if isinstance(var_data, torch.Tensor):
-            print(f"\nSurface variable '{var_name}' shape:", var_data.shape)
-        else:
-            print(f"\nSurface variable '{var_name}' is a list of length {len(var_data)}")
-
-    if batch.atmospheric_variables:
-        var_name, var_data = next(iter(batch.atmospheric_variables.items()))
-        if isinstance(var_data, torch.Tensor):
-            print(f"Atmospheric variable '{var_name}' shape:", var_data.shape)
-        else:
-            print(f"Atmospheric variable '{var_name}' is a list of length {len(var_data)}")
-
-    if batch.species_extinction_variables:
-        var_name, var_data = next(iter(batch.species_extinction_variables.items()))
-        if isinstance(var_data, torch.Tensor):
-            print(f"Species extinction variable '{var_name}' shape:", var_data.shape)
-
-    if batch.land_variables:
-        var_name, var_data = next(iter(batch.land_variables.items()))
-        if isinstance(var_data, torch.Tensor):
-            print(f"Land variable '{var_name}' shape:", var_data.shape)
-
-    if batch.forest_variables:
-        var_name, var_data = next(iter(batch.forest_variables.items()))
-        if isinstance(var_data, torch.Tensor):
-            print(f"Argiculture variable '{var_name}' shape:", var_data.shape)
-
+    # Now compute stats
+    stats = compute_batch_statistics(batch)
+    print("=== Variable Statistics ===")
+    for group_name, group_dict in stats.items():
+        print(f"\nGroup: {group_name}")
+        for var_name, var_stats in group_dict.items():
+            if "min" in var_stats:
+                print(f"  {var_name} => Min: {var_stats['min']}, Max: {var_stats['max']}, Mean: {var_stats['mean']}, Std: {var_stats['std']}")
+                print(f"     NaN: {var_stats['nan_count']}, Inf: {var_stats['inf_count']}, shape: {var_stats['shape']}, dtype: {var_stats['dtype']}")
+            else:
+                print(f"  {var_name} => {var_stats}")
+    
     print("\nTest completed successfully.")
+    
 
 
-# if __name__ == "__main__":
-#     data_dir = "data/"  # Replace this with the actual directory path
-#     test_dataset_and_dataloader(data_dir)
+if __name__ == "__main__":
+    data_dir = "data/"  # Replace this with the actual directory path
+    test_dataset_and_dataloader(data_dir)
