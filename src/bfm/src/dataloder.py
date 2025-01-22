@@ -10,6 +10,7 @@ Batch = namedtuple("Batch", [
     "batch_metadata",
     "surface_variables",
     "single_variables",
+    "species_variables",
     "atmospheric_variables",
     "species_extinction_variables",
     "land_variables",
@@ -23,6 +24,7 @@ Metadata = namedtuple("Metadata", [
     "timestamp",
     "lead_time",
     "pressure_levels",
+    "species_list"
 ])
 
 def custom_collate(batch_list):
@@ -62,6 +64,7 @@ def custom_collate(batch_list):
         latitudes = batch_list[0].batch_metadata.latitudes
         longitudes = batch_list[0].batch_metadata.longitudes
         pressure_levels = batch_list[0].batch_metadata.pressure_levels
+        species_list = batch_list[0].batch_metadata.species_list
         # Each sample has its own timestamp (list)
         timestamps = [b.batch_metadata.timestamp for b in batch_list]
         # timestamps_all = [b.batch_metadata.timestamp for b in batch_list]
@@ -74,7 +77,8 @@ def custom_collate(batch_list):
             longitudes=longitudes,
             timestamp=timestamps[0],  # a list of timestamps, one per sample
             lead_time=lead_time,
-            pressure_levels=pressure_levels
+            pressure_levels=pressure_levels,
+            species_list=species_list
         )
 
         surface_vars = collate_dicts([b.surface_variables for b in batch_list])
@@ -84,6 +88,7 @@ def custom_collate(batch_list):
         land_vars = collate_dicts([b.land_variables for b in batch_list])
         agriculture_vars = collate_dicts([b.agriculture_variables for b in batch_list])
         forest_vars = collate_dicts([b.forest_variables for b in batch_list])
+        species_vars = collate_dicts([b.species_variables for b in batch_list])
 
         return Batch(
             batch_metadata=metadata,
@@ -93,14 +98,15 @@ def custom_collate(batch_list):
             species_extinction_variables=species_ext_vars,
             land_variables=land_vars,
             agriculture_variables=agriculture_vars,
-            forest_variables=forest_vars
+            forest_variables=forest_vars,
+            species_variables=species_vars
         )
 
     # Fallback for other types if encountered
     return default_collate(batch_list)
 
 
-def crop_variables(variables, new_H, new_W):
+def crop_variables(variables, new_H, new_W, handle_nans=True):
     """
     Crop and clean variables to specified dimensions, handling NaN and Inf values.
 
@@ -131,30 +137,33 @@ def crop_variables(variables, new_H, new_W):
             else:
                 cropped = torch.clip(cropped, -1e6, 1e6)
 
-        # handle NaNs
-        nan_mask = torch.isnan(cropped)
-        nan_count = nan_mask.sum().item()
-        if nan_count > 0:
-            print(f"\nHandling NaN values in {k}:")
-            print(f"Shape: {cropped.shape}")
-            print(f"Total NaN count: {nan_count}")
-            valid_values = cropped[~nan_mask & ~torch.isinf(cropped)]
-            if len(valid_values) > 0:
-                mean_val = valid_values.mean().item()
-                std_val = valid_values.std().item()
-                # use mean +- 2*std as clipping bounds
-                clip_min = mean_val - 2 * std_val
-                clip_max = mean_val + 2 * std_val
-                # replace NaNs with clipped mean
-                cropped = torch.nan_to_num(cropped, nan=mean_val)
-                # TODO This is nasty, may be using a lot of memory
-                # TODO Check the advantages and why the data are in this regime
-                cropped = cropped.to(torch.float32)
-                cropped = torch.clip(cropped, clip_min, clip_max)
+        if handle_nans:
+            # handle NaNs
+            nan_mask = torch.isnan(cropped)
+            nan_count = nan_mask.sum().item()
+            if nan_count > 0:
+                print(f"\nHandling NaN values in {k}:")
+                print(f"Shape: {cropped.shape}")
+                print(f"Total NaN count: {nan_count}")
+                valid_values = cropped[~nan_mask & ~torch.isinf(cropped)]
+                if len(valid_values) > 0:
+                    mean_val = valid_values.mean().item()
+                    std_val = valid_values.std().item()
+                    # use mean +- 2*std as clipping bounds
+                    clip_min = mean_val - 2 * std_val
+                    clip_max = mean_val + 2 * std_val
+                    # replace NaNs with clipped mean
+                    cropped = torch.nan_to_num(cropped, nan=mean_val)
+                    # TODO This is nasty, may be using a lot of memory
+                    # TODO Check the advantages and why the data are in this regime
+                    cropped = cropped.to(torch.float32)
+                    cropped = torch.clip(cropped, clip_min, clip_max)
 
-            else:
-                cropped = torch.nan_to_num(cropped, nan=0.0)
-                cropped = torch.clip(cropped, -1.0, 1.0)
+                else:
+                    cropped = torch.nan_to_num(cropped, nan=0.0)
+                    cropped = torch.clip(cropped, -1.0, 1.0)
+        else:
+            pass
 
         processed_vars[k] = cropped
     return processed_vars
@@ -192,6 +201,7 @@ class LargeClimateDataset(Dataset):
         longitudes = data["batch_metadata"]["longitudes"]
         timestamps = data["batch_metadata"]["timestamp"]  # If it's a single sample, possibly a single timestamp or a list
         pressure_levels = data["batch_metadata"]["pressure_levels"]
+        species_list = data["batch_metadata"]["species_list"]
 
         # Determine original spatial dimensions from metadata lists
         H = len(data["batch_metadata"]["latitudes"])
@@ -209,7 +219,8 @@ class LargeClimateDataset(Dataset):
         land_vars = crop_variables(data["land_variables"], new_H, new_W)
         agriculture_vars = crop_variables(data["agriculture_variables"], new_H, new_W)
         forest_vars = crop_variables(data["forest_variables"], new_H, new_W)
-
+        species_vars = crop_variables(data["species_variables"]["dynamic"], new_H, new_W, handle_nans=False)
+        species_vars_wanted = {k: v for k,v in species_vars.items() if k in ["Distribution"]}
         # crop metadata dimensions
         latitude_var = torch.tensor(latitudes[:new_H])
         longitude_var = torch.tensor(longitudes[:new_W])
@@ -229,7 +240,8 @@ class LargeClimateDataset(Dataset):
             longitudes=longitude_var,
             timestamp=timestamps,
             lead_time=lead_time_hours,
-            pressure_levels=pressure_levels
+            pressure_levels=pressure_levels,
+            species_list=species_list,
         )
 
         return Batch(
@@ -240,7 +252,8 @@ class LargeClimateDataset(Dataset):
             species_extinction_variables=species_ext_vars,
             land_variables=land_vars,
             agriculture_variables=agriculture_vars,
-            forest_variables=forest_vars
+            forest_variables=forest_vars,
+            species_variables=species_vars_wanted
         )
 
 def compute_variable_statistics(tensor: torch.Tensor) -> dict:
@@ -321,6 +334,7 @@ def compute_batch_statistics(batch: Batch) -> dict:
     stats_result["land_variables"] = process_var_dict(batch.land_variables, "land_variables")
     stats_result["agriculture_variables"] = process_var_dict(batch.agriculture_variables, "agriculture_variables")
     stats_result["forest_variables"] = process_var_dict(batch.forest_variables, "forest_variables")
+    stats_result["species_variables"] = process_var_dict(batch.species_variables, "species_variables")
 
     return stats_result
 
@@ -354,7 +368,7 @@ def test_dataset_and_dataloader(data_dir):
                 print(f"  {var_name} => {var_stats}")
     
     print("\nTest completed successfully.")
-    
+
 
 
 if __name__ == "__main__":
