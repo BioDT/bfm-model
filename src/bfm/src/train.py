@@ -34,15 +34,37 @@ class BFM_pipe(LightningModule):
         self.learning_rate = learning_rate
         self.weight_decay = weight_decay
 
-        # define weights for surface and atmospheric variables
-        self.w_S = {"surf_var_0": 1.5, "surf_var_1": 0.77, "surf_var_2": 0.66}
-        self.w_A = {f"atmos_var_{i}": 1.0 for i in range(5)}  # assuming 5 atmospheric variables
-
-        # weights for loss functions per data set
-        self.gamma = {"ERA5": 2.0, "GFS-T0": 1.5}
-
-        self.alpha = 0.25  # weight for surface variables
-        self.beta = 1.0  # weight for atmospheric variables
+        # The variable weights come from: w_var = 1 / standard_dev
+        self.variable_weights = {
+            "surface_variables": {
+                "t2m": 0.13,
+                "msl": 0.0011
+                # ... add more if surface has more
+            },
+            "single_variables": {
+                "lsm": 2.27
+            },
+            "atmospheric_variables": {
+                "z": 1.22e-5,
+                "t": 0.036
+            },
+            "species_extinction_variables": {
+                "ExtinctionValue": 38.0
+            },
+            "land_variables": {
+                "Land": 5.84e-4,
+                "NDVI": 19.6
+            },
+            "agriculture_variables": {
+                "AgricultureLand": 0.053,
+                "AgricultureIrrLand": 0.0,    # or skip if purely zero
+                "ArableLand": 0.085,
+                "Cropland": 0.36
+            },
+            "forest_variables": {
+                "Forest": 0.11
+            }
+        }
 
     # def configure_model(self) -> None:
     #     model = BFM(
@@ -78,26 +100,61 @@ class BFM_pipe(LightningModule):
         return loss
 
     def compute_loss(self, output, batch):
-        loss_S = 0
-        # print("output:", output)
-        for k, v in output["surface_variables"].items():
-            # print("k, v", k, v)
-            target = batch.surface_variables[k][:, -1]  # last time step
-            loss_S += self.w_S.get(k, 1.0) * torch.mean(torch.abs(v - target))
-        loss_S /= len(output["surface_variables"])
 
-        loss_A = 0
-        for k, v in output["atmospheric_variables"].items():
-            target = batch.atmospheric_variables[k][:, -1]  # also last time step
-            loss_A += self.w_A.get(k, 1.0) * torch.mean(torch.abs(v - target))
-        loss_A /= len(output["atmospheric_variables"])
+        total_loss = 0.0
+        count = 0
+        
+        # 1) Loop over each group we care about. For example:
+        groups = [
+            "surface_variables",
+            "single_variables",
+            "atmospheric_variables",
+            "species_extinction_variables",
+            "land_variables",
+            "agriculture_variables",
+            "forest_variables"
+        ]
+        
+        for group_name in groups:
+            # If group doesn't exist in output or batch, skip
+            if group_name not in output or group_name not in batch._asdict():
+                continue
+            
+            pred_dict = output[group_name]
+            true_dict = getattr(batch, group_name)
+            
+            # 2) For each variable in this group, compute L1 loss with weighting
+            group_loss = 0.0
+            var_count = 0
+            
+            for var_name, pred_tensor in pred_dict.items():
+                # If var_name not in the ground truth dict, skip
+                if var_name not in true_dict:
+                    continue
+                
+                #TODO  but ensure your shapes/time dimension logic is consistent for all
+                # If it's timeseries with time axis, pick last step if that is the requirement
+                target = true_dict[var_name][:, -1]  # shape depends on your model design
 
-        # assuming all data in a batch is from the same dataset
-        gamma = self.gamma.get("ERA5", 1.0)  # default to 1.0 if dataset not specified
+                # Default weight = 1.0 if not in dictionary
+                w = self.variable_weights.get(group_name, {}).get(var_name, 1.0)
 
-        loss = gamma * (self.alpha * loss_S + self.beta * loss_A)
-        print(f"Loss: {loss}")
-        return loss
+                # L1 loss
+                loss_var = torch.mean(torch.abs(pred_tensor - target))
+                group_loss += w * loss_var
+                var_count += 1
+            
+            if var_count > 0:
+                group_loss /= var_count  # average within group
+                total_loss += group_loss
+                count += 1
+        
+        if count > 0:
+            total_loss /= count  # average across groups (optiona
+
+
+        print(f"Loss: {total_loss}")
+        return total_loss
 
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)

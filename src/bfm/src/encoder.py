@@ -550,7 +550,7 @@ class BFMEncoder(nn.Module):
                     embeddings.append(stacked_atmos)
                     embedding_groups["atmos"] = stacked_atmos
 
-        print("process species")
+        print("process species extinction| TODO Add species and process both")
         species_embed = self.process_variable_group(
             batch.species_extinction_variables, self.species_token_embeds, "Species Variables"
         )  # shape: [num_patches, embed_dim]
