@@ -95,3 +95,15 @@ Issue PyTorch 2.1.2 vs 2.2.0
 Good Trainer example: https://github.com/SeanNaren/min-LLM/blob/fsdp/train.py#L235-L243
 
 Interesting addition for CLI args generation: https://github.com/google/python-fire
+
+
+## TODODs
+
+[ ] Include the species_extinction_variables into the Encoder's latents and embeddings. Currently swaped with the species distribution - which have an extra dim, that needs handling.
+
+[ ] Fix the configurable patch size: 
+```        
+#TODO Check why this gives weird error. For now hardcode the # of patches
+        # num_patches = (H // self.patch_size) * (W // self.patch_size)
+        num_patches = 3040
+```

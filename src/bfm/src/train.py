@@ -1,6 +1,5 @@
 """
 Training script for the BFM (Biodiversity Foundation Model).
-TODO: Adapt it according to the new data format. The current version was using a toy format, and was just for testing purposes.
 """
 
 from collections import namedtuple
@@ -182,11 +181,15 @@ def main(cfg: DictConfig):
     seed_everything(42, workers=True)
 
     print('Setting up Dataloader ...')
-    # dataset = AuroraDataset(cfg.model.B, cfg.model.T, cfg.model.V_surf, cfg.model.V_atmos, cfg.model.C, cfg.model.H, cfg.model.W)
     dataset = LargeClimateDataset(data_dir='data/')
-    dataloader = DataLoader(
-        dataset, batch_size=cfg.training.batch_size, num_workers=cfg.training.workers, collate_fn=custom_collate, drop_last=True)
+    test_dataset = LargeClimateDataset(data_dir='data/') # Adapt 
 
+    test_dataloader = DataLoader(
+        test_dataset, batch_size=1, num_workers=cfg.training.workers, collate_fn=custom_collate, drop_last=True, shuffle=False)
+
+    train_dataloader = DataLoader(
+        dataset, batch_size=cfg.training.batch_size, num_workers=cfg.training.workers, collate_fn=custom_collate, drop_last=True)
+    
     # Setup logger
     current_time = datetime.now()
     remote_server_uri = f"http://0.0.0.0:{cfg.mlflow.port}"
@@ -195,6 +198,7 @@ def main(cfg: DictConfig):
     # model = BFM_pipe(cfg=cfg)
 
     print('Done \n Setting up the BFM')
+    # Custom policy for wrapping 
     my_auto_wrap_policy = functools.partial(
         size_based_auto_wrap_policy, min_num_params=100
     )
@@ -231,14 +235,16 @@ def main(cfg: DictConfig):
         # gradient_clip_val=cfg.training.gradient_clip, # TODO Errors 
         log_every_n_steps=cfg.training.log_steps,
         # logger=mlf_logger,
+        check_val_every_n_epoch=1 # Do eval every 5 epochs
     )
 
     # trainer.fit(model, train_dataloaders=dataloader)
 
-    trainer.fit(train_pipe, train_dataloaders=dataloader)
+    trainer.fit(train_pipe, train_dataloaders=train_dataloader)
+    print("Finished training successfully - Lets do a Test!")
+    
+    trainer.test(ckpt_path="best", dataloaders=test_dataloader)
 
-
-    print("Finished training successfully")
     trainer.print(torch.cuda.memory_summary())
 
 if __name__ == "__main__":
