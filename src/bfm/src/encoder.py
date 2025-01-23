@@ -382,6 +382,7 @@ class BFMEncoder(nn.Module):
 
         return tensor if replace_values else has_issues
 
+    # V1 - OLD
     # def process_variable_group(self, variables, token_embeds, group_name):
     #     """
     #     Process a group of variables through tokenization and embedding.
@@ -417,55 +418,135 @@ class BFMEncoder(nn.Module):
     #     print("x shape after embedding:", x.shape)
     #     return x
 
+    # V2 works with batch size = 1
+    # def process_variable_group(self, variables, token_embeds, group_name):
+    #         """
+    #         Process a group of variables through tokenization and embedding.
+    #         This function expects each var to shape [B, H, W] or [B, T, H, W] depending on your design.
+    #         But no 'level' dimension here, since we separate that out for 'atmospheric' in the forward.
+    #         """
+    #         if not variables:
+    #             print(f"\n{group_name}: No variables found")
+    #             return None
+
+    #         # stack variables --> shape [v, B, H, W] if each var is [B, H, W]
+    #         # e.g. if v=2, shape might be [2, 1, 152, 320]
+    #         values = tuple(variables.values())
+    #         x = torch.stack(values, dim=0)
+    #         print(f"{group_name}: after stacking vars => {x.shape}")
+
+    #         # possibly remove batch dimension if B=1
+    #         # so [v, 1, H, W] -> [v, H, W]
+    #         if x.shape[1] == 1:
+    #             x = x[:, 0]
+    #             print(f"{group_name}: removing batch dimension => {x.shape}")
+
+    #         # Now x is [v, H, W], or [v, T, H, W] if you also have time
+    #         # Suppose T=1 or T=some small integer
+    #         # We'll guess your pattern expects "v t (h p1) (w p2)"
+    #         # If you truly only have [v, H, W], treat T=1 artificially
+    #         if x.dim() == 3:
+    #             # Insert a time dimension
+    #             x = x.unsqueeze(1)  # shape [v, t=1, H, W]
+    #             print(f"{group_name}: artificially added time dimension => {x.shape}")
+
+    #         print(f"{group_name}: shape before rearrange => {x.shape}")
+    #         # Example pattern: "v t (h p1) (w p2) -> (h w) (v t p1 p2)"
+    #         # with patch_size = self.patch_size
+    #         # Make sure H, W are multiples of patch_size
+    #         x = rearrange(
+    #             x,
+    #             "v t (h p1) (w p2) -> (h w) (v t p1 p2)",
+    #             p1=self.patch_size,
+    #             p2=self.patch_size
+    #         )
+    #         print(f"{group_name}: shape after rearrange => {x.shape}")
+
+    #         # Now x has shape [num_patches, v * t * p1 * p2]
+    #         # The linear embed expects [*, in_features]
+    #         x = token_embeds(x)  # => [num_patches, embed_dim]
+    #         print(f"{group_name}: shape after embedding => {x.shape}")
+
+    #         return x
+
+    # V3 trying to fix batch size > 1
     def process_variable_group(self, variables, token_embeds, group_name):
-            """
-            Process a group of variables through tokenization and embedding.
-            This function expects each var to shape [B, H, W] or [B, T, H, W] depending on your design.
-            But no 'level' dimension here, since we separate that out for 'atmospheric' in the forward.
-            """
-            if not variables:
-                print(f"\n{group_name}: No variables found")
-                return None
+        """
+        Process a group of variables through tokenization and embedding in a standard multi-batch manner.
 
-            # stack variables --> shape [v, B, H, W] if each var is [B, H, W]
-            # e.g. if v=2, shape might be [2, 1, 152, 320]
-            values = tuple(variables.values())
-            x = torch.stack(values, dim=0)
-            print(f"{group_name}: after stacking vars => {x.shape}")
+        Each variable is assumed to be:
+        - [B, H, W]   (no time dimension), or
+        - [B, T, H, W] (time dimension = T)
+        We will unify the 'var_count * T' dimension into 'channels'.
 
-            # possibly remove batch dimension if B=1
-            # so [v, 1, H, W] -> [v, H, W]
-            if x.shape[1] == 1:
-                x = x[:, 0]
-                print(f"{group_name}: removing batch dimension => {x.shape}")
+        Steps:
+        1) Stack variables along a new dim => shape [var_count, B, (T,) H, W].
+        2) Permute to [B, var_count, (T,) H, W].
+        3) Merge var_count*(T) => channels => shape [B, C, H, W].
+        4) Patchify => rearrange to [B, #patches, C*(p1*p2)].
+        5) token_embeds => [B, #patches, embed_dim].
+        """
+        if not variables:
+            print(f"\n{group_name}: No variables found")
+            return None
 
-            # Now x is [v, H, W], or [v, T, H, W] if you also have time
-            # Suppose T=1 or T=some small integer
-            # We'll guess your pattern expects "v t (h p1) (w p2)"
-            # If you truly only have [v, H, W], treat T=1 artificially
-            if x.dim() == 3:
-                # Insert a time dimension
-                x = x.unsqueeze(1)  # shape [v, t=1, H, W]
-                print(f"{group_name}: artificially added time dimension => {x.shape}")
+        # 1) Stack variables => shape [var_count, B, [T,] H, W].
+        # e.g. if 2 variables, each [2, 152, 320], then stacking => [2, 2, 152, 320].
+        # or if each is [2, 3, 152, 320], => [2, 2, 3, 152, 320].
+        values = list(variables.values())  # list of Tensors
+        x = torch.stack(values, dim=0)
+        print(f"{group_name}: after stacking => {x.shape}")
 
-            print(f"{group_name}: shape before rearrange => {x.shape}")
-            # Example pattern: "v t (h p1) (w p2) -> (h w) (v t p1 p2)"
-            # with patch_size = self.patch_size
-            # Make sure H, W are multiples of patch_size
-            x = rearrange(
-                x,
-                "v t (h p1) (w p2) -> (h w) (v t p1 p2)",
-                p1=self.patch_size,
-                p2=self.patch_size
-            )
-            print(f"{group_name}: shape after rearrange => {x.shape}")
+        # 2) Move the 'var_count' dimension after batch dim => [B, var_count, ...].
+        # e.g. [2, 2, 152, 320] => [2, 2, 152, 320] if var_count=2 is dimension 0, B=2 dimension 1 => we do a transpose:
+        dims = list(x.shape)
+        # dims[0] = var_count, dims[1] = B, ...
+        # We want => [B, var_count, ...].
+        # so do: x = x.permute(1, 0, 2, 3, ...) if 4D
+        if x.dim() == 4:
+            # shape => [V, B, H, W]
+            x = x.permute(1, 0, 2, 3)  # => [B, V, H, W]
+        elif x.dim() == 5:
+            # shape => [V, B, T, H, W]
+            x = x.permute(1, 0, 2, 3, 4)  # => [B, V, T, H, W]
+        else:
+            raise ValueError(f"Unsupported shape {x.shape} in {group_name}")
 
-            # Now x has shape [num_patches, v * t * p1 * p2]
-            # The linear embed expects [*, in_features]
-            x = token_embeds(x)  # => [num_patches, embed_dim]
-            print(f"{group_name}: shape after embedding => {x.shape}")
+        print(f"{group_name}: after permute => {x.shape}")
 
-            return x
+        # 3) Merge var_count*(T) into a single channel dimension => shape [B, C, H, W].
+        # if x.dim()==4, => [B, V, H, W]. then C = V
+        # if x.dim()==5, => [B, V, T, H, W]. then C = V * T
+        if x.dim() == 4:
+            B, V, H, W = x.shape
+            x = x.reshape(B, V, H, W)  # trivial, no time
+            channel_dim = V
+        else:
+            # x.dim()==5 => [B, V, T, H, W]
+            B, V, T, H, W = x.shape
+            x = x.reshape(B, V * T, H, W)
+            channel_dim = V * T
+        print(f"{group_name}: merged var/time => channels => {x.shape} (C={channel_dim})")
+
+        # 4) Now do patchify:
+        # We want => [B, (H/p1)*(W/p2), C*(p1*p2)]
+        # einops pattern: "b c (h p1) (w p2) -> b (h w) (c p1 p2)"
+        # Make sure H,W are multiples of p1,p2
+        x = rearrange(
+            x,
+            "b c (h p1) (w p2) -> b (h w) (c p1 p2)",
+            p1=self.patch_size,
+            p2=self.patch_size
+        )
+        print(f"{group_name}: after patchify => {x.shape}")
+
+        # 5) Now x is [B, num_patches, C*(p1*p2)] => feed token_embeds
+        # token_embeds expects the last dim = in_features that matches its linear layer
+        x = token_embeds(x)  # => [B, num_patches, embed_dim]
+        print(f"{group_name}: after token_embeds => {x.shape}")
+
+        return x
+
 
     def forward(self, batch, lead_time):
         """

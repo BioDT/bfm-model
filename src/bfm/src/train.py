@@ -181,7 +181,7 @@ def main(cfg: DictConfig):
     seed_everything(42, workers=True)
 
     print('Setting up Dataloader ...')
-    dataset = LargeClimateDataset(data_dir='data/')
+    dataset = LargeClimateDataset(data_dir=cfg.data.data_path)
     test_dataset = LargeClimateDataset(data_dir='data/') # Adapt 
 
     test_dataloader = DataLoader(
@@ -243,7 +243,7 @@ def main(cfg: DictConfig):
     trainer.fit(train_pipe, train_dataloaders=train_dataloader)
     print("Finished training successfully - Lets do a Test!")
     
-    trainer.test(ckpt_path="best", dataloaders=test_dataloader)
+    # trainer.test(ckpt_path="best", dataloaders=test_dataloader)
 
     trainer.print(torch.cuda.memory_summary())
 
