@@ -10,12 +10,13 @@ from typing import Optional, Union
 
 import hydra
 import lightning as L
+import mlflow
 import torch
 from hydra.core.hydra_config import HydraConfig
 from lightning.pytorch import LightningModule, seed_everything
 from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import MLFlowLogger
-from lightning.pytorch.strategies import FSDPStrategy, DDPStrategy
+from lightning.pytorch.strategies import DDPStrategy, FSDPStrategy
 from omegaconf import DictConfig, OmegaConf
 from torch.distributed.fsdp.wrap import enable_wrap, size_based_auto_wrap_policy, wrap
 from torch.utils.data import DataLoader, Dataset
@@ -87,7 +88,7 @@ class BFM_pipe(LightningModule):
         loss = self.compute_loss(output, batch)
         self.log("train_loss", loss)
         return loss
-    
+
     def validation_step(self, batch, batch_idx):
         lead_time = timedelta(hours=6)  # fixed lead time for pre-training
         output = self(batch, lead_time)
@@ -95,7 +96,7 @@ class BFM_pipe(LightningModule):
         loss = self.compute_loss(output, batch)
         self.log("val_loss", loss)
         return loss
-    
+
     def training_step(self, batch, batch_idx):
         lead_time = timedelta(hours=6)  # fixed lead time for pre-training
         output = self(batch, lead_time)
@@ -103,7 +104,7 @@ class BFM_pipe(LightningModule):
         loss = self.compute_loss(output, batch)
         self.log("train_loss", loss)
         return loss
-    
+
     def test_step(self, batch, batch_idx):
         lead_time = timedelta(hours=6)  # fixed lead time for pre-training
         output = self(batch, lead_time)
@@ -111,7 +112,7 @@ class BFM_pipe(LightningModule):
         loss = self.compute_loss(output, batch)
         self.log("test_loss", loss)
         return loss
-    
+
     def compute_loss(self, output, batch):
 
         total_loss = 0.0
@@ -183,6 +184,22 @@ class BFM_pipe(LightningModule):
     #     self.model.clip_grad_norm_(gradient_clip_val)
 
 
+class MLFlowLoggerWithSystemMetrics(MLFlowLogger):
+    def __init__(self, *args, **kwargs):
+        mlflow.enable_system_metrics_logging()
+        # TODO: generate experiment_id beforehand
+        # TODO: get run_name
+        # TODO: fix Exception: Invalid parent directory './mlruns/models'
+        self.run = mlflow.start_run(experiment_id=None, run_name="FOO_RUN", log_system_metrics=True)
+        super().__init__(run_id=self.run.info.run_id, *args, **kwargs)
+        # self.setup_system_metrics()
+
+    # def setup_system_metrics(self):
+    #     experiment = self.experiment
+    #     run = mlflow.active_run()
+    #     mlflow.enable_system_metrics_logging()
+
+
 @hydra.main(version_base=None, config_path="configs", config_name="test_config")
 def main(cfg: DictConfig):
     # Setup config
@@ -191,25 +208,40 @@ def main(cfg: DictConfig):
     # Seed the experiment for numpy, torch and python.random.
     seed_everything(42, workers=True)
 
-    print('Setting up Dataloader ...')
+    print("Setting up Dataloader ...")
     dataset = LargeClimateDataset(data_dir=cfg.data.data_path)
-    test_dataset = LargeClimateDataset(data_dir=cfg.data.test_data_path) # Adapt 
+    test_dataset = LargeClimateDataset(data_dir=cfg.data.test_data_path)  # Adapt
 
     val_dataloader = DataLoader(
-        test_dataset, batch_size=cfg.training.batch_size, num_workers=cfg.training.workers, collate_fn=custom_collate, drop_last=True, shuffle=False)
+        test_dataset,
+        batch_size=cfg.training.batch_size,
+        num_workers=cfg.training.workers,
+        collate_fn=custom_collate,
+        drop_last=True,
+        shuffle=False,
+    )
 
     train_dataloader = DataLoader(
-        dataset, batch_size=cfg.training.batch_size, num_workers=cfg.training.workers, collate_fn=custom_collate, drop_last=True, shuffle=True, pin_memory=True)
-    
+        dataset,
+        batch_size=cfg.training.batch_size,
+        num_workers=cfg.training.workers,
+        collate_fn=custom_collate,
+        drop_last=True,
+        shuffle=True,
+        pin_memory=True,
+    )
+
     # Setup logger
     current_time = datetime.now()
     remote_server_uri = f"http://0.0.0.0:{cfg.mlflow.port}"
-    mlf_logger = MLFlowLogger(experiment_name="BFM_logs", run_name=f"BFM_{current_time}", tracking_uri=remote_server_uri)
+    # tracking_uri="file:./mlruns" (default, goes to files. Serving Mlflow is separate)
+    # mlf_logger = MLFlowLoggerWithSystemMetrics(experiment_name="BFM_logs", run_name=f"BFM_{current_time}")
+    mlf_logger = MLFlowLogger(experiment_name="BFM_logs", run_name=f"BFM_{current_time}")
     # Setup model
     # model = BFM_pipe(cfg=cfg)
 
     print("Done \n Setting up the BFM")
-    # Custom policy for wrapping 
+    # Custom policy for wrapping
     my_auto_wrap_policy = functools.partial(size_based_auto_wrap_policy, min_num_params=100)
 
     if cfg.training.strategy == "fsdp":
@@ -236,7 +268,8 @@ def main(cfg: DictConfig):
     train_pipe = BFM_pipe(model)
 
     output_dir = HydraConfig.get().runtime.output_dir
-    checkpoint_callback = ModelCheckpoint(dirpath=f"{output_dir}/checkpoints", save_top_k=1, monitor="val_loss")
+    # /scratch-shared/<username>
+    checkpoint_callback = ModelCheckpoint(dirpath=f"{output_dir}/checkpoints", save_top_k=2, monitor="val_loss")
     print(f"Will be saving checkpoints at: {output_dir}/checkpoints")
     trainer = L.Trainer(
         max_epochs=cfg.training.epochs,
@@ -248,8 +281,8 @@ def main(cfg: DictConfig):
         precision=cfg.training.precision,
         # gradient_clip_val=cfg.training.gradient_clip, # TODO Errors
         log_every_n_steps=cfg.training.log_steps,
-        # logger=mlf_logger,
-        check_val_every_n_epoch=1, # Do eval every 1 epochs
+        logger=mlf_logger,
+        check_val_every_n_epoch=1,  # Do eval every 1 epochs
         # default_root_dir=""
         callbacks=[checkpoint_callback],
     )
@@ -258,8 +291,8 @@ def main(cfg: DictConfig):
 
     trainer.fit(train_pipe, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader)
     print("Finished training successfully - Lets do a Test!")
-    
-    # trainer.test(ckpt_path="best", dataloaders=val_dataloader)
+
+    # trainer.test(ckpt_path="best", dataloaders=val_dataloader, datamodule=?)
 
     print("Finished testing successfully")
     trainer.print(torch.cuda.memory_summary())

@@ -37,4 +37,4 @@ general:
   do_eval: True
 
 mlflow:
-  port: 5002 # change here port if you get [Errno 98] Address already in use
+  port: 8082 # change here port if you get [Errno 98] Address already in use
