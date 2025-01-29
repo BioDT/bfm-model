@@ -127,8 +127,8 @@ def crop_variables(variables, new_H, new_W, handle_nans=True):
         inf_mask = torch.isinf(cropped)
         inf_count = inf_mask.sum().item()
         if inf_count > 0:
-            print(f"\nHandling Inf values in {k}:")
-            print(f"Inf count: {inf_count}")
+            # print(f"\nHandling Inf values in {k}:")
+            # print(f"Inf count: {inf_count}")
             valid_values = cropped[~inf_mask & ~torch.isnan(cropped)]
             if len(valid_values) > 0:
                 max_val = valid_values.max().item()
@@ -142,9 +142,9 @@ def crop_variables(variables, new_H, new_W, handle_nans=True):
             nan_mask = torch.isnan(cropped)
             nan_count = nan_mask.sum().item()
             if nan_count > 0:
-                print(f"\nHandling NaN values in {k}:")
-                print(f"Shape: {cropped.shape}")
-                print(f"Total NaN count: {nan_count}")
+                # print(f"\nHandling NaN values in {k}:")
+                # print(f"Shape: {cropped.shape}")
+                # print(f"Total NaN count: {nan_count}")
                 valid_values = cropped[~nan_mask & ~torch.isinf(cropped)]
                 if len(valid_values) > 0:
                     mean_val = valid_values.mean().item()

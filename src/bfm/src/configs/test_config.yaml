@@ -17,12 +17,12 @@ model:
 
 data:
   atmos_levels: [50, 500, 1000]
-  data_path: /projects/prjs1134/data/projects/biodt/storage/batches_2024_12_13 #data/ #/projects/prjs1134/data/projects/biodt/storage/batches/
+  data_path: /projects/prjs1134/data/projects/biodt/storage/batches/ #/projects/prjs1134/data/projects/biodt/storage/batches_2024_12_13 #data/ #/projects/prjs1134/data/projects/biodt/storage/batches/
 
 training:
   batch_size: 5
   workers: 0
-  epochs: 5
+  epochs: 2
   accelerator: gpu
   precision: bf16-mixed
   devices: [0]

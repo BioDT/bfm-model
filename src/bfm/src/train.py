@@ -87,6 +87,14 @@ class BFM_pipe(LightningModule):
         loss = self.compute_loss(output, batch)
         self.log("train_loss", loss)
         return loss
+    
+    def validation_step(self, batch, batch_idx):
+        lead_time = timedelta(hours=6)  # fixed lead time for pre-training
+        output = self(batch, lead_time)
+
+        loss = self.compute_loss(output, batch)
+        self.log("val_loss", loss)
+        return loss
 
     def compute_loss(self, output, batch):
 
@@ -122,8 +130,7 @@ class BFM_pipe(LightningModule):
                     continue
 
                 # TODO  but ensure your shapes/time dimension logic is consistent for all
-                # If it's timeseries with time axis, pick last step if that is the requirement
-                target = true_dict[var_name][:, -1]  # shape depends on your model design
+                target = true_dict[var_name][:, -1]
 
                 # Default weight = 1.0 if not in dictionary
                 w = self.variable_weights.get(group_name, {}).get(var_name, 1.0)
@@ -172,7 +179,7 @@ def main(cfg: DictConfig):
     dataset = LargeClimateDataset(data_dir=cfg.data.data_path)
     test_dataset = LargeClimateDataset(data_dir='data/') # Adapt 
 
-    test_dataloader = DataLoader(
+    val_dataloader = DataLoader(
         test_dataset, batch_size=1, num_workers=cfg.training.workers, collate_fn=custom_collate, drop_last=True, shuffle=False)
 
     train_dataloader = DataLoader(
@@ -211,8 +218,8 @@ def main(cfg: DictConfig):
     train_pipe = BFM_pipe(model)
 
     output_dir = HydraConfig.get().runtime.output_dir
-    checkpoint_callback = ModelCheckpoint(dirpath=f"{output_dir}/checkpoints", save_top_k=2, monitor="val_loss")
-
+    checkpoint_callback = ModelCheckpoint(dirpath=f"{output_dir}/checkpoints", save_top_k=1, monitor="val_loss")
+    print(f"Will be saving checkpoints at: {output_dir}/checkpoints")
     trainer = L.Trainer(
         max_epochs=cfg.training.epochs,
         accelerator=cfg.training.accelerator,
@@ -224,14 +231,14 @@ def main(cfg: DictConfig):
         # gradient_clip_val=cfg.training.gradient_clip, # TODO Errors
         log_every_n_steps=cfg.training.log_steps,
         # logger=mlf_logger,
-        check_val_every_n_epoch=1 # Do eval every 5 epochs
+        check_val_every_n_epoch=1, # Do eval every 1 epochs
         # default_root_dir=""
         callbacks=[checkpoint_callback],
     )
 
     # trainer.fit(model, train_dataloaders=dataloader)
 
-    trainer.fit(train_pipe, train_dataloaders=train_dataloader)
+    trainer.fit(train_pipe, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader)
     print("Finished training successfully - Lets do a Test!")
     
     # trainer.test(ckpt_path="best", dataloaders=test_dataloader)
