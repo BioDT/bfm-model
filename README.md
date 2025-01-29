@@ -69,6 +69,7 @@ salloc -p gpu_h100 --gpus-per-node=1 -t 01:00:00
 # N.B.: Make sure to specify the host on the local machine, as specifying just the port might results in "Permission denied" errors.
 # N.B.2.: If specifying the host 0.0.0.0 on the local machine, access by using `localhost:<port_id>`.
 ssh -i .ssh/snelius_key -L 0.0.0.0:<desired_port_on_local>:[gcn|tcn]<node_id>:<mlflow_port_on_remote> <user_name>@snellius.surf.nl
+ssh -L 0.0.0.0:8083:gcn112:8082 mmensio1@snellius.surf.nl
 
 ```
 
