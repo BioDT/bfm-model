@@ -177,7 +177,7 @@ def main(cfg: DictConfig):
 
     print('Setting up Dataloader ...')
     dataset = LargeClimateDataset(data_dir=cfg.data.data_path)
-    test_dataset = LargeClimateDataset(data_dir='data/') # Adapt 
+    test_dataset = LargeClimateDataset(data_dir=cfg.data.test_data_path) # Adapt 
 
     val_dataloader = DataLoader(
         test_dataset, batch_size=1, num_workers=cfg.training.workers, collate_fn=custom_collate, drop_last=True, shuffle=False)

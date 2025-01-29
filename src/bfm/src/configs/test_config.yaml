@@ -17,7 +17,8 @@ model:
 
 data:
   atmos_levels: [50, 500, 1000]
-  data_path: /projects/prjs1134/data/projects/biodt/storage/batches/ #/projects/prjs1134/data/projects/biodt/storage/batches_2024_12_13 #data/ #/projects/prjs1134/data/projects/biodt/storage/batches/
+  data_path: /projects/prjs1134/data/projects/biodt/storage/batches_2024_12_13 #/projects/prjs1134/data/projects/biodt/storage/batches_2025_01_22/train #/projects/prjs1134/data/projects/biodt/storage/batches_2024_12_13 #data/ #/projects/prjs1134/data/projects/biodt/storage/batches/
+  test_data_path: /projects/prjs1134/data/projects/biodt/storage/batches_2024_12_13
 
 training:
   batch_size: 5
