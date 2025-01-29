@@ -15,7 +15,7 @@ from hydra.core.hydra_config import HydraConfig
 from lightning.pytorch import LightningModule, seed_everything
 from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import MLFlowLogger
-from lightning.pytorch.strategies import FSDPStrategy
+from lightning.pytorch.strategies import FSDPStrategy, DDPStrategy
 from omegaconf import DictConfig, OmegaConf
 from torch.distributed.fsdp.wrap import enable_wrap, size_based_auto_wrap_policy, wrap
 from torch.utils.data import DataLoader, Dataset
@@ -29,7 +29,7 @@ from src.bfm.src.dataloder import LargeClimateDataset, custom_collate
 
 
 class BFM_pipe(LightningModule):
-    def __init__(self, model, cfg=None, learning_rate=1e-2, weight_decay=5e-6):
+    def __init__(self, model, cfg=None, learning_rate=1e-3, weight_decay=5e-6):
         super().__init__()
         self.model = model
         self.cfg = cfg
@@ -95,7 +95,23 @@ class BFM_pipe(LightningModule):
         loss = self.compute_loss(output, batch)
         self.log("val_loss", loss)
         return loss
+    
+    def training_step(self, batch, batch_idx):
+        lead_time = timedelta(hours=6)  # fixed lead time for pre-training
+        output = self(batch, lead_time)
 
+        loss = self.compute_loss(output, batch)
+        self.log("train_loss", loss)
+        return loss
+    
+    def test_step(self, batch, batch_idx):
+        lead_time = timedelta(hours=6)  # fixed lead time for pre-training
+        output = self(batch, lead_time)
+
+        loss = self.compute_loss(output, batch)
+        self.log("test_loss", loss)
+        return loss
+    
     def compute_loss(self, output, batch):
 
         total_loss = 0.0
@@ -180,10 +196,10 @@ def main(cfg: DictConfig):
     test_dataset = LargeClimateDataset(data_dir=cfg.data.test_data_path) # Adapt 
 
     val_dataloader = DataLoader(
-        test_dataset, batch_size=1, num_workers=cfg.training.workers, collate_fn=custom_collate, drop_last=True, shuffle=False)
+        test_dataset, batch_size=cfg.training.batch_size, num_workers=cfg.training.workers, collate_fn=custom_collate, drop_last=True, shuffle=False)
 
     train_dataloader = DataLoader(
-        dataset, batch_size=cfg.training.batch_size, num_workers=cfg.training.workers, collate_fn=custom_collate, drop_last=True)
+        dataset, batch_size=cfg.training.batch_size, num_workers=cfg.training.workers, collate_fn=custom_collate, drop_last=True, shuffle=True, pin_memory=True)
     
     # Setup logger
     current_time = datetime.now()
@@ -198,6 +214,8 @@ def main(cfg: DictConfig):
 
     if cfg.training.strategy == "fsdp":
         distr_strategy = FSDPStrategy(sharding_strategy="FULL_SHARD", auto_wrap_policy=size_based_auto_wrap_policy)
+    elif cfg.training.strategy == "ddp":
+        distr_strategy = DDPStrategy()
 
     model = BFM(
         surface_vars=("t2m", "msl"),
@@ -241,7 +259,7 @@ def main(cfg: DictConfig):
     trainer.fit(train_pipe, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader)
     print("Finished training successfully - Lets do a Test!")
     
-    # trainer.test(ckpt_path="best", dataloaders=test_dataloader)
+    # trainer.test(ckpt_path="best", dataloaders=val_dataloader)
 
     print("Finished testing successfully")
     trainer.print(torch.cuda.memory_summary())
