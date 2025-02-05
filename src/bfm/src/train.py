@@ -154,6 +154,8 @@ class BFM_pipe(LightningModule):
 
                 # L1 loss
                 loss_var = torch.mean(torch.abs(pred_tensor - target))
+                # Log each variable's raw loss
+                self.log(f"{var_name} raw loss", loss_var)
                 group_loss += w * loss_var
                 var_count += 1
 

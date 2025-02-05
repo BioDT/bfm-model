@@ -1,5 +1,5 @@
 model:
-  B: 1  # Batch size
+  B: 5  # Batch size
   T: 2   # Time steps
   V_surf: 2 # Number of surface variables
   V_atmos: 2 # Number of atmospheric variables
@@ -24,11 +24,11 @@ data:
  
 training:
   batch_size: 5
-  workers: 2
+  workers: 0
   epochs: 2
   accelerator: gpu
   precision: bf16-mixed
-  devices: [0, 1]
+  devices: [0]
   strategy: ddp # ddp
   gradient_clip: 1.0
   log_steps: 1

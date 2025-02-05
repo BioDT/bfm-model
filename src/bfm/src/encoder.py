@@ -495,7 +495,7 @@ class BFMEncoder(nn.Module):
         # or if each is [2, 3, 152, 320], => [2, 2, 3, 152, 320].
         values = list(variables.values())  # list of Tensors
         x = torch.stack(values, dim=0)
-        print(f"{group_name}: after stacking => {x.shape}")
+        # print(f"{group_name}: after stacking => {x.shape}")
 
         # 2) Move the 'var_count' dimension after batch dim => [B, var_count, ...].
         # e.g. [2, 2, 152, 320] => [2, 2, 152, 320] if var_count=2 is dimension 0, B=2 dimension 1 => we do a transpose:
@@ -512,7 +512,7 @@ class BFMEncoder(nn.Module):
         else:
             raise ValueError(f"Unsupported shape {x.shape} in {group_name}")
 
-        print(f"{group_name}: after permute => {x.shape}")
+        # print(f"{group_name}: after permute => {x.shape}")
 
         # 3) Merge var_count*(T) into a single channel dimension => shape [B, C, H, W].
         # if x.dim()==4, => [B, V, H, W]. then C = V
@@ -526,7 +526,7 @@ class BFMEncoder(nn.Module):
             B, V, T, H, W = x.shape
             x = x.reshape(B, V * T, H, W)
             channel_dim = V * T
-        print(f"{group_name}: merged var/time => channels => {x.shape} (C={channel_dim})")
+        # print(f"{group_name}: merged var/time => channels => {x.shape} (C={channel_dim})")
 
         # 4) Now do patchify:
         # We want => [B, (H/p1)*(W/p2), C*(p1*p2)]
@@ -538,12 +538,12 @@ class BFMEncoder(nn.Module):
             p1=self.patch_size,
             p2=self.patch_size
         )
-        print(f"{group_name}: after patchify => {x.shape}")
+        # print(f"{group_name}: after patchify => {x.shape}")
 
         # 5) Now x is [B, num_patches, C*(p1*p2)] => feed token_embeds
         # token_embeds expects the last dim = in_features that matches its linear layer
         x = token_embeds(x)  # => [B, num_patches, embed_dim]
-        print(f"{group_name}: after token_embeds => {x.shape}")
+        # print(f"{group_name}: after token_embeds => {x.shape}")
 
         return x
 
