@@ -59,10 +59,12 @@ class BFMDecoder(nn.Module):
         single_vars (tuple[str, ...]): Names of single-level variables
         atmos_vars (tuple[str, ...]): Names of atmospheric variables
         species_vars (tuple[str, ...]): Names of species-related variables
+        species_distr_vars (tuple[str, ...]): Names of species distributions-related variables
         land_vars (tuple[str, ...]): Names of land-related variables
         agriculture_vars (tuple[str, ...]): Names of agriculture-related variables
         forest_vars (tuple[str, ...]): Names of forest-related variables
         atmos_levels (list[int]): Pressure levels for atmospheric variables
+        species_num (int): Number of species distribution to account for
         patch_size (int, optional): Size of spatial patches. Defaults to 4.
         embed_dim (int, optional): Embedding dimension. Defaults to 1024.
         num_heads (int, optional): Number of attention heads. Defaults to 16.
@@ -87,6 +89,7 @@ class BFMDecoder(nn.Module):
         single_token_proj (nn.Linear): Projection layer for single variables
         atmos_token_proj (nn.Linear): Projection layer for atmospheric variables
         species_token_proj (nn.Linear): Projection layer for species variables
+        species_distr_token_proj (nn.Linear): Projection layer for species distributions variables
         land_token_proj (nn.Linear): Projection layer for land variables
         agriculture_token_proj (nn.Linear): Projection layer for agriculture variables
         forest_token_proj (nn.Linear): Projection layer for forest variables
@@ -100,10 +103,12 @@ class BFMDecoder(nn.Module):
         single_vars: tuple[str, ...],
         atmos_vars: tuple[str, ...],
         species_vars: tuple[str, ...],
+        species_distr_vars: tuple[str, ...],
         land_vars: tuple[str, ...],
         agriculture_vars: tuple[str, ...],
         forest_vars: tuple[str, ...],
         atmos_levels: list[int],
+        species_num: int,
         patch_size: int = 4,
         embed_dim: int = 1024,
         num_heads: int = 16,
@@ -126,10 +131,12 @@ class BFMDecoder(nn.Module):
         self.single_vars = single_vars
         self.atmos_vars = atmos_vars
         self.species_vars = species_vars
+        self.species_distr_vars = species_distr_vars
         self.land_vars = land_vars
         self.agriculture_vars = agriculture_vars
         self.forest_vars = forest_vars
         self.atmos_levels = atmos_levels
+        self.species_num = species_num
 
         # Basic configuration
         self.drop_rate = drop_rate
@@ -148,6 +155,7 @@ class BFMDecoder(nn.Module):
             "single": {v: i for i, v in enumerate(single_vars)},
             "atmos": {v: i for i, v in enumerate(atmos_vars)},
             "species": {v: i for i, v in enumerate(species_vars)},
+            "species_distr": {v: i for i, v in enumerate(species_distr_vars)},
             "land": {v: i for i, v in enumerate(land_vars)},
             "agriculture": {v: i for i, v in enumerate(agriculture_vars)},
             "forest": {v: i for i, v in enumerate(forest_vars)},
@@ -165,6 +173,7 @@ class BFMDecoder(nn.Module):
         self.single_token_proj = nn.Linear(embed_dim, H * W)
         self.atmos_token_proj = nn.Linear(embed_dim, H * W)
         self.species_token_proj = nn.Linear(embed_dim, H * W)
+        self.species_distr_token_proj = nn.Linear(embed_dim, H * W)
         self.land_token_proj = nn.Linear(embed_dim, H * W)
         self.agriculture_token_proj = nn.Linear(embed_dim, H * W)
         self.forest_token_proj = nn.Linear(embed_dim, H * W)
@@ -175,6 +184,7 @@ class BFMDecoder(nn.Module):
             + len(single_vars)
             + len(atmos_vars) * len(atmos_levels)
             + len(species_vars)
+            + len(species_distr_vars) * self.species_num
             + len(land_vars)
             + len(agriculture_vars)
             + len(forest_vars)
@@ -314,6 +324,7 @@ class BFMDecoder(nn.Module):
             + len(self.single_vars)
             + len(self.atmos_vars) * len(self.atmos_levels)
             + len(self.species_vars)
+            + len(self.species_distr_vars) * self.species_num
             + len(self.land_vars)
             + len(self.agriculture_vars)
             + len(self.forest_vars)
@@ -411,6 +422,15 @@ class BFMDecoder(nn.Module):
             output["species_vars"] = {var: species_output[:, i] for i, var in enumerate(self.species_vars)}
             current_idx = next_idx
 
+        # species distribution variables
+        if len(self.species_distr_vars) > 0:
+            next_idx = current_idx + len(self.species_distr_vars) * self.species_num
+            species_distr_decoded = decoded[:, current_idx:next_idx]
+            species_distr_output = self.species_distr_token_proj(species_distr_decoded)
+            species_distr_output = species_distr_output.view(B, len(self.species_distr_vars), self.species_num, H, W)
+            output["species_distr_vars"] = {var: species_distr_output[:, i] for i, var in enumerate(self.species_distr_vars)}
+            current_idx = next_idx
+
         # land variables
         if len(self.land_vars) > 0:
             next_idx = current_idx + len(self.land_vars)
@@ -445,6 +465,7 @@ class BFMDecoder(nn.Module):
             "land_variables": output.pop("land_vars"),
             "agriculture_variables": output.pop("agriculture_vars"),
             "forest_variables": output.pop("forest_vars"),
+            "species_distribution_variables": output.pop("species_distr_vars")
         }
         return output
 

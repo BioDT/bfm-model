@@ -211,8 +211,8 @@ def main(cfg: DictConfig):
     seed_everything(42, workers=True)
 
     print("Setting up Dataloader ...")
-    dataset = LargeClimateDataset(data_dir=cfg.data.data_path)
-    test_dataset = LargeClimateDataset(data_dir=cfg.data.test_data_path)  # Adapt
+    dataset = LargeClimateDataset(data_dir=cfg.data.data_path, num_species=cfg.data.species_number)
+    test_dataset = LargeClimateDataset(data_dir=cfg.data.test_data_path, num_species=cfg.data.species_number)  # Adapt
 
     val_dataloader = DataLoader(
         test_dataset,
@@ -252,14 +252,16 @@ def main(cfg: DictConfig):
         distr_strategy = DDPStrategy()
 
     model = BFM(
-        surface_vars=("t2m", "msl"),
-        single_vars=("lsm",),
-        atmos_vars=("z", "t"),
-        species_vars=("ExtinctionValue",),
-        land_vars=("Land", "NDVI"),
-        agriculture_vars=("AgricultureLand", "AgricultureIrrLand", "ArableLand", "Cropland"),
-        forest_vars=("Forest",),
+        surface_vars=(["t2m", "msl"]),
+        single_vars=(["lsm"]),
+        atmos_vars=(["z", "t"]),
+        species_vars=(["ExtinctionValue"]),
+        species_distr_vars=(["Distribution"]),
+        land_vars=(["Land", "NDVI"]),
+        agriculture_vars=(["AgricultureLand", "AgricultureIrrLand", "ArableLand", "Cropland"]),
+        forest_vars=(["Forest"]),
         atmos_levels=cfg.data.atmos_levels,
+        species_num=cfg.data.species_number,
         H=cfg.model.H,
         W=cfg.model.W,
         embed_dim=cfg.model.embed_dim,

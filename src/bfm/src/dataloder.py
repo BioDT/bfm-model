@@ -106,7 +106,7 @@ def custom_collate(batch_list):
     return default_collate(batch_list)
 
 
-def crop_variables(variables, new_H, new_W, handle_nans=True):
+def crop_variables(variables, new_H, new_W, handle_nans=True, nan_mode="mean_clip", fix_dim=False):
     """
     Crop and clean variables to specified dimensions, handling NaN and Inf values.
 
@@ -114,6 +114,10 @@ def crop_variables(variables, new_H, new_W, handle_nans=True):
         variables (dict): Dictionary of variable tensors to process
         new_H (int): Target height dimension
         new_W (int): Target width dimension
+        handle_nans (bool): Whether to handle NaN values at all
+        nan_mode (str): Strategy for NaN handling.
+            - "mean_clip": old logic (replace NaNs with mean, clip to mean ± 2*std)
+            - "zero": replace all NaNs with 0.0, no extra clipping
 
     Returns:
         dict: Processed variables with cleaned and cropped tensors
@@ -121,14 +125,14 @@ def crop_variables(variables, new_H, new_W, handle_nans=True):
     processed_vars = {}
     for k, v in variables.items():
         # crop dimensions
-        cropped = v[..., :new_H, :new_W]
-
-        # infinities first
+        if fix_dim:
+            cropped = v[:, :new_H, :new_W, :]
+        else:
+            cropped = v[..., :new_H, :new_W]
+        # 1) Handle infinities
         inf_mask = torch.isinf(cropped)
         inf_count = inf_mask.sum().item()
         if inf_count > 0:
-            # print(f"\nHandling Inf values in {k}:")
-            # print(f"Inf count: {inf_count}")
             valid_values = cropped[~inf_mask & ~torch.isnan(cropped)]
             if len(valid_values) > 0:
                 max_val = valid_values.max().item()
@@ -137,36 +141,43 @@ def crop_variables(variables, new_H, new_W, handle_nans=True):
             else:
                 cropped = torch.clip(cropped, -1e6, 1e6)
 
+        # 2) Handle NaNs if requested
         if handle_nans:
-            # handle NaNs
             nan_mask = torch.isnan(cropped)
             nan_count = nan_mask.sum().item()
             if nan_count > 0:
-                # print(f"\nHandling NaN values in {k}:")
-                # print(f"Shape: {cropped.shape}")
-                # print(f"Total NaN count: {nan_count}")
-                valid_values = cropped[~nan_mask & ~torch.isinf(cropped)]
-                if len(valid_values) > 0:
-                    mean_val = valid_values.mean().item()
-                    std_val = valid_values.std().item()
-                    # use mean +- 2*std as clipping bounds
-                    clip_min = mean_val - 2 * std_val
-                    clip_max = mean_val + 2 * std_val
-                    # replace NaNs with clipped mean
-                    cropped = torch.nan_to_num(cropped, nan=mean_val)
-                    # TODO This is nasty, may be using a lot of memory
-                    # TODO Check the advantages and why the data are in this regime
-                    cropped = cropped.to(torch.float32)
-                    cropped = torch.clip(cropped, clip_min, clip_max)
+                if nan_mode == "mean_clip":
+                    valid_values = cropped[~nan_mask & ~torch.isinf(cropped)]
+                    if len(valid_values) > 0:
+                        mean_val = valid_values.mean().item()
+                        std_val = valid_values.std().item()
+                        clip_min = mean_val - 2 * std_val
+                        clip_max = mean_val + 2 * std_val
+
+                        # Replace NaNs with mean
+                        cropped = torch.nan_to_num(cropped, nan=mean_val)
+                        # Convert to float32 if needed
+                        cropped = cropped.to(torch.float32)
+                        # Clip
+                        cropped = torch.clip(cropped, clip_min, clip_max)
+                    else:
+                        # If no valid values, just fill with 0 and do a small clip
+                        cropped = torch.nan_to_num(cropped, nan=0.0)
+                        cropped = torch.clip(cropped, -1.0, 1.0)
+
+                elif nan_mode == "zero":
+                    # Simply replace all NaNs with 0.0
+                    cropped = torch.nan_to_num(cropped)
+                    # cropped = cropped.to(torch.float32)
 
                 else:
-                    cropped = torch.nan_to_num(cropped, nan=0.0)
-                    cropped = torch.clip(cropped, -1.0, 1.0)
-        else:
-            pass
+                    raise ValueError(f"Unknown nan_mode: {nan_mode}")
+        # else: do nothing special for NaNs
 
         processed_vars[k] = cropped
+
     return processed_vars
+
 
 
 class LargeClimateDataset(Dataset):
@@ -185,8 +196,9 @@ class LargeClimateDataset(Dataset):
     }
     """
 
-    def __init__(self, data_dir):
+    def __init__(self, data_dir: str, num_species: int = 2):
         self.data_dir = data_dir
+        self.num_species = num_species
         self.files = [os.path.join(data_dir, f) for f in os.listdir(data_dir) if f.endswith('.pt')]
         self.files.sort()
 
@@ -219,7 +231,7 @@ class LargeClimateDataset(Dataset):
         land_vars = crop_variables(data["land_variables"], new_H, new_W)
         agriculture_vars = crop_variables(data["agriculture_variables"], new_H, new_W)
         forest_vars = crop_variables(data["forest_variables"], new_H, new_W)
-        species_vars = crop_variables(data["species_variables"]["dynamic"], new_H, new_W, handle_nans=False)
+        species_vars = crop_variables(data["species_variables"]["dynamic"], new_H, new_W, nan_mode="zero", fix_dim=True)
         species_vars_wanted = {k: v for k,v in species_vars.items() if k in ["Distribution"]}
         # crop metadata dimensions
         latitude_var = torch.tensor(latitudes[:new_H])
@@ -233,7 +245,10 @@ class LargeClimateDataset(Dataset):
 
         # Compute lead time in hours
         lead_time_hours = (end - start).total_seconds() / 3600.0
-
+        # Fix the species distribution shapes
+        dist = species_vars_wanted["Distribution"].permute(0, 3, 1, 2)  # => [T, C=22, H=153, W=152]
+        species_vars_wanted["Distribution"] = dist[:, :self.num_species, :, :].to(torch.float32) # Select only 3 species for now
+        
 
         metadata = Metadata(
             latitudes=latitude_var,
@@ -344,7 +359,7 @@ def test_dataset_and_dataloader(data_dir):
     Test function to inspect correctness.
     Print distinctive info from a single batch.
     """
-    dataset = LargeClimateDataset(data_dir)
+    dataset = LargeClimateDataset(data_dir, num_species=10)
     dataloader = DataLoader(
         dataset,
         batch_size=1,        # Fetch two samples for testing

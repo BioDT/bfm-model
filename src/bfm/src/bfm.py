@@ -63,10 +63,12 @@ class BFM(nn.Module):
         single_vars (tuple[str, ...]): Names of single-level variables
         atmos_vars (tuple[str, ...]): Names of atmospheric variables
         species_vars (tuple[str, ...]): Names of species-related variables
+        species_distr_vars (tuple[str, ...]): Names of species distributions-related variables
         land_vars (tuple[str, ...]): Names of land-related variables
         agriculture_vars (tuple[str, ...]): Names of agriculture-related variables
         forest_vars (tuple[str, ...]): Names of forest-related variables
         atmos_levels (list[int]): Pressure levels for atmospheric variables
+        species_num (int): Number of species distribution to account for
         H (int, optional): Height of output grid. Defaults to 32.
         W (int, optional): Width of output grid. Defaults to 64.
         embed_dim (int, optional): Embedding dimension. Defaults to 1024.
@@ -87,10 +89,12 @@ class BFM(nn.Module):
         single_vars: tuple[str, ...],
         atmos_vars: tuple[str, ...],
         species_vars: tuple[str, ...],
+        species_distr_vars: tuple[str, ...],
         land_vars: tuple[str, ...],
         agriculture_vars: tuple[str, ...],
         forest_vars: tuple[str, ...],
         atmos_levels: list[int],
+        species_num: int,
         H: int = 32,
         W: int = 64,
         embed_dim: int = 1024,
@@ -108,10 +112,12 @@ class BFM(nn.Module):
             single_vars=single_vars,
             atmos_vars=atmos_vars,
             species_vars=species_vars,
+            species_distr_vars=species_distr_vars,
             land_vars=land_vars,
             agriculture_vars=agriculture_vars,
             forest_vars=forest_vars,
             atmos_levels=atmos_levels,
+            species_num=species_num,
             # patch_size=kwargs.get("patch_size", 4),
             patch_size=patch_size,
             embed_dim=embed_dim,
@@ -167,10 +173,12 @@ class BFM(nn.Module):
             single_vars=single_vars,
             atmos_vars=atmos_vars,
             species_vars=species_vars,
+            species_distr_vars=species_distr_vars,
             land_vars=land_vars,
             agriculture_vars=agriculture_vars,
             forest_vars=forest_vars,
             atmos_levels=atmos_levels,
+            species_num=species_num,
             H=H,
             W=W,
             embed_dim=embed_dim,
@@ -192,6 +200,7 @@ class BFM(nn.Module):
 
         ### V1 
         encoded = self.encoder(batch, lead_time)
+        print("Encoded shape", encoded.shape)
 
         # calculate number of patches in 2D
         num_patches_h = self.H // self.encoder.patch_size
@@ -212,10 +221,10 @@ class BFM(nn.Module):
             print(f"Reshaped encoded for MViT: {encoded.shape}")
 
         backbone_output = self.backbone(encoded, lead_time=lead_time, rollout_step=0, patch_shape=patch_shape)
-
+        print("Backbone output", backbone_output.shape)
         # decode
         output = self.decoder(backbone_output, batch, lead_time)
-
+        # print("Decoded output:", output)
         return output
 
 
