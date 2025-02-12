@@ -50,7 +50,7 @@ from src.bfm.src.encoder import BFMEncoder
 from src.mvit.mvit_model import MViT
 from src.swin_transformer.core.swim_core_v2 import Swin3DTransformer
 
-DEVICE = "cuda:1"
+DEVICE = "cuda:0"
 
 class BFM(nn.Module):
     """

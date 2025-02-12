@@ -33,9 +33,16 @@ training:
   strategy: ddp # fsdp
   gradient_clip: 1.0
   log_steps: 1
+  lr: 0.001
+  wd: 0.01 #5e-6
 
 general:
   do_eval: True
 
 mlflow:
   port: 8082 # change here port if you get [Errno 98] Address already in use
+
+evaluation:
+  checkpoint_path: /home/atrantas/bfm-model/outputs/2025-02-12-withcheckpoint/16-04-11/checkpoints/epoch=0-step=26.ckpt
+  batch_size: 1
+  test_device: "cuda:0"
