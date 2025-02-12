@@ -29,13 +29,15 @@ from src.bfm.src.dataloder import LargeClimateDataset, custom_collate
 # os.environ["TORCH_DISTRIBUTED_DEBUG"] = "DETAIL"
 
 
+
 class BFM_pipe(LightningModule):
-    def __init__(self, model, cfg=None, learning_rate=1e-3, weight_decay=5e-6):
+    def __init__(self, model, cfg=None, learning_rate=1e-3, weight_decay=5e-6, batch_size=1):
         super().__init__()
         self.model = model
         self.cfg = cfg
         self.learning_rate = learning_rate
         self.weight_decay = weight_decay
+        self.batch_size = batch_size
 
         # The variable weights come from: w_var = 1 / standard_dev
         self.variable_weights = {
@@ -78,39 +80,31 @@ class BFM_pipe(LightningModule):
     #     #device=self.trainer.strategy.root_device # TODO Need to put the model to devices
     #     self.model = wrap(model) # , device_id=self.trainer.strategy.root_device
 
-    def forward(self, batch, lead_time):
-        return self.model(batch, lead_time)
-
-    def training_step(self, batch, batch_idx):
-        lead_time = timedelta(hours=6)  # fixed lead time for pre-training
-        output = self(batch, lead_time)
-
-        loss = self.compute_loss(output, batch)
-        self.log("train_loss", loss)
-        return loss
+    def forward(self, batch, lead_time, batch_size):
+        return self.model(batch, lead_time, batch_size)
 
     def validation_step(self, batch, batch_idx):
         lead_time = timedelta(hours=6)  # fixed lead time for pre-training
-        output = self(batch, lead_time)
+        output = self(batch, lead_time, batch_size=self.batch_size)
 
         loss = self.compute_loss(output, batch)
-        self.log("val_loss", loss)
+        self.log("val_loss", loss, batch_size=self.batch_size)
         return loss
 
     def training_step(self, batch, batch_idx):
         lead_time = timedelta(hours=6)  # fixed lead time for pre-training
-        output = self(batch, lead_time)
+        output = self(batch, lead_time, batch_size=self.batch_size)
 
         loss = self.compute_loss(output, batch)
-        self.log("train_loss", loss)
+        self.log("train_loss", loss, batch_size=self.batch_size)
         return loss
 
     def test_step(self, batch, batch_idx):
         lead_time = timedelta(hours=6)  # fixed lead time for pre-training
-        output = self(batch, lead_time)
+        output = self(batch, lead_time, batch_size=self.batch_size)
 
         loss = self.compute_loss(output, batch)
-        self.log("test_loss", loss)
+        self.log("test_loss", loss, batch_size=self.batch_size)
         return loss
 
     def compute_loss(self, output, batch):
@@ -148,12 +142,14 @@ class BFM_pipe(LightningModule):
 
                 # TODO  but ensure your shapes/time dimension logic is consistent for all
                 target = true_dict[var_name][:, -1]
-
+                # print(f"{var_name} target: {target.shape}")
+                # print(f"{var_name} prediction: {pred_tensor.shape}")
                 # Default weight = 1.0 if not in dictionary
                 w = self.variable_weights.get(group_name, {}).get(var_name, 1.0)
 
                 # L1 loss
                 loss_var = torch.mean(torch.abs(pred_tensor - target))
+                # loss_var = torch.mean(torch.sqrt(pred_tensor - target))
                 # Log each variable's raw loss
                 self.log(f"{var_name} raw loss", loss_var)
                 group_loss += w * loss_var
@@ -202,10 +198,12 @@ class MLFlowLoggerWithSystemMetrics(MLFlowLogger):
     #     mlflow.enable_system_metrics_logging()
 
 
-@hydra.main(version_base=None, config_path="configs", config_name="test_config")
+@hydra.main(version_base=None, config_path="configs", config_name="train_config")
 def main(cfg: DictConfig):
     # Setup config
     print(OmegaConf.to_yaml(cfg))
+    # Set the internal precision for TensorCores (H100s)
+    torch.set_float32_matmul_precision(cfg.training.precision_in)
 
     # Seed the experiment for numpy, torch and python.random.
     seed_everything(42, workers=True)
@@ -216,7 +214,7 @@ def main(cfg: DictConfig):
 
     val_dataloader = DataLoader(
         test_dataset,
-        batch_size=cfg.training.batch_size,
+        batch_size=1,
         num_workers=cfg.training.workers,
         collate_fn=custom_collate,
         drop_last=True,
@@ -269,7 +267,7 @@ def main(cfg: DictConfig):
         backbone_type=cfg.model.backbone,
         patch_size=cfg.model.patch_size,
     )
-    train_pipe = BFM_pipe(model)
+    train_pipe = BFM_pipe(model, batch_size=cfg.training.batch_size)
 
     output_dir = HydraConfig.get().runtime.output_dir
     # /scratch-shared/<username>

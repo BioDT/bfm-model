@@ -185,7 +185,7 @@ class BFM(nn.Module):
             **kwargs,
         )
 
-    def forward(self, batch, lead_time):
+    def forward(self, batch, lead_time, batch_size):
         """
         Forward pass of the model.
 
@@ -197,9 +197,9 @@ class BFM(nn.Module):
             dict: Dictionary containing decoded outputs for each variable category
 
         """
-
+        print(f"BFM batch size: {batch_size}")
         ### V1 
-        encoded = self.encoder(batch, lead_time)
+        encoded = self.encoder(batch, lead_time, batch_size)
         print("Encoded shape", encoded.shape)
 
         # calculate number of patches in 2D

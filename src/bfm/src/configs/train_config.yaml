@@ -1,0 +1,41 @@
+model:
+  T: 2   # Time steps
+  V_surf: 2 # Number of surface variables
+  V_atmos: 2 # Number of atmospheric variables
+  C: 3  # Number of atmospheric levels
+  V_spec: 1 # Number of extinct_species variables
+  V_land: 2 # Number of land variables
+  V_agri: 4 # Number of agriculture variables
+  V_forest: 1 # Number of forest variables
+  H: 152  # Height
+  W: 320  # Width
+  embed_dim: 512
+  num_latent_tokens: 4
+  patch_size: 4
+  backbone: "swin" # mvit
+
+data:
+  atmos_levels: [50, 500, 1000]
+  species_number: 4 # [0-22] available species
+  data_path: /projects/prjs1134/data/projects/biodt/storage/batches_2025_01_22/train  #/projects/prjs1134/data/projects/biodt/storage/batches_2024_12_13 #/projects/prjs1134/data/projects/biodt/storage/batches_2025_01_22/train #/projects/prjs1134/data/projects/biodt/storage/batches_2024_12_13 #data/ #/projects/prjs1134/data/projects/biodt/storage/batches/
+  test_data_path: /projects/prjs1134/data/projects/biodt/storage/batches_2024_12_13
+
+#TODO Checkpointing path: /scratch-shared/<username>
+ 
+training:
+  batch_size: 5
+  workers: 0
+  epochs: 2
+  accelerator: gpu
+  precision: bf16-mixed
+  precision_in: "medium" # ["high", "highest"] https://pytorch.org/docs/stable/generated/torch.set_float32_matmul_precision.html#torch.set_float32_matmul_precision
+  devices: [0]
+  strategy: ddp # fsdp
+  gradient_clip: 1.0
+  log_steps: 1
+
+general:
+  do_eval: True
+
+mlflow:
+  port: 8082 # change here port if you get [Errno 98] Address already in use

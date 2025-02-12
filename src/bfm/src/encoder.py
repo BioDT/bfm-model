@@ -164,7 +164,7 @@ class BFMEncoder(nn.Module):
         pos_encoding_dim = self._calculate_pos_encoding_dim()
 
         # position and coordinate embeddings
-        self.pos_embed = nn.Linear(pos_encoding_dim, embed_dim)  # vourier features + original coords
+        self.pos_embed = nn.Linear(pos_encoding_dim, embed_dim)  # fourier features + original coords
         self.lead_time_embed = nn.Linear(embed_dim, embed_dim)
         self.absolute_time_embed = nn.Linear(embed_dim, embed_dim)
 
@@ -397,93 +397,6 @@ class BFMEncoder(nn.Module):
 
         return tensor if replace_values else has_issues
 
-    # V1 - OLD
-    # def process_variable_group(self, variables, token_embeds, group_name):
-    #     """
-    #     Process a group of variables through tokenization and embedding.
-
-    #     Args:
-    #         variables (dict): Dictionary of variables to process
-    #         token_embeds (nn.Module): Token embedding layer
-    #         group_name (str): Name of variable group for logging
-
-    #     Returns:
-    #         torch.Tensor: Processed and embedded tensor
-    #         Shape: [num_patches, embed_dim]
-    #     """
-    #     if not variables:
-    #         print(f"\n{group_name}: No variables found")
-    #         return None
-
-    #     # stack variables
-    #     values = tuple(variables.values())
-    #     x = torch.stack(values, dim=0)
-    #     print("x shape after stacking vars", x.shape)
-    #     x = x[:, 0]
-    #     # x = x.squeeze(1)
-    #     x = self._check_tensor(x, f"{group_name} initial stack")
-    #     print("x shape before rearange:", x.shape)
-    #     # reshape and check
-    #     x = rearrange(x, "v t (h p1) (w p2) -> (h w) (v t p1 p2)", p1=self.patch_size, p2=self.patch_size)
-    #     x = self._check_tensor(x, f"{group_name} after rearrange")
-    #     print("x shape after reshape:", x.shape)
-    #     # apply token embedding and check
-    #     x = token_embeds(x)
-    #     x = self._check_tensor(x, f"{group_name} after embedding")
-    #     print("x shape after embedding:", x.shape)
-    #     return x
-
-    # V2 works with batch size = 1
-    # def process_variable_group(self, variables, token_embeds, group_name):
-    #         """
-    #         Process a group of variables through tokenization and embedding.
-    #         This function expects each var to shape [B, H, W] or [B, T, H, W] depending on your design.
-    #         But no 'level' dimension here, since we separate that out for 'atmospheric' in the forward.
-    #         """
-    #         if not variables:
-    #             print(f"\n{group_name}: No variables found")
-    #             return None
-
-    #         # stack variables --> shape [v, B, H, W] if each var is [B, H, W]
-    #         # e.g. if v=2, shape might be [2, 1, 152, 320]
-    #         values = tuple(variables.values())
-    #         x = torch.stack(values, dim=0)
-    #         print(f"{group_name}: after stacking vars => {x.shape}")
-
-    #         # possibly remove batch dimension if B=1
-    #         # so [v, 1, H, W] -> [v, H, W]
-    #         if x.shape[1] == 1:
-    #             x = x[:, 0]
-    #             print(f"{group_name}: removing batch dimension => {x.shape}")
-
-    #         # Now x is [v, H, W], or [v, T, H, W] if you also have time
-    #         # Suppose T=1 or T=some small integer
-    #         # We'll guess your pattern expects "v t (h p1) (w p2)"
-    #         # If you truly only have [v, H, W], treat T=1 artificially
-    #         if x.dim() == 3:
-    #             # Insert a time dimension
-    #             x = x.unsqueeze(1)  # shape [v, t=1, H, W]
-    #             print(f"{group_name}: artificially added time dimension => {x.shape}")
-
-    #         print(f"{group_name}: shape before rearrange => {x.shape}")
-    #         # Example pattern: "v t (h p1) (w p2) -> (h w) (v t p1 p2)"
-    #         # with patch_size = self.patch_size
-    #         # Make sure H, W are multiples of patch_size
-    #         x = rearrange(
-    #             x,
-    #             "v t (h p1) (w p2) -> (h w) (v t p1 p2)",
-    #             p1=self.patch_size,
-    #             p2=self.patch_size
-    #         )
-    #         print(f"{group_name}: shape after rearrange => {x.shape}")
-
-    #         # Now x has shape [num_patches, v * t * p1 * p2]
-    #         # The linear embed expects [*, in_features]
-    #         x = token_embeds(x)  # => [num_patches, embed_dim]
-    #         print(f"{group_name}: shape after embedding => {x.shape}")
-
-    #         return x
-
     # V3 trying to fix batch size > 1
     def process_variable_group(self, variables, token_embeds, group_name):
         """
@@ -561,69 +474,8 @@ class BFMEncoder(nn.Module):
         print(f"{group_name}: after token_embeds => {x.shape}")
 
         return x
-    # V4 TODO check it 
-    # def process_variable_group(self, variables, token_embeds, group_name):
-    #     """
-    #     Process a group of variables (each [B, T, C, H, W]) through tokenization & embedding.
-        
-    #     Steps:
-    #     1) If multiple variables, stack => [V, B, T, C, H, W]. If just one var, shape is [B, T, C, H, W].
-    #     2) Permute => [B, V, T, C, H, W].
-    #     3) Merge (V * T * C) -> channels => [B, channels, H, W].
-    #     4) Patchify => [B, #patches, channels*(p1*p2)].
-    #     5) token_embeds => [B, #patches, embed_dim].
-    #     """
-    #     if not variables:
-    #         print(f"\n{group_name}: No variables found")
-    #         return None
 
-    #     # 1) Stack variables
-    #     values = list(variables.values())  # each has shape [B, T, C, H, W]
-    #     if len(values) == 1:
-    #         # Only one variable => shape is [B, T, C, H, W]
-    #         # Add a dimension for 'var_count' = 1 at dim=0 => [1, B, T, C, H, W]
-    #         x = values[0].unsqueeze(0)
-    #     else:
-    #         # More than one variable => stack => [V, B, T, C, H, W]
-    #         # Ensure all are same shape
-    #         x = torch.stack(values, dim=0)
-
-    #     print(f"{group_name}: after stacking => {x.shape}")
-
-    #     # x is now [V, B, T, C, H, W]
-    #     # 2) Permute => [B, V, T, C, H, W]
-    #     if x.dim() != 6:
-    #         raise ValueError(f"Expected 6D tensor [V, B, T, C, H, W], got {x.shape} in {group_name}")
-
-    #     x = x.permute(1, 0, 2, 3, 4, 5)  # => [B, V, T, C, H, W]
-    #     # shape => B, V, T, C, H, W
-    #     print(f"{group_name}: after permute => {x.shape}")
-
-    #     # 3) Merge var_count, T, C => channels => shape [B, channels, H, W]
-    #     B, V, T, C, H, W = x.shape
-    #     x = x.reshape(B, V * T * C, H, W)
-    #     print(f"{group_name}: after reshape => {x.shape}")
-
-    #     # 4) Patchify:
-    #     # "b c (h p1) (w p2) -> b (h w) (c p1 p2)"
-    #     x = rearrange(
-    #         x,
-    #         "b c (h p1) (w p2) -> b (h w) (c p1 p2)",
-    #         p1=self.patch_size,
-    #         p2=self.patch_size
-    #     )
-    #     # shape => [B, #patches, (c * p1 * p2)]
-    #     print(f"{group_name}: after patchify => {x.shape}")
-
-    #     # 5) token embedding => [B, #patches, embed_dim]
-    #     x = token_embeds(x)
-    #     print(f"{group_name}: after token_embeds => {x.shape}")
-
-    #     return x
-
-
-
-    def forward(self, batch, lead_time):
+    def forward(self, batch, lead_time, batch_size):
         """
         Forward pass of the encoder.
 
@@ -635,7 +487,7 @@ class BFMEncoder(nn.Module):
             torch.Tensor: Encoded representation
             Shape: [batch_size, num_latents, embed_dim]
         """
-        B = 1  # the assumption is that we are taking one batch at a time, but that can be changed of course
+        B = batch_size  # the assumption is that we are taking one batch at a time, but that can be changed of course
         H, W = batch.batch_metadata.latitudes[0], batch.batch_metadata.longitudes[0]
 
         if not hasattr(self, "perceiver_io"):
@@ -660,24 +512,6 @@ class BFMEncoder(nn.Module):
             embedding_groups["single"] = single_embed
         print("process atmospheric")
 
-        # V1, wasnt working ! to be removed
-        # Handle atmospheric variables
-        # atmos = []
-        # if batch.atmospheric_variables:
-        #     for level_idx, level in enumerate(self.atmos_levels):
-        #         level_vars = {k: v[:, level_idx] for k, v in batch.atmospheric_variables.items()}
-        #         print(level_vars)
-        #         level_embed = self.process_variable_group(
-        #             level_vars, self.atmos_token_embeds, f"Atmospheric Level {level}"
-        #         )  # shape: [num_patches, embed_dim]
-        #         if level_embed is not None:
-        #             atmos.append(level_embed)
-
-        #     if len(atmos) > 0:
-        #         stacked_atmos = torch.stack(atmos, dim=0)  # shape: [num_levels, num_patches, embed_dim]
-        #         embeddings.append(stacked_atmos)
-        #         embedding_groups["atmos"] = stacked_atmos
-
         atmos = []
         if batch.atmospheric_variables:
             for level_idx, level in enumerate(self.atmos_levels):
@@ -697,37 +531,21 @@ class BFMEncoder(nn.Module):
                     self.atmos_token_embeds,  # sized for 2 variables, 1 level at a time
                     f"Atmospheric Level {level}"
                 )
-                if level_embed is not None:
-                    atmos.append(level_embed)
 
+                if level_embed is not None:
+                    embeddings.append(level_embed)
+                    embedding_groups["atmos"] = level_embed
+                    # atmos.append(level_embed)
+            # TODO Revise the logic why we need to stack them
+            # TODO For now we just add them to the list of embeddings.
+            # TODO v1
             # If we processed any levels, stack them [L, num_patches, embed_dim]
-                if len(atmos) > 0:
-                    stacked_atmos = torch.stack(atmos, dim=0)  # shape: [num_levels, num_patches, embed_dim]
-                    embeddings.append(stacked_atmos)
-                    embedding_groups["atmos"] = stacked_atmos
+                # if len(atmos) > 0:
+                #     stacked_atmos = torch.stack(atmos, dim=0)  # shape: [num_levels, num_patches, embed_dim]
+                    # embeddings.append(stacked_atmos)
+                    # embedding_groups["atmos"] = stacked_atmos
 
         print("process species distribution")
-
-        # dist_data = batch.species_variables["Distribution"]  # shape [B, T, C, H, W]
-        # # Suppose C=2 or 3, etc.
-
-        # split_vars = []
-        # for c_idx in range(self.species_num):
-        #     # slice => shape [B, T, 1, H, W]
-        #     c_slice = dist_data[:, :, c_idx, :, :].unsqueeze(2)  # now [B, T, 1, H, W]
-        #     split_vars.append(c_slice)
-
-        # # Now `split_vars` is a list of length C, each is [B, T, 1, H, W].
-        # # Combine them as if each is a separate 'variable' in a dictionary:
-        # var_dict = {f"channel_{i}": split_vars[i] for i in range(self.species_num)}
-
-        # # Then pass var_dict => process_variable_group
-        # species_dist_emb = self.process_variable_group(var_dict, self.species_token_embeds, "Species Distribution")
-        # if species_dist_emb is not None:
-        #     embeddings.append(species_dist_emb)   
-        #     embedding_groups["species_distr"] = species_dist_emb
-
-
         species_distr = []
         if batch.species_variables:
             for level_idx in range(self.species_num):
@@ -751,13 +569,18 @@ class BFMEncoder(nn.Module):
                     f"Species Distribution {level_idx}"
                 )
                 if species_num_emb is not None:
-                    species_distr.append(species_num_emb)
+                    # species_distr.append(species_num_emb)
+                    embeddings.append(species_num_emb)
+                    embedding_groups["species_distr"] = species_num_emb
 
-            # If we processed any levels, stack them [L, num_patches, embed_dim]
-                if len(species_distr) > 0:
-                    stacked_species_distr = torch.stack(species_distr, dim=0)  # shape: [num_levels, num_patches, embed_dim]
-                    embeddings.append(stacked_species_distr)
-                    embedding_groups["species_distr"] = stacked_species_distr
+            # TODO Revise the logic why we need to stack them
+            # TODO For now we just add them to the list of embeddings.
+            # TODO v1
+            # # If we processed any levels, stack them [L, num_patches, embed_dim]
+            #     if len(species_distr) > 0:
+            #         stacked_species_distr = torch.stack(species_distr, dim=0)  # shape: [batch_size, num_patches, embed_dim]
+            #         embeddings.append(stacked_species_distr)
+            #         embedding_groups["species_distr"] = stacked_species_distr
 
         print("process species extinction")
         species_embed = self.process_variable_group(
@@ -789,9 +612,11 @@ class BFMEncoder(nn.Module):
             embedding_groups["forest"] = forest_embed
 
         # Combine embeddings while maintaining group structure
-        x = torch.cat(
-            [emb.view(1, -1, self.embed_dim) for emb in embeddings], dim=1
-        )  # shape: [batch_size, num_patches * num_variable_groups, embed_dim]
+        # x = torch.cat(
+        #     [emb.view(1, -1, self.embed_dim) for emb in embeddings], dim=1
+        # )  # shape: [batch_size, num_patches * num_variable_groups, embed_dim]
+        x = torch.cat(embeddings, dim=1)
+        print("Combined embeddings shape", x.shape)
         x = self._check_tensor(x, "Combined embeddings")
 
         # add position encodings
@@ -827,20 +652,15 @@ class BFMEncoder(nn.Module):
         )
 
         # add batch dimension and apply position encoding
-        pos_input_norm = pos_input_norm.unsqueeze(0)  # [1, num_patches, 2]
-        pos_encode = pos_encoder(batch_size=1, pos=pos_input_norm)  # shape: [batch_size, num_patches, pos_encoding_dim]
+        pos_input_norm = pos_input_norm.unsqueeze(0).expand(B, -1, -1)  # [batch_size, num_patches, 2]
+        pos_encode = pos_encoder(batch_size=B, pos=pos_input_norm)  # shape: [batch_size, num_patches, pos_encoding_dim]
 
         # apply linear embedding
-        pos_encode = pos_encode.squeeze(0)
         pos_encode = self.pos_embed(pos_encode)  # shape: [num_patches, embed_dim]
-
-        # add batch dimension and expand for variable groups
-        pos_encode = pos_encode.unsqueeze(0)  # [1, 3040, embed_dim]
         num_var_groups = x.shape[1] // (H // self.patch_size * W // self.patch_size)
         pos_encode = pos_encode.repeat_interleave(
             num_var_groups, dim=1
         )  # shape: [batch_size, num_patches * num_variable_groups, embed_dim]  (middle dimension - rough estimate, since we have atmos levels)
-
         # add position encoding
         x = x + pos_encode
         x = self._check_tensor(
