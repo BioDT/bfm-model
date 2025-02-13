@@ -77,9 +77,13 @@ class BFM_lighting(L.LightningModule):
         species_num (int): Number of species distribution to account for
         H (int, optional): Height of output grid. Defaults to 32.
         W (int, optional): Width of output grid. Defaults to 64.
-        embed_dim (int, optional): Embedding dimension. Defaults to 1024.
         num_latent_tokens (int, optional): Number of latent tokens. Defaults to 8.
         backbone_type (Literal["swin", "mvit"], optional): Type of backbone architecture. Defaults to "mvit".
+        patch_size (int, optional): Size of spatial patches. Defaults to 4.
+        embed_dim (int, optional): Embedding dimension. Defaults to 1024.
+        num_heads (int, optional): Number of attention heads. Defaults to 16.
+        head_dim (int, optional): Dimension of each attention head. Defaults to 64.
+        depth (int, optional): Number of transformer layers. Defaults to 2.
         **kwargs: Additional arguments passed to encoder and decoder
 
     Attributes:
@@ -103,10 +107,13 @@ class BFM_lighting(L.LightningModule):
         species_num: int,
         H: int = 32,
         W: int = 64,
-        embed_dim: int = 1024,
         num_latent_tokens: int = 8,
         backbone_type: Literal["swin", "mvit"] = "mvit",
         patch_size: int = 4,
+        embed_dim: int = 1024,
+        num_heads: int = 16,
+        head_dim: int = 2,
+        depth: int = 2,
         learning_rate=1e-3, 
         weight_decay=5e-6, 
         batch_size=1,
@@ -124,7 +131,7 @@ class BFM_lighting(L.LightningModule):
         self.variable_weights = {
             "surface_variables": {
                 "t2m": 0.13,
-                "msl": 0.0011,
+                "msl": 0.00011,
                 # ... add more if surface has more
             },
             "single_variables": {"lsm": 2.27},
@@ -138,6 +145,7 @@ class BFM_lighting(L.LightningModule):
                 "Cropland": 0.36,
             },
             "forest_variables": {"Forest": 0.11},
+            "species_variables": {"Distribution": 1},
         }
 
         self.encoder = BFMEncoder(
@@ -151,11 +159,13 @@ class BFM_lighting(L.LightningModule):
             forest_vars=forest_vars,
             atmos_levels=atmos_levels,
             species_num=species_num,
-            # patch_size=kwargs.get("patch_size", 4),
-            patch_size=patch_size,
-            embed_dim=embed_dim,
             H=H,
             W=W,
+            patch_size=patch_size,
+            embed_dim=embed_dim,
+            num_heads=num_heads,
+            head_dim=head_dim,
+            depth=depth,
             **kwargs,
         )
 
@@ -214,7 +224,11 @@ class BFM_lighting(L.LightningModule):
             species_num=species_num,
             H=H,
             W=W,
+            patch_size=patch_size,
             embed_dim=embed_dim,
+            num_heads=num_heads,
+            head_dim=head_dim,
+            depth=depth,
             **kwargs,
         )
 
@@ -289,7 +303,6 @@ class BFM_lighting(L.LightningModule):
         total_loss = 0.0
         count = 0
 
-        # 1) Loop over each group we care about. For example:
         groups = [
             "surface_variables",
             "single_variables",
@@ -298,6 +311,7 @@ class BFM_lighting(L.LightningModule):
             "land_variables",
             "agriculture_variables",
             "forest_variables",
+            "species_variables",
         ]
 
         for group_name in groups:
@@ -308,27 +322,33 @@ class BFM_lighting(L.LightningModule):
             pred_dict = output[group_name]
             true_dict = getattr(batch, group_name)
 
-            # 2) For each variable in this group, compute L1 loss with weighting
             group_loss = 0.0
             var_count = 0
 
             for var_name, pred_tensor in pred_dict.items():
                 # If var_name not in the ground truth dict, skip
                 if var_name not in true_dict:
+                    print(f"{var_name} not in true_dict")
                     continue
 
-                # TODO  but ensure your shapes/time dimension logic is consistent for all
-                target = true_dict[var_name][:, -1]
-                # print(f"{var_name} target: {target.shape}")
-                # print(f"{var_name} prediction: {pred_tensor.shape}")
-                # Default weight = 1.0 if not in dictionary
-                w = self.variable_weights.get(group_name, {}).get(var_name, 1.0)
-
-                # L1 loss
+                gt_tensor = true_dict[var_name]
+                # Log the original shape for debugging.
+                # print(f"Original target shape for '{var_name}': {gt_tensor.shape}")
+                target = gt_tensor[:, 1]
+                # print(f"Selected target shape for '{var_name}': {target.shape}")
+                # print(f"Prediction shape for '{var_name}': {pred_tensor.shape}")
+                # Compute the L1 loss (reducing all dimensions to produce a scalar).
                 loss_var = torch.mean(torch.abs(pred_tensor - target))
-                # loss_var = torch.mean(torch.sqrt(pred_tensor - target))
+
+                # Determine the weight for this variable.
+                group_weights = self.variable_weights.get(group_name, {})
+                if isinstance(group_weights, dict):
+                    w = group_weights.get(var_name, 1.0)
+                else:
+                    w = group_weights
+                    
                 # Log each variable's raw loss
-                self.log(f"{var_name} raw loss", loss_var)
+                self.log(f"{var_name} raw loss", loss_var, batch_size=target.size(0))
                 group_loss += w * loss_var
                 var_count += 1
 
@@ -365,7 +385,7 @@ def main(cfg):
 
     val_dataloader = DataLoader(
         test_dataset,
-        batch_size=1,
+        batch_size=cfg.training.batch_size,
         num_workers=cfg.training.workers,
         collate_fn=custom_collate,
         drop_last=True,
@@ -402,10 +422,13 @@ def main(cfg):
         species_num=cfg.data.species_number,
         H=cfg.model.H,
         W=cfg.model.W,
-        embed_dim=cfg.model.embed_dim,
         num_latent_tokens=cfg.model.num_latent_tokens,
         backbone_type=cfg.model.backbone,
         patch_size=cfg.model.patch_size,
+        embed_dim= cfg.model.embed_dim,
+        num_heads=cfg.model.num_heads,
+        head_dim=cfg.model.head_dim,
+        depth=cfg.model.depth,
         learning_rate=cfg.training.lr,
         weight_decay=cfg.training.wd,
         batch_size=cfg.training.batch_size,
@@ -413,7 +436,10 @@ def main(cfg):
     
     output_dir = HydraConfig.get().runtime.output_dir
     # /scratch-shared/<username>
-    checkpoint_callback = ModelCheckpoint(dirpath=f"{output_dir}/checkpoints", save_top_k=2, monitor="val_loss")
+    checkpoint_callback = ModelCheckpoint(dirpath=f"{output_dir}/checkpoints", 
+                                          save_top_k=10, 
+                                          monitor="val_loss",
+                                          mode="min")
     print(f"Will be saving checkpoints at: {output_dir}/checkpoints")
 
     trainer = L.Trainer(
@@ -430,6 +456,8 @@ def main(cfg):
 
     trainer.fit(BFM, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader)
     print("Finished training successfully - Lets do a Test!")
+    # Manualy save a checkpoint after the end of training
+    # trainer.save_checkpoint("test.ckpt")
 
     trainer.test(ckpt_path="best", dataloaders=val_dataloader)
 

@@ -189,6 +189,7 @@ class BFMDecoder(nn.Module):
             + len(agriculture_vars)
             + len(forest_vars)
         )
+        print("Total latent tokens for Decoder: ", total_tokens)
 
         self.perceiver_io = PerceiverIO(
             num_layers=depth,
@@ -308,6 +309,7 @@ class BFMDecoder(nn.Module):
                 - land_variables
                 - agriculture_variables
                 - forest_variables
+                - species_variables
         """
         B, L, D = x.shape
         print(f"Input shape: {x.shape}")
@@ -465,7 +467,7 @@ class BFMDecoder(nn.Module):
             "land_variables": output.pop("land_vars"),
             "agriculture_variables": output.pop("agriculture_vars"),
             "forest_variables": output.pop("forest_vars"),
-            "species_distribution_variables": output.pop("species_distr_vars")
+            "species_variables": output.pop("species_distr_vars")
         }
         return output
 

@@ -189,15 +189,18 @@ class BFMEncoder(nn.Module):
         # dropout
         self.pos_drop = nn.Dropout(p=drop_rate)
 
-        # init weights
-        self.apply(self._init_weights)
-
         # add normalization layer
         self.pre_perceiver_norm = nn.LayerNorm(embed_dim)
 
         # Add H and W as instance variables
         self.H = H
         self.W = W
+        
+        # Initialize perceiver 
+        self._initialize_perceiver(H, W)
+
+        # init weights
+        self.apply(self._init_weights)
 
     @property
     def patch_shape(self):
