@@ -1,53 +1,23 @@
-"""
-BFM (Biodiversity Foundation Model) Main Module.
-
-This module contains the main BFM architecture, combining encoder, backbone and decoder components
-to process climate and biodiversity-related variables.
-
-The model uses either a Swin or MViT backbone architecture to process encoded representations
-before decoding back to the original variable space.
-
-Key Components:
-    - Variable preprocessing and cropping
-    - Encoder for initial representation learning
-    - Backbone (Swin or MViT) for temporal-spatial processing
-    - Decoder for reconstructing variables
-    - Multi-category variable handling (surface, atmospheric, species, etc.)
-
-Example usage:
-    model = BFM(
-        surface_vars=('temperature', 'pressure'),
-        single_vars=('humidity',),
-        atmos_vars=('wind_u', 'wind_v'),
-        species_vars=('species_1', 'species_2'),
-        land_vars=('soil_moisture',),
-        agriculture_vars=('crop_yield',),
-        forest_vars=('tree_coverage',),
-        atmos_levels=[1000, 850, 700],
-        H=32,
-        W=64,
-        backbone_type='mvit'
-    )
-    output = model(batch, lead_time)
-"""
-
 from collections import namedtuple
 from datetime import datetime, timedelta
 from typing import Literal
 import hydra
 import os
-import mlflow
+import glob
+import mlflow.pytorch
+from mlflow import MlflowClient
+
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
 
 import torch
-import torch.nn as nn
 from torch.utils.data import DataLoader
 
 import lightning as L
 from lightning.pytorch import LightningModule, seed_everything
 from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import MLFlowLogger
+from lightning.pytorch.utilities.model_summary import ModelSummary
 
 from src.bfm.src.decoder import BFMDecoder
 from src.bfm.src.encoder import BFMEncoder
@@ -55,10 +25,11 @@ from src.mvit.mvit_model import MViT
 from src.swin_transformer.core.swim_core_v2 import Swin3DTransformer
 
 from src.bfm.src.dataloder import LargeClimateDataset, custom_collate
+from src.bfm.src.utils import save_run_id
 
 DEVICE = "cuda:0"
 
-class BFM_lighting(L.LightningModule):
+class BFM_lighting(LightningModule):
     """
     Biodiversity Foundation Model.
 
@@ -274,7 +245,7 @@ class BFM_lighting(L.LightningModule):
         # print("Decoded output:", output)
         return output
 
-    def validation_step(self, batch):
+    def validation_step(self, batch, batch_idx):
         lead_time = timedelta(hours=6)  # fixed lead time for pre-training
         output = self(batch, lead_time, batch_size=self.batch_size)
 
@@ -282,7 +253,7 @@ class BFM_lighting(L.LightningModule):
         self.log("val_loss", loss, batch_size=self.batch_size)
         return loss
 
-    def training_step(self, batch):
+    def training_step(self, batch, batch_idx):
         lead_time = timedelta(hours=6)  # fixed lead time for pre-training
         output = self(batch, lead_time, batch_size=self.batch_size)
 
@@ -290,7 +261,7 @@ class BFM_lighting(L.LightningModule):
         self.log("train_loss", loss, batch_size=self.batch_size)
         return loss
 
-    def test_step(self, batch):
+    def test_step(self, batch, batch_idx):
         lead_time = timedelta(hours=6)  # fixed lead time for pre-training
         output = self(batch, lead_time, batch_size=self.batch_size)
 
@@ -368,6 +339,25 @@ class BFM_lighting(L.LightningModule):
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=150000, eta_min=self.learning_rate / 10)
         return [optimizer], [scheduler]
 
+class OptimizerParamsLogger(L.Callback):
+    def on_train_start(self, trainer, pl_module):
+        # Ensure the logger is an MLFlowLogger instance.
+        if not isinstance(trainer.logger, MLFlowLogger):
+            return
+
+        mlflow_logger = trainer.logger
+        run_id = mlflow_logger.run_id
+        # Loop over each optimizer
+        for opt_idx, optimizer in enumerate(trainer.optimizers):
+            for pg_idx, param_group in enumerate(optimizer.param_groups):
+                lr = param_group.get("lr")
+                wd = param_group.get("weight_decay")
+                # Log each parameter with a unique key.
+                mlflow_logger.experiment.log_param(run_id, 
+                    f"optimizer_{opt_idx}_group_{pg_idx}_lr", lr)
+                mlflow_logger.experiment.log_param(run_id, 
+                    f"optimizer_{opt_idx}_group_{pg_idx}_weight_decay", wd)
+
 
 @hydra.main(version_base=None, config_path="configs", config_name="train_config")
 def main(cfg):
@@ -378,6 +368,8 @@ def main(cfg):
 
     # Seed the experiment for numpy, torch and python.random.
     seed_everything(42, workers=True)
+
+    output_dir = HydraConfig.get().runtime.output_dir
 
     print("Setting up Dataloader ...")
     dataset = LargeClimateDataset(data_dir=cfg.data.data_path, num_species=cfg.data.species_number)
@@ -405,8 +397,12 @@ def main(cfg):
     # Setup logger
     current_time = datetime.now()
     remote_server_uri = f"http://0.0.0.0:{cfg.mlflow.port}"
-    mlf_logger = MLFlowLogger(experiment_name="BFM_logs", run_name=f"BFM_{current_time}")
+    mlf_logger = MLFlowLogger(experiment_name="BFM_logs", 
+                              run_name=f"BFM_{current_time}",
+                              tracking_uri=f"{output_dir}/logs")
 
+    logger_run_id = mlf_logger.run_id
+    save_run_id(f"{output_dir}/logs/run_id.txt", logger_run_id)
 
     print("Done \n Setting up the BFM")
     BFM = BFM_lighting(
@@ -434,12 +430,14 @@ def main(cfg):
         batch_size=cfg.training.batch_size,
     )
     
-    output_dir = HydraConfig.get().runtime.output_dir
+    model_summary = ModelSummary(BFM, max_depth=2)
+    print(model_summary)
     # /scratch-shared/<username>
     checkpoint_callback = ModelCheckpoint(dirpath=f"{output_dir}/checkpoints", 
-                                          save_top_k=10, 
+                                          save_top_k=1, 
                                           monitor="val_loss",
                                           mode="min")
+    
     print(f"Will be saving checkpoints at: {output_dir}/checkpoints")
 
     trainer = L.Trainer(
@@ -450,14 +448,30 @@ def main(cfg):
         log_every_n_steps=cfg.training.log_steps,
         logger=mlf_logger,
         check_val_every_n_epoch=1,  # Do eval every 1 epochs
-        callbacks=[checkpoint_callback],
+        # val_check_interval=100    # Do eval every 100 training steps => 100 steps x 5 batch_size = Every 500 Batches
+        # limit_train_batches=len(train_dataloader),
+        callbacks=[checkpoint_callback, OptimizerParamsLogger()],
     )
+    # Experimental
+    # mlflow.set_tracking_uri(output_dir)
+    # Auto log all MLflow entities
+    # mlflow.pytorch.autolog()
 
+    # with mlflow.start_run() as run:
+    if cfg.training.checkpoint_path:
+            print(f"Loading and resuming training from {cfg.training.checkpoint_path}")
+            trainer.fit(BFM, train_dataloaders=train_dataloader, 
+                        val_dataloaders=val_dataloader,
+                        ckpt_path=cfg.training.checkpoint_path)
+    else:
+        print("Start training from scratch")
+        trainer.fit(BFM, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader)
 
-    trainer.fit(BFM, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader)
     print("Finished training successfully - Lets do a Test!")
     # Manualy save a checkpoint after the end of training
     # trainer.save_checkpoint("test.ckpt")
+
+    # print_auto_logged_info(mlflow.get_run(run_id=run.info.run_id))
 
     trainer.test(ckpt_path="best", dataloaders=val_dataloader)
 

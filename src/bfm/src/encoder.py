@@ -195,7 +195,7 @@ class BFMEncoder(nn.Module):
         # Add H and W as instance variables
         self.H = H
         self.W = W
-        
+
         # Initialize perceiver 
         self._initialize_perceiver(H, W)
 
@@ -262,8 +262,8 @@ class BFMEncoder(nn.Module):
         """
         # get number of patches
         #TODO Check why this gives weird error. For now hardcode the # of patches
-        # num_patches = (H // self.patch_size) * (W // self.patch_size)
-        num_patches = 3040
+        num_patches = (H // self.patch_size) * (W // self.patch_size)
+        # num_patches = 3040
         print(f"Num of patches in Encoder: {num_patches}")
         # set the device from an existing parameter or default to CPU
         device = (
