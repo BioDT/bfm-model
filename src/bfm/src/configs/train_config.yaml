@@ -20,20 +20,19 @@ model:
 data:
   atmos_levels: [50, 500, 1000]
   species_number: 4 # [0-22] available species
-  data_path: /projects/prjs1134/data/projects/biodt/storage/batches_2024_12_13 #/projects/prjs1134/data/projects/biodt/storage/batches_2025_01_22/train  #/projects/prjs1134/data/projects/biodt/storage/batches_2025_01_22/train #/projects/prjs1134/data/projects/biodt/storage/batches_2024_12_13 #data/ #/projects/prjs1134/data/projects/biodt/storage/batches/
-  test_data_path: /projects/prjs1134/data/projects/biodt/storage/batches_2024_12_13
-
+  data_path: data/ #/projects/prjs1134/data/projects/biodt/storage/batches_2024_12_13 #/projects/prjs1134/data/projects/biodt/storage/batches_2025_01_22/train  #/projects/prjs1134/data/projects/biodt/storage/batches_2025_01_22/train #/projects/prjs1134/data/projects/biodt/storage/batches_2024_12_13 #data/ #/projects/prjs1134/data/projects/biodt/storage/batches/
+  test_data_path: data/
 #TODO Checkpointing path: /scratch-shared/<username>
  
 training:
-  batch_size: 5
+  batch_size: 1
   workers: 0
   epochs: 1
   accelerator: gpu
   precision: bf16-mixed
   precision_in: "medium" # ["high", "highest"] https://pytorch.org/docs/stable/generated/torch.set_float32_matmul_precision.html#torch.set_float32_matmul_precision
-  devices: [0]
-  strategy: ddp # fsdp
+  devices: [0,1,2,3]
+  strategy: fsdp #ddp
   gradient_clip: 1.0
   log_steps: 1
   lr: 0.001
@@ -48,5 +47,5 @@ mlflow:
 
 evaluation:
   checkpoint_path: outputs/2025-02-13/15-50-11/checkpoints/epoch=0-step=26.ckpt #/home/atrantas/bfm-model/outputs/2025-02-12-withcheckpoint/16-04-11/checkpoints/epoch=0-step=26.ckpt
-  batch_size: 5
+  batch_size: 1
   test_device: "cuda:0"

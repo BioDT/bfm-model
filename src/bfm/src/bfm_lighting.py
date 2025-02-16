@@ -12,12 +12,14 @@ from omegaconf import DictConfig, OmegaConf
 
 import torch
 from torch.utils.data import DataLoader
+from torch.distributed.fsdp.wrap import enable_wrap, size_based_auto_wrap_policy, wrap
 
 import lightning as L
 from lightning.pytorch import LightningModule, seed_everything
 from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import MLFlowLogger
 from lightning.pytorch.utilities.model_summary import ModelSummary
+from lightning.pytorch.strategies import DDPStrategy, FSDPStrategy
 
 from src.bfm.src.decoder import BFMDecoder
 from src.bfm.src.encoder import BFMEncoder
@@ -402,7 +404,7 @@ def main(cfg):
                               tracking_uri=f"{output_dir}/logs")
 
     logger_run_id = mlf_logger.run_id
-    save_run_id(f"{output_dir}/logs/run_id.txt", logger_run_id)
+    # save_run_id(f"{output_dir}/logs/run_id.txt", logger_run_id)
 
     print("Done \n Setting up the BFM")
     BFM = BFM_lighting(
@@ -440,11 +442,17 @@ def main(cfg):
     
     print(f"Will be saving checkpoints at: {output_dir}/checkpoints")
 
+    if cfg.training.strategy == "fsdp":
+        distr_strategy = FSDPStrategy(sharding_strategy="FULL_SHARD", auto_wrap_policy=size_based_auto_wrap_policy)
+    elif cfg.training.strategy == "ddp":
+        distr_strategy = DDPStrategy()
+
     trainer = L.Trainer(
         max_epochs=cfg.training.epochs,
         accelerator=cfg.training.accelerator,
         devices=cfg.training.devices,
         precision=cfg.training.precision,
+        strategy=distr_strategy,
         log_every_n_steps=cfg.training.log_steps,
         logger=mlf_logger,
         check_val_every_n_epoch=1,  # Do eval every 1 epochs
