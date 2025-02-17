@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader
 from lightning.pytorch import seed_everything
 from lightning.pytorch.loggers import MLFlowLogger
 
-from src.bfm.src.bfm_lighting import BFM_lighting
+from src.bfm.src.train_lighting import BFM_lighting
 from src.bfm.src.dataloder import LargeClimateDataset, custom_collate
 
 
@@ -98,31 +98,7 @@ def main(cfg: DictConfig):
     print(f"Loading model from checkpoint: {checkpoint_path}")
     # V1 Do the inference
     test_results = trainer.test(model=bfm_model, ckpt_path=checkpoint_path, dataloaders=test_dataloader)
-    # V2 Do the inference
-    # loaded_bfm = BFM_lighting.load_from_checkpoint(checkpoint_path,
-                                                    # surface_vars=(["t2m", "msl"]),
-                                                    # single_vars=(["lsm"]),
-                                                    # atmos_vars=(["z", "t"]),
-                                                    # species_vars=(["ExtinctionValue"]),
-                                                    # species_distr_vars=(["Distribution"]),
-                                                    # land_vars=(["Land", "NDVI"]),
-                                                    # agriculture_vars=(["AgricultureLand", "AgricultureIrrLand", "ArableLand", "Cropland"]),
-                                                    # forest_vars=(["Forest"]),
-                                                    # atmos_levels=cfg.data.atmos_levels,
-                                                    # species_num=cfg.data.species_number,
-                                                    # H=cfg.model.H,
-                                                    # W=cfg.model.W,
-                                                    # embed_dim=cfg.model.embed_dim,
-                                                    # num_latent_tokens=cfg.model.num_latent_tokens,
-                                                    # backbone_type=cfg.model.backbone,
-                                                    # patch_size=cfg.model.patch_size,
-                                                    # learning_rate=cfg.training.lr,
-                                                    # weight_decay=cfg.training.wd,
-                                                    # batch_size=cfg.evaluation.batch_size,))
-    # loaded_bfm.eval()
-
-    # test_results = trainer.test(loaded_bfm, dataloaders=test_dataloader)
-    # test_results is typically a list of dicts (one per test dataloader)
+    
     print("=== Test Results ===")
     print(test_results)
 

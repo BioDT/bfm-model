@@ -29,8 +29,6 @@ from src.swin_transformer.core.swim_core_v2 import Swin3DTransformer
 from src.bfm.src.dataloder import LargeClimateDataset, custom_collate
 from src.bfm.src.utils import save_run_id
 
-DEVICE = "cuda:0"
-
 class BFM_lighting(LightningModule):
     """
     Biodiversity Foundation Model.

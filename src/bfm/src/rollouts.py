@@ -15,9 +15,17 @@ from lightning_utilities.core.apply_func import apply_to_collection
 from src.bfm.src.bfm import BFM
 from src.bfm.src.dataloder import LargeClimateDataset, custom_collate
 
-from src.bfm.src.bfm_lighting import BFM_lighting
+from src.bfm.src.train_lighting import BFM_lighting
 
 
+
+
+def rollouts(trainer, model, dataloder, steps=2):
+    predictions = []
+
+    for t in range(steps):
+
+        pred = trainer.predict(model, dataloder)
 
 @hydra.main(version_base=None, config_path="configs", config_name="train_config")
 def main(cfg: DictConfig):
