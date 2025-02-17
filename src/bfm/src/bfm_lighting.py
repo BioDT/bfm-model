@@ -205,7 +205,7 @@ class BFM_lighting(LightningModule):
             **kwargs,
         )
 
-    def forward(self, batch, lead_time, batch_size):
+    def forward(self, batch, lead_time = timedelta(hours=6), batch_size: int = 1):
         """
         Forward pass of the model.
 
@@ -341,6 +341,7 @@ class BFM_lighting(LightningModule):
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=150000, eta_min=self.learning_rate / 10)
         return [optimizer], [scheduler]
 
+
 class OptimizerParamsLogger(L.Callback):
     def on_train_start(self, trainer, pl_module):
         # Ensure the logger is an MLFlowLogger instance.
@@ -452,7 +453,7 @@ def main(cfg):
         accelerator=cfg.training.accelerator,
         devices=cfg.training.devices,
         precision=cfg.training.precision,
-        strategy=distr_strategy,
+        # strategy=distr_strategy,
         log_every_n_steps=cfg.training.log_steps,
         logger=mlf_logger,
         check_val_every_n_epoch=1,  # Do eval every 1 epochs
