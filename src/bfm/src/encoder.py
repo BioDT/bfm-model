@@ -426,7 +426,7 @@ class BFMEncoder(nn.Module):
         # or if each is [2, 3, 152, 320], => [2, 2, 3, 152, 320].
         values = list(variables.values())  # list of Tensors
         x = torch.stack(values, dim=0)
-        print(f"{group_name}: after stacking => {x.shape}")
+        # print(f"{group_name}: after stacking => {x.shape}")
 
         # 2) Move the 'var_count' dimension after batch dim => [B, var_count, ...].
         # e.g. [2, 2, 152, 320] => [2, 2, 152, 320] if var_count=2 is dimension 0, B=2 dimension 1 => we do a transpose:
@@ -443,9 +443,9 @@ class BFMEncoder(nn.Module):
         else:
             raise ValueError(f"Unsupported shape {x.shape} in {group_name}")
 
-        print(f"{group_name}: after permute => {x.shape}")
+        # print(f"{group_name}: after permute => {x.shape}")
 
-        # 3) Merge var_count*(T) into a single channel dimension => shape [B, C, H, W].
+        # 3) Merge    into a single channel dimension => shape [B, C, H, W].
         # if x.dim()==4, => [B, V, H, W]. then C = V
         # if x.dim()==5, => [B, V, T, H, W]. then C = V * T
         if x.dim() == 4:
@@ -457,7 +457,7 @@ class BFMEncoder(nn.Module):
             B, V, T, H, W = x.shape
             x = x.reshape(B, V * T, H, W)
             channel_dim = V * T
-        print(f"{group_name}: merged var/time => channels => {x.shape} (C={channel_dim})")
+        # print(f"{group_name}: merged var/time => channels => {x.shape} (C={channel_dim})")
 
         # 4) Now do patchify:
         # We want => [B, (H/p1)*(W/p2), C*(p1*p2)]
@@ -469,12 +469,12 @@ class BFMEncoder(nn.Module):
             p1=self.patch_size,
             p2=self.patch_size
         )
-        print(f"{group_name}: after patchify => {x.shape}")
+        # print(f"{group_name}: after patchify => {x.shape}")
 
         # 5) Now x is [B, num_patches, C*(p1*p2)] => feed token_embeds
         # token_embeds expects the last dim = in_features that matches its linear layer
         x = token_embeds(x)  # => [B, num_patches, embed_dim]
-        print(f"{group_name}: after token_embeds => {x.shape}")
+        # print(f"{group_name}: after token_embeds => {x.shape}")
 
         return x
 
@@ -499,21 +499,21 @@ class BFMEncoder(nn.Module):
         # process each variable group
         embeddings = []
         embedding_groups = {}
-        print("process surface")
+        # print("process surface")
         surface_embed = self.process_variable_group(
             batch.surface_variables, self.surface_token_embeds, "Surface Variables"
         )  # shape: [num_patches, embed_dim]
         if surface_embed is not None:
             embeddings.append(surface_embed)
             embedding_groups["surface"] = surface_embed
-        print("process signle")
+        # print("process signle")
         single_embed = self.process_variable_group(
             batch.single_variables, self.single_token_embeds, "Single Variables"
         )  # shape: [num_patches, embed_dim]
         if single_embed is not None:
             embeddings.append(single_embed)
             embedding_groups["single"] = single_embed
-        print("process atmospheric")
+        # print("process atmospheric")
 
         atmos = []
         if batch.atmospheric_variables:
@@ -548,7 +548,7 @@ class BFMEncoder(nn.Module):
                     # embeddings.append(stacked_atmos)
                     # embedding_groups["atmos"] = stacked_atmos
 
-        print("process species distribution")
+        # print("process species distribution")
         species_distr = []
         if batch.species_variables:
             for level_idx in range(self.species_num):
@@ -585,21 +585,21 @@ class BFMEncoder(nn.Module):
             #         embeddings.append(stacked_species_distr)
             #         embedding_groups["species_distr"] = stacked_species_distr
 
-        print("process species extinction")
+        # print("process species extinction")
         species_embed = self.process_variable_group(
             batch.species_extinction_variables, self.species_token_embeds, "Species Variables"
         )  # shape: [num_patches, embed_dim]
         if species_embed is not None:
             embeddings.append(species_embed)
             embedding_groups["species"] = species_embed
-        print("process land")
+        # print("process land")
         land_embed = self.process_variable_group(
             batch.land_variables, self.land_token_embeds, "Land Variables"
         )  # shape: [num_patches, embed_dim]
         if land_embed is not None:
             embeddings.append(land_embed)
             embedding_groups["land"] = land_embed
-        print("process agri")
+        # print("process agri")
         agriculture_embed = self.process_variable_group(
             batch.agriculture_variables, self.agriculture_token_embeds, "Agriculture Variables"
         )  # shape: [num_patches, embed_dim]
@@ -619,7 +619,7 @@ class BFMEncoder(nn.Module):
         #     [emb.view(1, -1, self.embed_dim) for emb in embeddings], dim=1
         # )  # shape: [batch_size, num_patches * num_variable_groups, embed_dim]
         x = torch.cat(embeddings, dim=1)
-        print("Combined embeddings shape", x.shape)
+        # print("Combined embeddings shape", x.shape)
         x = self._check_tensor(x, "Combined embeddings")
 
         # add position encodings
@@ -686,7 +686,7 @@ class BFMEncoder(nn.Module):
 
         # Apply Perceiver IO with structured latents
         latents = self.latents.to(x.device)
-        print(f"Encoder forward latents shape: {latents.shape}")
+        # print(f"Encoder forward latents shape: {latents.shape}")
         latents = self._check_tensor(latents, "Latent queries")  # shape: [num_latents, embed_dim]
 
         # Track latent splits for potential future use

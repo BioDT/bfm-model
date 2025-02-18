@@ -191,10 +191,10 @@ class Swin3DTransformer(nn.Module):
             torch.Tensor: Processed tokens. Shape: [B, L, D]
         """
         B, L, D = x.shape
-        print(f"Input shape: {x.shape}")
-        print(f"Patch resolution: {patch_shape}")
-        print(f"L size: {L}")
-        print(f"Patch res size: {patch_shape[0] * patch_shape[1] * patch_shape[2]}")
+        # print(f"Input shape: {x.shape}")
+        # print(f"Patch resolution: {patch_shape}")
+        # print(f"L size: {L}")
+        # print(f"Patch res size: {patch_shape[0] * patch_shape[1] * patch_shape[2]}")
         assert L == patch_shape[0] * patch_shape[1] * patch_shape[2], "Input shape does not match patch size"
         assert (
             patch_shape[0] % self.window_size[0] == 0

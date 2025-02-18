@@ -312,13 +312,13 @@ class BFMDecoder(nn.Module):
                 - species_variables
         """
         B, L, D = x.shape
-        print(f"Input shape: {x.shape}")
+        # print(f"Input shape: {x.shape}")
 
         # get dimensions from batch metadata
         H, W = self.H, self.W
         lat, lon = batch.batch_metadata.latitudes.squeeze(), batch.batch_metadata.longitudes.squeeze()
-        print(f"Grid dimensions (H×W): {H}×{W}")
-        print(f"lat shape: {lat.shape}, lon shape: {lon.shape}")
+        # print(f"Grid dimensions (H×W): {H}×{W}")
+        # print(f"lat shape: {lat.shape}, lon shape: {lon.shape}")
 
         # counting the number of queries for Perceiver IO
         total_queries = (

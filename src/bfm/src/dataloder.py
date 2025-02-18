@@ -207,7 +207,7 @@ class LargeClimateDataset(Dataset):
 
     def __getitem__(self, idx):
         fpath = self.files[idx]
-        data = torch.load(fpath, map_location='cpu')
+        data = torch.load(fpath, map_location='cpu', weights_only=True)
 
         latitudes = data["batch_metadata"]["latitudes"]
         longitudes = data["batch_metadata"]["longitudes"]
@@ -387,5 +387,5 @@ def test_dataset_and_dataloader(data_dir):
 
 
 if __name__ == "__main__":
-    data_dir = "data/"  # Replace this with the actual directory path
+    data_dir = "data_small/batches/"  # Replace this with the actual directory path
     test_dataset_and_dataloader(data_dir)

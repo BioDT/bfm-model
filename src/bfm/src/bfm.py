@@ -197,10 +197,10 @@ class BFM(nn.Module):
             dict: Dictionary containing decoded outputs for each variable category
 
         """
-        print(f"BFM batch size: {batch_size}")
+        # print(f"BFM batch size: {batch_size}")
         ### V1 
         encoded = self.encoder(batch, lead_time, batch_size)
-        print("Encoded shape", encoded.shape)
+        # print("Encoded shape", encoded.shape)
 
         # calculate number of patches in 2D
         num_patches_h = self.H // self.encoder.patch_size
@@ -209,7 +209,7 @@ class BFM(nn.Module):
 
         # calculate depth to match the sequence length
         depth = encoded.shape[1] // (num_patches_h * num_patches_w)
-        print(f"BFM depth: {depth} | patch_size {self.encoder.patch_shape} | encoder shape {encoded.shape}")
+        # print(f"BFM depth: {depth} | patch_size {self.encoder.patch_shape} | encoder shape {encoded.shape}")
         patch_shape = (
             depth,  # depth dimension matches sequence length / (H*W)
             num_patches_h,  # height in patches
@@ -221,7 +221,7 @@ class BFM(nn.Module):
             print(f"Reshaped encoded for MViT: {encoded.shape}")
 
         backbone_output = self.backbone(encoded, lead_time=lead_time, rollout_step=0, patch_shape=patch_shape)
-        print("Backbone output", backbone_output.shape)
+        # print("Backbone output", backbone_output.shape)
         # decode
         output = self.decoder(backbone_output, batch, lead_time)
         # print("Decoded output:", output)

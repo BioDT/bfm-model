@@ -2,10 +2,7 @@ from collections import namedtuple
 from datetime import datetime, timedelta
 from typing import Literal
 import hydra
-import os
-import glob
-import mlflow.pytorch
-from mlflow import MlflowClient
+import math
 
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
@@ -85,9 +82,11 @@ class BFM_lighting(LightningModule):
         num_heads: int = 16,
         head_dim: int = 2,
         depth: int = 2,
-        learning_rate=1e-3, 
-        weight_decay=5e-6, 
-        batch_size=1,
+        learning_rate: float = 5e-4, 
+        weight_decay: float = 5e-6, 
+        batch_size: int = 1,
+        warmup_steps: int = 1000,
+        total_steps: int = 20000,
         **kwargs,
     ):
         super().__init__()
@@ -97,6 +96,8 @@ class BFM_lighting(LightningModule):
         self.learning_rate = learning_rate
         self.weight_decay = weight_decay
         self.batch_size = batch_size
+        self.warmup_steps = warmup_steps
+        self.total_steps = total_steps
 
         # The variable weights come from: w_var = 1 / standard_dev
         self.variable_weights = {
@@ -215,10 +216,10 @@ class BFM_lighting(LightningModule):
             dict: Dictionary containing decoded outputs for each variable category
 
         """
-        print(f"BFM batch size: {batch_size}")
+        # print(f"BFM batch size: {batch_size}")
         ### V1 
         encoded = self.encoder(batch, lead_time, batch_size)
-        print("Encoded shape", encoded.shape)
+        # print("Encoded shape", encoded.shape)
 
         # calculate number of patches in 2D
         num_patches_h = self.H // self.encoder.patch_size
@@ -227,7 +228,7 @@ class BFM_lighting(LightningModule):
 
         # calculate depth to match the sequence length
         depth = encoded.shape[1] // (num_patches_h * num_patches_w)
-        print(f"BFM depth: {depth} | patch_size {self.encoder.patch_shape} | encoder shape {encoded.shape}")
+        # print(f"BFM depth: {depth} | patch_size {self.encoder.patch_shape} | encoder shape {encoded.shape}")
         patch_shape = (
             depth,  # depth dimension matches sequence length / (H*W)
             num_patches_h,  # height in patches
@@ -239,7 +240,7 @@ class BFM_lighting(LightningModule):
             print(f"Reshaped encoded for MViT: {encoded.shape}")
 
         backbone_output = self.backbone(encoded, lead_time=lead_time, rollout_step=0, patch_shape=patch_shape)
-        print("Backbone output", backbone_output.shape)
+        # print("Backbone output", backbone_output.shape)
         # decode
         output = self.decoder(backbone_output, batch, lead_time)
         # print("Decoded output:", output)
@@ -248,9 +249,9 @@ class BFM_lighting(LightningModule):
     def validation_step(self, batch, batch_idx):
         lead_time = timedelta(hours=6)  # fixed lead time for pre-training
         output = self(batch, lead_time, batch_size=self.batch_size)
-
+        print("Validation time!")
         loss = self.compute_loss(output, batch)
-        self.log("val_loss", loss, batch_size=self.batch_size)
+        self.log("val_loss", loss, batch_size=self.batch_size) # on_step=False, on_epoch=True, prog_bar=True, sync_dist=True
         return loss
 
     def training_step(self, batch, batch_idx):
@@ -334,31 +335,69 @@ class BFM_lighting(LightningModule):
         print(f"Loss: {total_loss}")
         return total_loss
 
+    def lr_lambda(self, current_step):
+        if current_step < self.warmup_steps:
+            # Linear warmup from 0 to 1.
+            return float(current_step) / float(max(1, self.warmup_steps))
+        else:
+            # After warmup, cosine decay from 1.0 to 0.1 over the remaining steps.
+            progress = float(current_step - self.warmup_steps) / float(max(1, self.total_steps - self.warmup_steps))
+            cosine_decay = 0.5 * (1 + math.cos(math.pi * progress))
+            # Scale so that at the end (progress=1), the multiplier is 0.1.
+            return 0.9 * cosine_decay + 0.1
+    
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=150000, eta_min=self.learning_rate / 10)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=3000, eta_min=self.learning_rate / 10)
+        # scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=self.lr_lambda)
+
         return [optimizer], [scheduler]
 
 
 class OptimizerParamsLogger(L.Callback):
-    def on_train_start(self, trainer, pl_module):
+    def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx=0):
         # Ensure the logger is an MLFlowLogger instance.
         if not isinstance(trainer.logger, MLFlowLogger):
             return
 
         mlflow_logger = trainer.logger
         run_id = mlflow_logger.run_id
-        # Loop over each optimizer
+        current_step = trainer.global_step
+
+        # Loop over each optimizer.
         for opt_idx, optimizer in enumerate(trainer.optimizers):
             for pg_idx, param_group in enumerate(optimizer.param_groups):
                 lr = param_group.get("lr")
                 wd = param_group.get("weight_decay")
-                # Log each parameter with a unique key.
-                mlflow_logger.experiment.log_param(run_id, 
-                    f"optimizer_{opt_idx}_group_{pg_idx}_lr", lr)
-                mlflow_logger.experiment.log_param(run_id, 
-                    f"optimizer_{opt_idx}_group_{pg_idx}_weight_decay", wd)
+                # Log the current learning rate and weight decay as metrics.
+                mlflow_logger.experiment.log_metric(
+                    run_id,
+                    f"optimizer_{opt_idx}_group_{pg_idx}_lr",
+                    lr,
+                    step=current_step
+                )
+                mlflow_logger.experiment.log_metric(
+                    run_id,
+                    f"optimizer_{opt_idx}_group_{pg_idx}_weight_decay",
+                    wd,
+                    step=current_step
+                )
 
+class FSDPEvalCallback(L.Callback):
+    def __init__(self, eval_interval=10):
+        self.eval_interval = eval_interval
+
+    def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx=0):
+        # Only on global rank zero
+        if not trainer.is_global_zero:
+            return
+
+        if trainer.global_step % self.eval_interval == 0:
+            # Use best checkpoint if available, else fall back to last.
+            best_ckpt = trainer.checkpoint_callback.best_model_path
+            ckpt_to_use = best_ckpt if best_ckpt else "last"
+            print(f"Step {trainer.global_step}: Validating using checkpoint: {ckpt_to_use}")
+            trainer.validate(ckpt_path=ckpt_to_use)
 
 @hydra.main(version_base=None, config_path="configs", config_name="train_config")
 def main(cfg):
@@ -378,8 +417,8 @@ def main(cfg):
 
     val_dataloader = DataLoader(
         test_dataset,
-        batch_size=cfg.training.batch_size,
-        num_workers=cfg.training.workers,
+        batch_size=cfg.evaluation.batch_size,
+        num_workers=0,
         collate_fn=custom_collate,
         drop_last=True,
         shuffle=False,
@@ -434,15 +473,23 @@ def main(cfg):
     model_summary = ModelSummary(BFM, max_depth=2)
     print(model_summary)
     # /scratch-shared/<username>
-    checkpoint_callback = ModelCheckpoint(dirpath=f"{output_dir}/checkpoints", 
-                                          save_top_k=1, 
-                                          monitor="val_loss",
-                                          mode="min")
+    checkpoint_callback = ModelCheckpoint(
+        dirpath=f"{output_dir}/checkpoints", 
+        filename="{epoch}-{step}",
+        save_top_k=1, 
+        monitor="val_loss",
+        mode="min",
+        # save_last=True
+    )
+
+
     
     print(f"Will be saving checkpoints at: {output_dir}/checkpoints")
 
     if cfg.training.strategy == "fsdp":
-        distr_strategy = FSDPStrategy(sharding_strategy="FULL_SHARD", auto_wrap_policy=size_based_auto_wrap_policy)
+        distr_strategy = FSDPStrategy(sharding_strategy="FULL_SHARD", 
+                                      auto_wrap_policy=size_based_auto_wrap_policy,
+                                      state_dict_type="full")
     elif cfg.training.strategy == "ddp":
         distr_strategy = DDPStrategy()
 
@@ -452,11 +499,12 @@ def main(cfg):
         devices=cfg.training.devices,
         precision=cfg.training.precision,
         # strategy=distr_strategy,
+        # num_nodes=cfg.training.num_nodes,
         log_every_n_steps=cfg.training.log_steps,
         logger=mlf_logger,
+        limit_train_batches=0.1, # For debugging to see what happens at the end of epoch
         check_val_every_n_epoch=1,  # Do eval every 1 epochs
-        # val_check_interval=100    # Do eval every 100 training steps => 100 steps x 5 batch_size = Every 500 Batches
-        # limit_train_batches=len(train_dataloader),
+        # val_check_interval=10, # Does not work in Distributed settings | Do eval every 10 training steps => 10 steps x 8 batch_size = Every 80 Batches
         callbacks=[checkpoint_callback, OptimizerParamsLogger()],
     )
     # Experimental
@@ -474,13 +522,14 @@ def main(cfg):
         print("Start training from scratch")
         trainer.fit(BFM, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader)
 
-    print("Finished training successfully - Lets do a Test!")
     # Manualy save a checkpoint after the end of training
     # trainer.save_checkpoint("test.ckpt")
 
     # print_auto_logged_info(mlflow.get_run(run_id=run.info.run_id))
 
-    trainer.test(ckpt_path="best", dataloaders=val_dataloader)
+    best_ckpt = checkpoint_callback.best_model_path
+    print(f"Finished training successfully - Lets do a Test on the best checkpoint: {best_ckpt}!")
+    trainer.test(ckpt_path=best_ckpt, dataloaders=val_dataloader)
 
     print("Finished testing successfully")
     trainer.print(torch.cuda.memory_summary())
