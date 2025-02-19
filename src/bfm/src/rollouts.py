@@ -10,12 +10,11 @@ import lightning as L
 
 from torch.utils.data import DataLoader, Dataset
 
-from lightning.pytorch import LightningModule, seed_everything
+from lightning.pytorch import seed_everything
 from lightning.pytorch.loggers import MLFlowLogger
-from lightning_utilities.core.apply_func import apply_to_collection
-from src.bfm.src.bfm import BFM
-from src.bfm.src.dataloder import LargeClimateDataset, custom_collate
 
+from src.bfm.src.dataloder import LargeClimateDataset, custom_collate
+from src.bfm.src.utils import inspect_batch_shapes_namedtuple
 from src.bfm.src.train_lighting import BFM_lighting
 
 
@@ -48,6 +47,14 @@ def rollout_forecast(trainer, model, initial_batch, steps=2, batch_size=1):
             # Return the namedtuple or dictionary directly
             return self.one_batch
         
+    def single_item_collate(batch_list):
+        """
+        A custom collate for a single-item dataset.
+        batch_list has length=1, so we just return batch_list[0]
+        exactly as is (could be a namedtuple or dict).
+        """
+        return batch_list[0]
+        
     def run_predict_on_batch(batch_dict):
             """
             1) Build single-item dataset
@@ -57,13 +64,13 @@ def rollout_forecast(trainer, model, initial_batch, steps=2, batch_size=1):
             """
             ds = SingleBatchDataset(batch_dict)
 
-            dl = DataLoader(ds, batch_size=B, collate_fn=custom_collate, shuffle=False)
+            dl = DataLoader(ds, batch_size=B, collate_fn=single_item_collate, shuffle=False)
             
             # returns a list of predictions (one per batch item, but we only have 1)
             preds_list = trainer.predict(model, dataloaders=dl)
-            # Typically preds_list is a list of Tensors. We combine them if needed:
-            preds = torch.cat(preds_list, dim=0)
-            return preds
+            # print(preds_list)
+
+            return preds_list
 
     # 2) For each step in the rollout
     for step_idx in range(steps):
@@ -71,7 +78,7 @@ def rollout_forecast(trainer, model, initial_batch, steps=2, batch_size=1):
         preds = run_predict_on_batch(current_batch)  # shape depends on your model, e.g. [B, C, H, W]
         
         # store
-        rollout_dict["predictions"].append(preds.clone().cpu())
+        rollout_dict["predictions"].append(preds)
         rollout_dict["batches"].append(copy.deepcopy(current_batch))
 
         # handle times
@@ -82,7 +89,7 @@ def rollout_forecast(trainer, model, initial_batch, steps=2, batch_size=1):
         rollout_dict["lead_times"].append(current_batch.batch_metadata.lead_time)
 
         # 3) Build a new batch that has (last old time) + (predicted new time).
-        new_batch = build_new_batch_with_prediction(current_batch, preds)
+        new_batch = build_new_batch_with_prediction(current_batch, preds[0])
         
         # 4) This new_batch becomes the "current_batch" for the next iteration
         current_batch = new_batch
@@ -153,6 +160,7 @@ def build_new_batch_with_prediction(
             # find predicted data
             if var_name in group_vars_pred:
                 pred_tensor = group_vars_pred[var_name]  
+                # print(f"var_name {var_name} pred tensor shape: {pred_tensor.shape}")
                 # e.g. [B, (channels?), H, W], or [B,1,channels,H,W].
                 # If missing a time dim, unsqueeze it:
                 if pred_tensor.dim() == last_slice.dim() - 1:
@@ -279,26 +287,19 @@ def main(cfg: DictConfig):
         devices=cfg.training.devices,
         precision=cfg.training.precision,
         log_every_n_steps=cfg.training.log_steps,
-        logger=mlf_logger,
+        # logger=mlf_logger,
         enable_checkpointing=False,
         enable_progress_bar=True,)
 
-    pred = trainer.predict(loaded_model, test_dataloader)
-
-    # state_dict = torch.load(checkpoint_path, map_location=cfg.evaluation.test_device)
-    # print(state_dict)
-    # model.load_state_dict(state_dict)
-
-    # test_results = evaluation(loaded_model, test_dataloader, device=cfg.evaluation.test_device)
-
     # test_results is typically a list of dicts (one per test dataloader)
     print("=== Test Results ===")
-    # print(pred[0])
-    # print(pred[0].shape)
 
     test_sample = next(iter(test_dataloader))
-    res = rollout_forecast(trainer, loaded_model, test_sample, steps=2)
-    print(res)
+    rollout_dict = rollout_forecast(trainer, loaded_model, test_sample, steps=2)
 
+    for i, batch_dict in enumerate(rollout_dict["batches"]):
+        print(f"\n--- Inspecting Batch {i} ---")
+        inspect_batch_shapes_namedtuple(batch_dict)
+            
 if __name__ == "__main__":
     main()
