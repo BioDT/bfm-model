@@ -257,7 +257,6 @@ class BFM_lighting(LightningModule):
     def training_step(self, batch, batch_idx):
         lead_time = timedelta(hours=6)  # fixed lead time for pre-training
         output = self(batch, lead_time, batch_size=self.batch_size)
-
         loss = self.compute_loss(output, batch)
         self.log("train_loss", loss, batch_size=self.batch_size)
         return loss
@@ -265,10 +264,15 @@ class BFM_lighting(LightningModule):
     def test_step(self, batch, batch_idx):
         lead_time = timedelta(hours=6)  # fixed lead time for pre-training
         output = self(batch, lead_time, batch_size=self.batch_size)
-
+        print("Test time")
         loss = self.compute_loss(output, batch)
         self.log("test_loss", loss, batch_size=self.batch_size)
         return loss
+
+    def predict_step(self, batch, batch_idx):
+        lead_time = timedelta(hours=6)  # fixed lead time for pre-training
+        output = self(batch, lead_time, batch_size=self.batch_size)
+        return output
 
     def compute_loss(self, output, batch):
 
@@ -399,6 +403,7 @@ class FSDPEvalCallback(L.Callback):
             print(f"Step {trainer.global_step}: Validating using checkpoint: {ckpt_to_use}")
             trainer.validate(ckpt_path=ckpt_to_use)
 
+
 @hydra.main(version_base=None, config_path="configs", config_name="train_config")
 def main(cfg):
     # Setup config
@@ -417,8 +422,8 @@ def main(cfg):
 
     val_dataloader = DataLoader(
         test_dataset,
-        batch_size=cfg.evaluation.batch_size,
-        num_workers=0,
+        batch_size=cfg.training.batch_size,
+        num_workers=cfg.training.workers,
         collate_fn=custom_collate,
         drop_last=True,
         shuffle=False,
@@ -472,17 +477,15 @@ def main(cfg):
     
     model_summary = ModelSummary(BFM, max_depth=2)
     print(model_summary)
-    # /scratch-shared/<username>
+    
+    
     checkpoint_callback = ModelCheckpoint(
         dirpath=f"{output_dir}/checkpoints", 
-        filename="{epoch}-{step}",
         save_top_k=1, 
         monitor="val_loss",
         mode="min",
         # save_last=True
-    )
-
-
+        )
     
     print(f"Will be saving checkpoints at: {output_dir}/checkpoints")
 
@@ -502,10 +505,13 @@ def main(cfg):
         # num_nodes=cfg.training.num_nodes,
         log_every_n_steps=cfg.training.log_steps,
         logger=mlf_logger,
-        limit_train_batches=0.1, # For debugging to see what happens at the end of epoch
-        check_val_every_n_epoch=1,  # Do eval every 1 epochs
-        # val_check_interval=10, # Does not work in Distributed settings | Do eval every 10 training steps => 10 steps x 8 batch_size = Every 80 Batches
-        callbacks=[checkpoint_callback, OptimizerParamsLogger()],
+        limit_train_batches=8,      # Process 8 batches per epoch.
+        val_check_interval=4,       # Run validation every 4 training batches.
+        check_val_every_n_epoch=None,
+        # limit_train_batches=0.003, # For debugging to see what happens at the end of epoch
+        # check_val_every_n_epoch=None,  # Do eval every 1 epochs
+        # val_check_interval=3, # Does not work in Distributed settings | Do eval every 10 training steps => 10 steps x 8 batch_size = Every 80 Batches
+        callbacks=[checkpoint_callback],
     )
     # Experimental
     # mlflow.set_tracking_uri(output_dir)
@@ -529,7 +535,7 @@ def main(cfg):
 
     best_ckpt = checkpoint_callback.best_model_path
     print(f"Finished training successfully - Lets do a Test on the best checkpoint: {best_ckpt}!")
-    trainer.test(ckpt_path=best_ckpt, dataloaders=val_dataloader)
+    trainer.test(ckpt_path="best", dataloaders=val_dataloader)
 
     print("Finished testing successfully")
     trainer.print(torch.cuda.memory_summary())

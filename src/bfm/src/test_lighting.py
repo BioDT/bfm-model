@@ -98,9 +98,10 @@ def main(cfg: DictConfig):
     print(f"Loading model from checkpoint: {checkpoint_path}")
     # V1 Do the inference
     test_results = trainer.test(model=bfm_model, ckpt_path=checkpoint_path, dataloaders=test_dataloader)
-    
+    predictions = trainer.predict(model=bfm_model, ckpt_path=checkpoint_path, dataloaders=test_dataloader)
     print("=== Test Results ===")
     print(test_results)
+    print(predictions)
 
 
 if __name__ == "__main__":
