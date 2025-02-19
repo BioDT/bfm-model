@@ -505,8 +505,8 @@ def main(cfg):
         # num_nodes=cfg.training.num_nodes,
         log_every_n_steps=cfg.training.log_steps,
         logger=mlf_logger,
-        limit_train_batches=8,      # Process 8 batches per epoch.
-        val_check_interval=4,       # Run validation every 4 training batches.
+        # limit_train_batches=8,      # Process 8 batches per epoch.
+        val_check_interval=500,       # Run validation every 4 training batches.
         check_val_every_n_epoch=None,
         # limit_train_batches=0.003, # For debugging to see what happens at the end of epoch
         # check_val_every_n_epoch=None,  # Do eval every 1 epochs
