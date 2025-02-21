@@ -99,6 +99,8 @@ def main(cfg: DictConfig):
     print("=== Test Results ===")
     print(test_results)
     print(predictions)
+    # predictions_unscaled = test_dataset.scale_batch(predictions, direction="original")
+    # print(predictions_unscaled)
 
 
 if __name__ == "__main__":
