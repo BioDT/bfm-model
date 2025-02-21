@@ -21,11 +21,18 @@ data:
   atmos_levels: [50, 500, 1000]
   species_number: 4 # [0-22] available species
   data_path: /projects/prjs1134/data/projects/biodt/storage/final_dataset/train
+  # data_path: /data/projects/biodt/storage/batches/ # hinton
   test_data_path: /projects/prjs1134/data/projects/biodt/storage/final_dataset/test
+  # test_data_path: /data/projects/biodt/storage/batches/ # hinton
+  scaling:
+    enabled: False
+    stats_path: /projects/prjs1134/data/projects/biodt/storage/batches_2025_02_17/statistics.json # snellius
+    # stats_path: /data/projects/biodt/storage/batches/statistics.json # hinton
+    mode: standardize # normalize (mean and std), standardize (min-max)
 #TODO Checkpointing path: /scratch-shared/<username>
  
 training:
-  batch_size: 8
+  batch_size: 2
   workers: 15
   epochs: 2
   accelerator: gpu

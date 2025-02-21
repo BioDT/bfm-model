@@ -1,9 +1,14 @@
-import torch
-from torch.utils.data import Dataset, DataLoader, default_collate
-from datetime import datetime
 import os
 from collections import namedtuple
+from datetime import datetime
+from typing import Literal, NamedTuple
+
+import torch
+from omegaconf.dictconfig import DictConfig
+from torch.utils.data import DataLoader, Dataset, default_collate
+
 from src.bfm.src.dataset_basics import *
+from src.bfm.src.scaler import _rescale_recursive, dimensions_to_keep_by_key
 
 # Namedtuple definitions
 Batch = namedtuple("Batch", [
@@ -196,11 +201,13 @@ class LargeClimateDataset(Dataset):
     }
     """
 
-    def __init__(self, data_dir: str, num_species: int = 2):
+    def __init__(self, data_dir: str, scaling_settings: DictConfig, scaling_statistics: dict, num_species: int = 2):
         self.data_dir = data_dir
         self.num_species = num_species
         self.files = [os.path.join(data_dir, f) for f in os.listdir(data_dir) if f.endswith('.pt')]
         self.files.sort()
+        self.scaling_settings = scaling_settings
+        self.scaling_statistics = scaling_statistics
 
     def __len__(self):
         return len(self.files)
@@ -237,6 +244,9 @@ class LargeClimateDataset(Dataset):
         latitude_var = torch.tensor(latitudes[:new_H])
         longitude_var = torch.tensor(longitudes[:new_W])
 
+        # normalize or standardize variables
+        data = self.scale_batch(data, direction="scaled")
+
         # Calculate lead time
         dt_format = "%Y-%m-%dT%H:%M:%S"
         # Convert the two timestamps into datetime objects
@@ -270,6 +280,25 @@ class LargeClimateDataset(Dataset):
             forest_variables=forest_vars,
             species_variables=species_vars_wanted
         )
+    
+    
+    def scale_batch(self, batch: dict | Batch, direction: Literal["original", "scaled"] = "scaled"):
+        """
+        Scale a batch of data back or forward.
+        """
+        if not self.scaling_settings.enabled:
+            print("Scaling is not enabled in the configuration.")
+            return batch
+        convert_to_batch = False
+        if isinstance(batch, Batch):
+            # convert from NamedTuple to dict
+            batch = batch._asdict()
+            convert_to_batch = True
+        _rescale_recursive(batch, self.scaling_statistics, dimensions_to_keep_by_key=dimensions_to_keep_by_key, mode=self.scaling_settings.mode, direction=direction)
+        if convert_to_batch:
+            # convert back to NamedTuple
+            batch = Batch(**batch)
+        return batch
 
 def compute_variable_statistics(tensor: torch.Tensor) -> dict:
     """
