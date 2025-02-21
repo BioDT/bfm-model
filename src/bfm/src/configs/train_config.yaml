@@ -32,7 +32,7 @@ data:
 #TODO Checkpointing path: /scratch-shared/<username>
  
 training:
-  batch_size: 2
+  batch_size: 8
   workers: 15
   epochs: 2
   accelerator: gpu
