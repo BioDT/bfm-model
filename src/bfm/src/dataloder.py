@@ -231,6 +231,9 @@ class LargeClimateDataset(Dataset):
         new_H = (H // patch_size) * patch_size
         new_W = (W // patch_size) * patch_size
 
+        # normalize or standardize variables
+        data = self.scale_batch(data, direction="scaled")
+
         surface_vars = crop_variables(data["surface_variables"], new_H, new_W)
         single_vars = crop_variables(data["single_variables"], new_H, new_W)
         atmospheric_vars = crop_variables(data["atmospheric_variables"], new_H, new_W)
@@ -243,9 +246,6 @@ class LargeClimateDataset(Dataset):
         # crop metadata dimensions
         latitude_var = torch.tensor(latitudes[:new_H])
         longitude_var = torch.tensor(longitudes[:new_W])
-
-        # normalize or standardize variables
-        data = self.scale_batch(data, direction="scaled")
 
         # Calculate lead time
         dt_format = "%Y-%m-%dT%H:%M:%S"

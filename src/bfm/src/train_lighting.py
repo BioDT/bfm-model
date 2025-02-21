@@ -98,24 +98,43 @@ class BFM_lighting(LightningModule):
         self.total_steps = total_steps
 
         # The variable weights come from: w_var = 1 / standard_dev
+        # self.variable_weights = {
+        #     "surface_variables": {
+        #         "t2m": 0.13,
+        #         "msl": 0.00011,
+        #         # ... add more if surface has more
+        #     },
+        #     "single_variables": {"lsm": 2.27},
+        #     "atmospheric_variables": {"z": 1.22e-5, "t": 0.036},
+        #     "species_extinction_variables": {"ExtinctionValue": 38.0},
+        #     "land_variables": {"Land": 5.84e-4, "NDVI": 19.6},
+        #     "agriculture_variables": {
+        #         "AgricultureLand": 0.053,
+        #         "AgricultureIrrLand": 0.0,  # or skip if purely zero
+        #         "ArableLand": 0.085,
+        #         "Cropland": 0.36,
+        #     },
+        #     "forest_variables": {"Forest": 0.11},
+        #     "species_variables": {"Distribution": 1},
+        # }
         self.variable_weights = {
             "surface_variables": {
-                "t2m": 0.13,
-                "msl": 0.00011,
+                "t2m": 1.0,
+                "msl": 1.0,
                 # ... add more if surface has more
             },
-            "single_variables": {"lsm": 2.27},
-            "atmospheric_variables": {"z": 1.22e-5, "t": 0.036},
-            "species_extinction_variables": {"ExtinctionValue": 38.0},
-            "land_variables": {"Land": 5.84e-4, "NDVI": 19.6},
+            "single_variables": {"lsm": 1.0},
+            "atmospheric_variables": {"z": 1.0, "t": 1.0},
+            "species_extinction_variables": {"ExtinctionValue": 1.0},
+            "land_variables": {"Land": 1.0, "NDVI": 1.0},
             "agriculture_variables": {
-                "AgricultureLand": 0.053,
-                "AgricultureIrrLand": 0.0,  # or skip if purely zero
-                "ArableLand": 0.085,
-                "Cropland": 0.36,
+                "AgricultureLand": 1.0,
+                "AgricultureIrrLand": 1.0,  # or skip if purely zero
+                "ArableLand": 1.0,
+                "Cropland": 1.0,
             },
-            "forest_variables": {"Forest": 0.11},
-            "species_variables": {"Distribution": 1},
+            "forest_variables": {"Forest": 1.0},
+            "species_variables": {"Distribution": 1.0},
         }
 
         self.encoder = BFMEncoder(
@@ -350,7 +369,7 @@ class BFM_lighting(LightningModule):
     
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=3000, eta_min=self.learning_rate / 10)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=12000, eta_min=self.learning_rate / 10)
         # scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=self.lr_lambda)
 
         return [optimizer], [scheduler]
@@ -503,8 +522,10 @@ def main(cfg):
         # num_nodes=cfg.training.num_nodes,
         log_every_n_steps=cfg.training.log_steps,
         logger=mlf_logger,
-        # limit_train_batches=8,      # Process 8 batches per epoch.
-        val_check_interval=500,       # Run validation every 4 training batches.
+        # limit_train_batches=10,      # Process 10 batches per epoch.
+        # limit_val_batches=2,
+        # limit_test_batches=10,
+        val_check_interval=1000,       # Run validation every 4 training batches.
         check_val_every_n_epoch=None,
         # limit_train_batches=0.003, # For debugging to see what happens at the end of epoch
         # check_val_every_n_epoch=None,  # Do eval every 1 epochs

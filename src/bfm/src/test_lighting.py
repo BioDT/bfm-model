@@ -63,6 +63,8 @@ def main(cfg: DictConfig):
         devices=cfg.training.devices,
         precision=cfg.training.precision,
         log_every_n_steps=cfg.training.log_steps,
+        limit_test_batches=2,
+        limit_predict_batches=2,
         logger=mlf_logger,
         enable_checkpointing=False,
         enable_progress_bar=True,
@@ -99,8 +101,8 @@ def main(cfg: DictConfig):
     print("=== Test Results ===")
     print(test_results)
     print(predictions)
-    # predictions_unscaled = test_dataset.scale_batch(predictions, direction="original")
-    # print(predictions_unscaled)
+    predictions_unscaled = test_dataset.scale_batch(predictions, direction="original")
+    print(predictions_unscaled)
 
 
 if __name__ == "__main__":
