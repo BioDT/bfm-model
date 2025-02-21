@@ -19,7 +19,6 @@ from torch.utils.data import DataLoader
 from src.bfm.src.dataloder import LargeClimateDataset, custom_collate
 from src.bfm.src.decoder import BFMDecoder
 from src.bfm.src.encoder import BFMEncoder
-from src.bfm.src.scaler import load_stats
 from src.bfm.src.utils import save_run_id
 from src.mvit.mvit_model import MViT
 from src.swin_transformer.core.swim_core_v2 import Swin3DTransformer
@@ -415,11 +414,9 @@ def main(cfg):
 
     output_dir = HydraConfig.get().runtime.output_dir
 
-    scaling_statistics = load_stats(cfg.data.scaling.stats_path)
-
     print("Setting up Dataloader ...")
-    dataset = LargeClimateDataset(data_dir=cfg.data.data_path, scaling_settings=cfg.data.scaling, scaling_statistics=scaling_statistics, num_species=cfg.data.species_number)
-    test_dataset = LargeClimateDataset(data_dir=cfg.data.test_data_path, scaling_settings=cfg.data.scaling, scaling_statistics=scaling_statistics, num_species=cfg.data.species_number)  # Adapt
+    dataset = LargeClimateDataset(data_dir=cfg.data.data_path, scaling_settings=cfg.data.scaling, num_species=cfg.data.species_number)
+    test_dataset = LargeClimateDataset(data_dir=cfg.data.test_data_path, scaling_settings=cfg.data.scaling, num_species=cfg.data.species_number)  # Adapt
 
     val_dataloader = DataLoader(
         test_dataset,

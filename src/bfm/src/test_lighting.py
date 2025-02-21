@@ -1,18 +1,15 @@
 from datetime import datetime
+
 import hydra
-from omegaconf import DictConfig, OmegaConf
-
-import torch
 import lightning as L
-
-from torch.utils.data import DataLoader
-
+import torch
 from lightning.pytorch import seed_everything
 from lightning.pytorch.loggers import MLFlowLogger
+from omegaconf import DictConfig, OmegaConf
+from torch.utils.data import DataLoader
 
-from src.bfm.src.train_lighting import BFM_lighting
 from src.bfm.src.dataloder import LargeClimateDataset, custom_collate
-
+from src.bfm.src.train_lighting import BFM_lighting
 
 
 @hydra.main(version_base=None, config_path="configs", config_name="train_config")
@@ -43,7 +40,7 @@ def main(cfg: DictConfig):
 
     #Load the Test Dataset
     print("Setting up Dataloader ...")
-    test_dataset = LargeClimateDataset(data_dir=cfg.data.test_data_path, num_species=cfg.data.species_number)  # Adapt
+    test_dataset = LargeClimateDataset(data_dir=cfg.data.test_data_path, scaling_settings=cfg.data.scaling, num_species=cfg.data.species_number)  # Adapt
     print("Reading test data from :", cfg.data.test_data_path)
     test_dataloader = DataLoader(
         test_dataset,

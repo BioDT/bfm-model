@@ -8,7 +8,7 @@ from omegaconf.dictconfig import DictConfig
 from torch.utils.data import DataLoader, Dataset, default_collate
 
 from src.bfm.src.dataset_basics import *
-from src.bfm.src.scaler import _rescale_recursive, dimensions_to_keep_by_key
+from src.bfm.src.scaler import _rescale_recursive, dimensions_to_keep_by_key, load_stats
 
 # Namedtuple definitions
 Batch = namedtuple("Batch", [
@@ -201,13 +201,13 @@ class LargeClimateDataset(Dataset):
     }
     """
 
-    def __init__(self, data_dir: str, scaling_settings: DictConfig, scaling_statistics: dict, num_species: int = 2):
+    def __init__(self, data_dir: str, scaling_settings: DictConfig, num_species: int = 2):
         self.data_dir = data_dir
         self.num_species = num_species
         self.files = [os.path.join(data_dir, f) for f in os.listdir(data_dir) if f.endswith('.pt')]
         self.files.sort()
         self.scaling_settings = scaling_settings
-        self.scaling_statistics = scaling_statistics
+        self.scaling_statistics = load_stats(scaling_settings.stats_path)
 
     def __len__(self):
         return len(self.files)
