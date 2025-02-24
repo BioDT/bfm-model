@@ -1,5 +1,11 @@
 import os
 import glob
+import os
+import numpy as np
+import matplotlib.pyplot as plt
+import cartopy.crs as ccrs
+import torch
+
 
 
 def load_last_run_id(run_id_file: str):
@@ -178,3 +184,132 @@ def inspect_batch_shapes_namedtuple(
                 print(f"  {var_name}: not a tensor")
     
     print("=== End of Namedtuple Batch Inspection ===\n")
+
+
+def plot_europe_timesteps_and_difference(var_name: str,
+                                         tensor: torch.Tensor,
+                                         timestamps: list,
+                                         pressure_levels: list = None,
+                                         output_dir: str = "./plots",
+                                         channels: list = None,
+                                         plot: bool = True,
+                                         save: bool = True):
+    """
+    Plots and saves maps for Timestep 1, Timestep 2, and their difference over Europe,
+    using fixed coordinate arrays. It also includes metadata in the titles and filenames.
+    
+    Parameters:
+      var_name (str): Name of the variable (used for titles and filenames).
+      tensor (torch.Tensor): Input tensor with shape:
+           - 4D: [batch, 2, lat, lon], or
+           - 5D: [batch, 2, channel, lat, lon].
+      timestamps (list): List of two timestamp strings, e.g. ['2020-05-29T18:00:00', '2020-05-30T00:00:00'].
+      pressure_levels (list, optional): List of pressure levels corresponding to each channel (for atmospheric variables).
+      output_dir (str): Directory where plots will be saved.
+      channels (list, optional): List of channel indices to plot (if tensor is 5D). If not provided, all channels will be plotted.
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Convert tensor to numpy.
+    tensor_np = tensor.cpu().numpy()
+    
+    # Determine whether we have a channel dimension.
+    if tensor_np.ndim == 4:
+        # [batch, 2, lat, lon] -> treat as single channel.
+        channels_to_plot = [0]
+    elif tensor_np.ndim == 5:
+        num_channels = tensor_np.shape[2]
+        channels_to_plot = channels if channels is not None else list(range(num_channels))
+    else:
+        raise ValueError(f"Unexpected tensor shape: {tensor_np.shape}")
+    
+    # Fixed coordinate arrays:
+    # Latitude: 152 points from 72.0 down to 34.25, then sorted ascending.
+    lat_fixed = np.linspace(72, 34.25, 152)
+    lat_fixed = np.sort(lat_fixed)  # Now from 34.25 to 72.0.
+    # Longitude: 320 points linearly spaced from -30.0 to 40.0.
+    lon_fixed = np.linspace(-30, 40, 320)
+    # Create a meshgrid.
+    Lon, Lat = np.meshgrid(lon_fixed, lat_fixed, indexing='xy')
+    
+    # Define Europe bounding box.
+    europe_extent = [-30, 40, 34.25, 72]
+    
+    # Unpack timestamps.
+    if len(timestamps) != 2:
+        raise ValueError("timestamps must be a list of two elements (for Timestep 1 and Timestep 2).")
+    tstamp0, tstamp1 = timestamps
+    
+    # Loop over channels.
+    for ch in channels_to_plot:
+        # Extract t1 and t2 from tensor.
+        if tensor_np.ndim == 4:
+            t1_data = tensor_np[0, 0, :, :]
+            t2_data = tensor_np[0, 1, :, :]
+        else:
+            t1_data = tensor_np[0, 0, ch, :, :]
+            t2_data = tensor_np[0, 1, ch, :, :]
+        
+        diff_data = t2_data - t1_data
+        
+        # Construct additional metadata for title/filename.
+        pressure_info = ""
+        if "atmospheric_variables" in var_name and pressure_levels is not None:
+            try:
+                pressure_info = f"_p{pressure_levels[ch]}"
+            except IndexError:
+                pressure_info = ""
+        
+        # Create figure with 3 subplots.
+        fig, axes = plt.subplots(1, 3, figsize=(18, 6),
+                                 subplot_kw={'projection': ccrs.PlateCarree()})
+        
+        # Plot Timestep 1.
+        ax = axes[0]
+        ax.set_extent(europe_extent, crs=ccrs.PlateCarree())
+        try:
+            ax.coastlines(resolution='50m')
+        except Exception as e:
+            print("Error drawing coastlines on Timestep 1:", e)
+        cf1 = ax.contourf(Lon, Lat, t1_data, levels=60, cmap='viridis',
+                          transform=ccrs.PlateCarree())
+        ax.set_title(f"{var_name} (Ch {ch}{pressure_info})\nTimestep 1\n{tstamp0}")
+        fig.colorbar(cf1, ax=ax, orientation='vertical', label="Value")
+        
+        # Plot Timestep 2.
+        ax = axes[1]
+        ax.set_extent(europe_extent, crs=ccrs.PlateCarree())
+        try:
+            ax.coastlines(resolution='50m')
+        except Exception as e:
+            print("Error drawing coastlines on Timestep 2:", e)
+        cf2 = ax.contourf(Lon, Lat, t2_data, levels=60, cmap='viridis',
+                          transform=ccrs.PlateCarree())
+        ax.set_title(f"{var_name} (Ch {ch}{pressure_info})\nTimestep 2\n{tstamp1}")
+        fig.colorbar(cf2, ax=ax, orientation='vertical', label="Value")
+        
+        # Plot Difference.
+        ax = axes[2]
+        ax.set_extent(europe_extent, crs=ccrs.PlateCarree())
+        try:
+            ax.coastlines(resolution='50m')
+        except Exception as e:
+            print("Error drawing coastlines on Difference plot:", e)
+        cf_diff = ax.contourf(Lon, Lat, diff_data, levels=60, cmap='RdBu_r',
+                              transform=ccrs.PlateCarree())
+        ax.set_title(f"{var_name} (Ch {ch}{pressure_info})\nDifference (T2-T1)")
+        fig.colorbar(cf_diff, ax=ax, orientation='vertical', label="Difference")
+        
+        plt.tight_layout()
+        if plot:
+            plt.show()
+        if save:
+            # Construct filename.
+            filename = os.path.join(
+                output_dir,
+                f"{var_name}_ch{ch}{pressure_info}_t0_{tstamp0}_t1_{tstamp1}.png"
+            )
+            plt.savefig(filename, dpi=300, bbox_inches='tight')
+            plt.close(fig)
+            print(f"Saved plot: {filename}")
+

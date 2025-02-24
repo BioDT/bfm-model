@@ -525,7 +525,7 @@ def main(cfg):
         # limit_train_batches=10,      # Process 10 batches per epoch.
         # limit_val_batches=2,
         # limit_test_batches=10,
-        val_check_interval=200,       # Run validation every 4 training batches.
+        val_check_interval=cfg.training.eval_every,       # Run validation every 4 training batches.
         check_val_every_n_epoch=None,
         # limit_train_batches=0.003, # For debugging to see what happens at the end of epoch
         # check_val_every_n_epoch=None,  # Do eval every 1 epochs

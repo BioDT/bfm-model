@@ -1,4 +1,5 @@
 import os
+import pickle
 import copy
 from datetime import datetime
 import hydra
@@ -19,7 +20,7 @@ from src.bfm.src.train_lighting import BFM_lighting
 
 
 
-def rollout_forecast(trainer, model, initial_batch, steps=2, batch_size=1):
+def rollout_forecast(trainer, model, initial_batch, test_dataset, steps=2, batch_size=1):
 
     # Container for results
     rollout_dict = {
@@ -66,6 +67,9 @@ def rollout_forecast(trainer, model, initial_batch, steps=2, batch_size=1):
             
             # returns a list of predictions (one per batch item, but we only have 1)
             preds_list = trainer.predict(model, dataloaders=dl)
+            
+            # predictions_unscaled = test_dataset.scale_batch(preds_list, direction="original")
+
             # print(preds_list)
 
             return preds_list
@@ -233,7 +237,7 @@ def main(cfg: DictConfig):
 
     #Load the Test Dataset
     print("Setting up Dataloader ...")
-    test_dataset = LargeClimateDataset(data_dir="data_small/rollout", num_species=cfg.data.species_number)  # Adapt
+    test_dataset = LargeClimateDataset(data_dir="data_small/rollout", scaling_settings=cfg.data.scaling, num_species=cfg.data.species_number)
     print("Reading test data from :", "data_small/rollout")
     test_dataloader = DataLoader(
         test_dataset,
@@ -293,11 +297,16 @@ def main(cfg: DictConfig):
     print("=== Test Results ===")
 
     test_sample = next(iter(test_dataloader))
-    rollout_dict = rollout_forecast(trainer, loaded_model, test_sample, steps=2)
-
+    rollout_dict = rollout_forecast(trainer, model=loaded_model, 
+                                    initial_batch=test_sample, test_dataset=test_dataset, steps=2)
+    
+    # Store the rollout dictionary
+    f = open("rollouts.pkl", "wb")
+    pickle.dump(rollout_dict, f)
+    f.close()
     for i, batch_dict in enumerate(rollout_dict["batches"]):
         print(f"\n--- Inspecting Batch {i} ---")
         inspect_batch_shapes_namedtuple(batch_dict)
-            
+
 if __name__ == "__main__":
     main()

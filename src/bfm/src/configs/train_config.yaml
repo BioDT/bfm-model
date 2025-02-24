@@ -20,13 +20,13 @@ model:
 data:
   atmos_levels: [50, 500, 1000]
   species_number: 22 # [0-22] available species
-  data_path: /projects/prjs1134/data/projects/biodt/storage/final_dataset/train
-  # data_path: /data/projects/biodt/storage/batches/ # hinton
-  test_data_path: /projects/prjs1134/data/projects/biodt/storage/final_dataset/test
-  # test_data_path: /data/projects/biodt/storage/batches/ # hinton
+  # data_path: /projects/prjs1134/data/projects/biodt/storage/final_dataset/train
+  data_path: /home/thanasis.trantas/git_projects/bfm-model/data_small # hinton
+  # test_data_path: /projects/prjs1134/data/projects/biodt/storage/final_dataset/test
+  test_data_path: /home/thanasis.trantas/git_projects/bfm-model/data_small # hinton
   scaling:
     enabled: True
-    stats_path: /projects/prjs1134/data/projects/biodt/storage/batches_2025_02_17/statistics.json # snellius
+    stats_path: batch_statistics/statistics.json # #/projects/prjs1134/data/projects/biodt/storage/batches_2025_02_17/statistics.json # snellius
     # stats_path: /data/projects/biodt/storage/batches/statistics.json # hinton
     mode: normalize # normalize (mean and std), standardize (min-max)
 #TODO Checkpointing path: /scratch-shared/<username>
@@ -46,6 +46,7 @@ training:
   lr: 0.00005  #5e-4
   wd: 0.0000005 #5e-6
   checkpoint_path: False
+  eval_every: 2
 
 general:
   do_eval: True
@@ -54,6 +55,6 @@ mlflow:
   port: 8082 # change here port if you get [Errno 98] Address already in use
 
 evaluation:
-  checkpoint_path: /home/atrantas/bfm-model/outputs/2025-02-24/10-30-49/checkpoints/epoch=0-step=600.ckpt #/home/atrantas/bfm-model/outputs/2025-02-19/11-46-40/checkpoints/epoch=1-step=140.ckpt #outputs/2025-02-17/15-36-49/checkpoints/epoch=8-step=9.ckpt #/home/atrantas/bfm-model/outputs/2025-02-12-withcheckpoint/16-04-11/checkpoints/epoch=0-step=26.ckpt
-  batch_size: 8
+  checkpoint_path: /home/thanasis.trantas/git_projects/bfm-model/outputs/2025-02-24/12-32-16/checkpoints/epoch=1-step=8.ckpt #/home/atrantas/bfm-model/outputs/2025-02-24/10-30-49/checkpoints/epoch=0-step=600.ckpt #/home/atrantas/bfm-model/outputs/2025-02-19/11-46-40/checkpoints/epoch=1-step=140.ckpt #outputs/2025-02-17/15-36-49/checkpoints/epoch=8-step=9.ckpt #/home/atrantas/bfm-model/outputs/2025-02-12-withcheckpoint/16-04-11/checkpoints/epoch=0-step=26.ckpt
+  batch_size: 1
   test_device: "cuda:0"
