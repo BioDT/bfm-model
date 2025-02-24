@@ -119,22 +119,22 @@ class BFM_lighting(LightningModule):
         # }
         self.variable_weights = {
             "surface_variables": {
-                "t2m": 1.0,
-                "msl": 1.0,
+                "t2m": 1.7,
+                "msl": 1.5,
                 # ... add more if surface has more
             },
-            "single_variables": {"lsm": 1.0},
-            "atmospheric_variables": {"z": 1.0, "t": 1.0},
-            "species_extinction_variables": {"ExtinctionValue": 1.0},
-            "land_variables": {"Land": 1.0, "NDVI": 1.0},
+            "single_variables": {"lsm": 0.32},
+            "atmospheric_variables": {"z": 0.46, "t": 1.2},
+            "species_extinction_variables": {"ExtinctionValue": 1.43},
+            "land_variables": {"Land": 0.2, "NDVI": 1.48},
             "agriculture_variables": {
-                "AgricultureLand": 1.0,
-                "AgricultureIrrLand": 1.0,  # or skip if purely zero
-                "ArableLand": 1.0,
-                "Cropland": 1.0,
+                "AgricultureLand": 0.4,
+                "AgricultureIrrLand": 0.92,  # or skip if purely zero
+                "ArableLand": 0.38,
+                "Cropland": 0.51,
             },
-            "forest_variables": {"Forest": 1.0},
-            "species_variables": {"Distribution": 1.0},
+            "forest_variables": {"Forest": 0.38},
+            "species_variables": {"Distribution": 2.0},
         }
 
         self.encoder = BFMEncoder(
@@ -525,7 +525,7 @@ def main(cfg):
         # limit_train_batches=10,      # Process 10 batches per epoch.
         # limit_val_batches=2,
         # limit_test_batches=10,
-        val_check_interval=1000,       # Run validation every 4 training batches.
+        val_check_interval=200,       # Run validation every 4 training batches.
         check_val_every_n_epoch=None,
         # limit_train_batches=0.003, # For debugging to see what happens at the end of epoch
         # check_val_every_n_epoch=None,  # Do eval every 1 epochs

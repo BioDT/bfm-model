@@ -1,9 +1,8 @@
 import os
 import copy
-from datetime import datetime, timedelta
+from datetime import datetime
 import hydra
 from omegaconf import DictConfig, OmegaConf
-from hydra.core.hydra_config import HydraConfig
 
 import torch
 import lightning as L
@@ -30,9 +29,8 @@ def rollout_forecast(trainer, model, initial_batch, steps=2, batch_size=1):
         "lead_times": [],
     }
 
-    # 1) Start from the initial_batch
     current_batch = copy.deepcopy(initial_batch)  # so we don't overwrite user input
-    B = batch_size  # or read from your structure
+    B = batch_size
 
     class SingleBatchDataset(Dataset):
         def __init__(self, one_batch):
@@ -72,7 +70,7 @@ def rollout_forecast(trainer, model, initial_batch, steps=2, batch_size=1):
 
             return preds_list
 
-    # 2) For each step in the rollout
+    # For each step in the rollout
     for step_idx in range(steps):
         # run predict
         preds = run_predict_on_batch(current_batch)  # shape depends on your model, e.g. [B, C, H, W]
@@ -83,15 +81,15 @@ def rollout_forecast(trainer, model, initial_batch, steps=2, batch_size=1):
 
         # handle times
         # Suppose your "Batch" has metadata => lead_time, timestamps...
-        # We'll store the new predicted time. If you have an actual new "time" dimension, do it.
+        # We'll store the new predicted time.
         step_timestamp = current_batch.batch_metadata.timestamp[-1]
         rollout_dict["timestamps"].append(step_timestamp)
         rollout_dict["lead_times"].append(current_batch.batch_metadata.lead_time)
 
-        # 3) Build a new batch that has (last old time) + (predicted new time).
+        # Build a new batch that has (last old time) + (predicted new time).
         new_batch = build_new_batch_with_prediction(current_batch, preds[0])
         
-        # 4) This new_batch becomes the "current_batch" for the next iteration
+        # This new_batch becomes the "current_batch" for the next iteration
         current_batch = new_batch
 
     return rollout_dict
@@ -137,10 +135,10 @@ def build_new_batch_with_prediction(
             "species_variables",
         ]
 
-    # 1) Make a copy so we don't modify old_batch in place
+    # Make a copy so we don't modify old_batch in place
     new_batch = copy.deepcopy(old_batch)
 
-    # 2) For each group, unify last old time with predicted new time
+    # For each group, unify last old time with predicted new time
     for group_name in groups:
         if not hasattr(new_batch, group_name):
             continue  # skip if group doesn't exist
@@ -176,13 +174,13 @@ def build_new_batch_with_prediction(
 
         new_batch = new_batch._replace(**{group_name: group_vars_old})
 
-    # 3) Update metadata
+    # Update metadata
     old_md = new_batch.batch_metadata._asdict()
     old_ts = old_md["timestamp"]
     if len(old_ts) >= 1:
         # We'll keep old_ts[-1] + new_time
         # or do old_ts[-2], old_ts[-1] => shift forward. 
-        # Usually your old batch had exactly 2 timestamps => old_ts[-1] is the last one.
+        # The old batch had exactly 2 timestamps => old_ts[-1] is the last one.
         new_time_str = compute_next_timestamp(old_ts[-1])  
         # e.g. if old_ts==[t0, t1], new_ts=>[t1, t2]
         new_ts_list = [old_ts[-1], new_time_str]

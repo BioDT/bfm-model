@@ -208,6 +208,7 @@ class LargeClimateDataset(Dataset):
         self.files.sort()
         self.scaling_settings = scaling_settings
         self.scaling_statistics = load_stats(scaling_settings.stats_path)
+        print(f"We scale the dataset {scaling_settings.enabled} with {scaling_settings.mode}")
 
     def __len__(self):
         return len(self.files)
@@ -287,7 +288,7 @@ class LargeClimateDataset(Dataset):
         Scale a batch of data back or forward.
         """
         if not self.scaling_settings.enabled:
-            print("Scaling is not enabled in the configuration.")
+            # print("Scaling is not enabled in the configuration.")
             return batch
         convert_to_batch = False
         if isinstance(batch, Batch):
