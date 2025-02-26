@@ -298,7 +298,7 @@ def main(cfg: DictConfig):
 
     test_sample = next(iter(test_dataloader))
     rollout_dict = rollout_forecast(trainer, model=loaded_model, 
-                                    initial_batch=test_sample, test_dataset=test_dataset, steps=2)
+                                    initial_batch=test_sample, test_dataset=test_dataset, steps=10)
     
     # Store the rollout dictionary
     f = open("rollouts.pkl", "wb")

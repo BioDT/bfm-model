@@ -301,15 +301,89 @@ def plot_europe_timesteps_and_difference(var_name: str,
         fig.colorbar(cf_diff, ax=ax, orientation='vertical', label="Difference")
         
         plt.tight_layout()
-        if plot:
-            plt.show()
-        if save:
+        fig.canvas.draw()
+        if save and plot:
             # Construct filename.
             filename = os.path.join(
                 output_dir,
-                f"{var_name}_ch{ch}{pressure_info}_t0_{tstamp0}_t1_{tstamp1}.png"
+                f"{var_name}_ch{ch}{pressure_info}_t0_{tstamp0}_t1_{tstamp1}.jpeg"
             )
             plt.savefig(filename, dpi=300, bbox_inches='tight')
+            plt.show()
             plt.close(fig)
             print(f"Saved plot: {filename}")
+        else:
+            plt.show()
 
+
+def compute_species_occurrences(batch) -> dict:
+    """
+    Compute the number of occurrences for each species variable in the batch.
+    For each variable in batch.species_variables, count the number of nonzero elements
+    for Timestep 1 and Timestep 2. Also log the timestamps from batch.batch_metadata.
+    
+    Args:
+        batch: An object (e.g., a namedtuple) with at least:
+            - batch_metadata (with attribute 'timestamp': list of two strings)
+            - species_variables (dict of variable name -> tensor)
+              Each tensor is either:
+                  4D: [batch, 2, lat, lon] or
+                  5D: [batch, 2, channel, lat, lon]
+    
+    Returns:
+        dict: A dictionary mapping each species variable name to its statistics:
+              {
+                <var_name>: {
+                    "timestamp_t0": <timestamp for Timestep 1>,
+                    "timestamp_t1": <timestamp for Timestep 2>,
+                    "occurrences": <occurrence counts>
+                },
+                ...
+              }
+              
+              For a 4D tensor, "occurrences" is a dict:
+                  {"t0": count_at_timestep_1, "t1": count_at_timestep_2}
+              For a 5D tensor, "occurrences" is a dict mapping channel indices to:
+                  {"t0": count_at_timestep_1, "t1": count_at_timestep_2}
+    """
+    result = {}
+    
+    # Access metadata using attribute access.
+    metadata = batch.batch_metadata
+    # Assume metadata.timestamp is a list of two strings.
+    try:
+        timestamp_t0 = metadata.timestamp[0]
+        timestamp_t1 = metadata.timestamp[1]
+    except (AttributeError, IndexError):
+        timestamp_t0 = "unknown"
+        timestamp_t1 = "unknown"
+    
+    # Process each species variable.
+    species_vars = batch.species_variables
+    for var_name, tensor in species_vars.items():
+        occ_stats = {}
+        # Check the tensor dimensions.
+        if tensor.ndim == 4:
+            # 4D tensor: [batch, 2, lat, lon]
+            # We assume batch size 1; count nonzero elements for each time slice.
+            count_t0 = int(torch.count_nonzero(tensor[0, 0]).item())
+            count_t1 = int(torch.count_nonzero(tensor[0, 1]).item())
+            occ_stats = {"t0": count_t0, "t1": count_t1}
+        elif tensor.ndim == 5:
+            # 5D tensor: [batch, 2, channel, lat, lon]
+            occ_stats = {}
+            num_channels = tensor.shape[2]
+            for ch in range(num_channels):
+                count_t0 = int(torch.count_nonzero(tensor[0, 0, ch]).item())
+                count_t1 = int(torch.count_nonzero(tensor[0, 1, ch]).item())
+                occ_stats[f"channel_{ch}"] = {"t0": count_t0, "t1": count_t1}
+        else:
+            occ_stats = {"note": "Unsupported tensor shape for occurrence count."}
+        
+        result[var_name] = {
+            "timestamp_t0": timestamp_t0,
+            "timestamp_t1": timestamp_t1,
+            "occurrences": occ_stats
+        }
+    
+    return result

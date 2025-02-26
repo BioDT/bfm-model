@@ -193,6 +193,7 @@ class LargeClimateDataset(Dataset):
         "batch_metadata": {...},
         "surface_variables": {...},
         "single_variables": {...},
+        "species_variables" {...},
         "atmospheric_variables": {...},
         "species_extinction_variables": {...},
         "land_variables": {...},
