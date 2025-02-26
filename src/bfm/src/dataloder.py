@@ -260,6 +260,7 @@ class LargeClimateDataset(Dataset):
         # Fix the species distribution shapes
         dist = species_vars_wanted["Distribution"].permute(0, 3, 1, 2)  # => [T, C=22, H=153, W=152]
         species_vars_wanted["Distribution"] = dist[:, :self.num_species, :, :].to(torch.float32) # Select only 3 species for now
+        species_ids_wanted = species_list[:self.num_species]
         
 
         metadata = Metadata(
@@ -268,7 +269,7 @@ class LargeClimateDataset(Dataset):
             timestamp=timestamps,
             lead_time=lead_time_hours,
             pressure_levels=pressure_levels,
-            species_list=species_list,
+            species_list=species_ids_wanted,
         )
 
         return Batch(
