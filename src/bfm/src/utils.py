@@ -1,11 +1,10 @@
-import os
 import glob
 import os
-import numpy as np
-import matplotlib.pyplot as plt
-import cartopy.crs as ccrs
-import torch
 
+import cartopy.crs as ccrs
+import matplotlib.pyplot as plt
+import numpy as np
+import torch
 
 
 def load_last_run_id(run_id_file: str):
@@ -142,6 +141,17 @@ def inspect_batch_shapes_dict(
                 print(f"  {var_name}: NOT a tensor or no .shape attribute")
 
     print("=== End of Batch Inspection ===\n")
+
+def compute_next_timestamp(old_time_str, hours=6):
+    """
+    Example function to parse an ISO date, add specified number of hours, return new iso string.
+    Adjust to your date/time logic.
+    """
+    from datetime import datetime, timedelta
+    dt_format = "%Y-%m-%dT%H:%M:%S"
+    old_dt = datetime.strptime(old_time_str, dt_format)
+    new_dt = old_dt + timedelta(hours=hours)
+    return new_dt.strftime(dt_format)
 
 
 def inspect_batch_shapes_namedtuple(

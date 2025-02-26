@@ -1,23 +1,20 @@
+import copy
 import os
 import pickle
-import copy
 from datetime import datetime
+
 import hydra
-from omegaconf import DictConfig, OmegaConf
-
-import torch
 import lightning as L
-
-from torch.utils.data import DataLoader, Dataset
-
+import torch
 from lightning.pytorch import seed_everything
 from lightning.pytorch.loggers import MLFlowLogger
+from omegaconf import DictConfig, OmegaConf
+from torch.utils.data import DataLoader, Dataset
 
+from src.bfm.src.batch_utils import *
 from src.bfm.src.dataloder import LargeClimateDataset, custom_collate
-from src.bfm.src.utils import inspect_batch_shapes_namedtuple
 from src.bfm.src.train_lighting import BFM_lighting
-
-
+from src.bfm.src.utils import compute_next_timestamp, inspect_batch_shapes_namedtuple
 
 
 def rollout_forecast(trainer, model, initial_batch, test_dataset, steps=2, batch_size=1):
@@ -197,17 +194,6 @@ def build_new_batch_with_prediction(
 
     return new_batch
 
-def compute_next_timestamp(old_time_str):
-    """
-    Example function to parse an ISO date, add 6 hours, return new iso string.
-    Adjust to your date/time logic.
-    """
-    from datetime import datetime, timedelta
-    dt_format = "%Y-%m-%dT%H:%M:%S"
-    old_dt = datetime.strptime(old_time_str, dt_format)
-    new_dt = old_dt + timedelta(hours=6)
-    return new_dt.strftime(dt_format)
-
 
 @hydra.main(version_base=None, config_path="configs", config_name="train_config")
 def main(cfg: DictConfig):
@@ -304,7 +290,10 @@ def main(cfg: DictConfig):
     f = open("rollouts.pkl", "wb")
     pickle.dump(rollout_dict, f)
     f.close()
+    os.makedirs("rollout_batches", exist_ok=True)
     for i, batch_dict in enumerate(rollout_dict["batches"]):
+        timestamps = batch_dict.batch_metadata.timestamp
+        save_batch(batch_dict, f"rollout_batches/prediction_{timestamps[0]}_to_{timestamps[1]}.pt")
         print(f"\n--- Inspecting Batch {i} ---")
         inspect_batch_shapes_namedtuple(batch_dict)
 
