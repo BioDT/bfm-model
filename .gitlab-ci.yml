@@ -39,9 +39,8 @@ test:
   stage: test
   script:
     - echo "This is the test stage"
-    - cd tests
     - python3 -m unittest -v
-    - pytest --junitxml=report.xml
+    - pytest -vv --junitxml=tests/report.xml
   artifacts:
     when: always
     reports:
