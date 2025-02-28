@@ -16,14 +16,13 @@ cache:
     - .cache/pip
     - /root/.cache/pypoetry/virtualenvs
 before_script:
-  - python --version ; pip --version  # For debugging
+  - apt install pre-commit
   # - pip install virtualenv
   # - virtualenv venv
   # - source venv/bin/activate
   - pip install poetry
   - poetry install
   - eval $(poetry env activate)
-  - sudo apt install pre-commit
 
 stages:
 - lint
