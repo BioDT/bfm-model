@@ -22,16 +22,21 @@ before_script:
   - pip install poetry
   - poetry install
   - source `poetry env info --path`/bin/activate
-test:
-  script:
-    - pip install ruff tox  # you can also use tox
-    - pip install --editable "."
-    - tox -e py,ruff
 lint:
   # before_script:
   #   - apt update && apt install -y --no-install-recommends git
   script:
     - pre-commit run --all-files
+testing:
+  script:
+    - echo "This is the test stage"
+    - cd tests
+    - python3 -m unittest -v
+    - pytest --junitxml=report.xml
+  artifacts:
+    when: always
+    reports:
+      junit: tests/report.xml
 # run:
 #   script:
 #     - pip install .
