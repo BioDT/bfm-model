@@ -174,7 +174,9 @@ class Attention(nn.Module):
         self.to_q = nn.Linear(q_dim, inner_dim, bias=False)
         self.to_k = nn.Linear(context_dim, inner_dim, bias=False)
         self.to_v = nn.Linear(context_dim, inner_dim, bias=False)
-        print(f"BuiltinAttention q_dim {q_dim} | context dim {context_dim} | num q heads {heads} | head dim {head_dim} | kv_heads {None}" )
+        print(
+            f"BuiltinAttention q_dim {q_dim} | context dim {context_dim} | num q heads {heads} | head dim {head_dim} | kv_heads {None}"
+        )
 
         self.dropout = nn.Dropout(dropout)
         # project attention output back to the query dimension
@@ -263,7 +265,6 @@ class Attention(nn.Module):
         return self.to_out(out)
 
 
-
 class GQAAttention(nn.Module):
     """
     Multi-head Attention with Grouped Query Attention (GQA).
@@ -282,7 +283,7 @@ class GQAAttention(nn.Module):
         n_q_heads: int = 8,
         n_kv_heads: int = None,
         head_dim: int = 64,
-        dropout: float = 0.1
+        dropout: float = 0.1,
     ):
         """
         Args:
@@ -343,14 +344,14 @@ class GQAAttention(nn.Module):
         context = x if context is None else context
 
         # Project Q, K, V
-        q = self.to_q(x)           # (b, seq_len_q, n_q_heads*head_dim)
-        k = self.to_k(context)     # (b, seq_len_kv, n_kv_heads*head_dim)
-        v = self.to_v(context)     # (b, seq_len_kv, n_kv_heads*head_dim)
+        q = self.to_q(x)  # (b, seq_len_q, n_q_heads*head_dim)
+        k = self.to_k(context)  # (b, seq_len_kv, n_kv_heads*head_dim)
+        v = self.to_v(context)  # (b, seq_len_kv, n_kv_heads*head_dim)
 
         # Split heads
-        q = self._split_heads(q, self.n_q_heads)    # (b, n_q_heads, seq_len_q, head_dim)
-        k = self._split_heads(k, self.n_kv_heads)   # (b, n_kv_heads, seq_len_kv, head_dim)
-        v = self._split_heads(v, self.n_kv_heads)   # (b, n_kv_heads, seq_len_kv, head_dim)
+        q = self._split_heads(q, self.n_q_heads)  # (b, n_q_heads, seq_len_q, head_dim)
+        k = self._split_heads(k, self.n_kv_heads)  # (b, n_kv_heads, seq_len_kv, head_dim)
+        v = self._split_heads(v, self.n_kv_heads)  # (b, n_kv_heads, seq_len_kv, head_dim)
 
         # If we have fewer KV heads than Q heads, replicate K and V
         # so the final dot-product matches shape: (b, n_q_heads, seq_len_q, seq_len_kv)
@@ -370,7 +371,7 @@ class GQAAttention(nn.Module):
             max_neg_value = -torch.finfo(sim.dtype).max
             sim = sim.masked_fill(~mask, max_neg_value)
 
-        attn = sim.softmax(dim=-1)               # (b, n_q_heads, seq_len_q, seq_len_kv)
+        attn = sim.softmax(dim=-1)  # (b, n_q_heads, seq_len_q, seq_len_kv)
         attn = self.dropout(attn)
 
         # Weighted sum: (b, n_q_heads, seq_len_q, head_dim)
@@ -404,7 +405,7 @@ class BuiltinGQAAttention(nn.Module):
         n_kv_heads: int = None,
         head_dim: int = 64,
         dropout: float = 0.1,
-        is_causal: bool = False
+        is_causal: bool = False,
     ):
         """
         Args:
@@ -425,7 +426,9 @@ class BuiltinGQAAttention(nn.Module):
         self.q_dim = q_dim
         context_dim = context_dim if context_dim is not None else q_dim
         self.context_dim = context_dim
-        print(f"BuiltinAttention q_dim {q_dim} | context dim {context_dim} | num q heads {n_q_heads} | head dim {head_dim} | kv_heads {n_kv_heads}" )
+        print(
+            f"BuiltinAttention q_dim {q_dim} | context dim {context_dim} | num q heads {n_q_heads} | head dim {head_dim} | kv_heads {n_kv_heads}"
+        )
 
         self.dropout_p = dropout
 
@@ -438,11 +441,7 @@ class BuiltinGQAAttention(nn.Module):
         self.out_proj = nn.Linear(n_q_heads * head_dim, q_dim)
 
     def forward(
-        self,
-        x: torch.Tensor,
-        context: torch.Tensor = None,
-        mask: torch.Tensor = None,
-        is_causal: bool = None
+        self, x: torch.Tensor, context: torch.Tensor = None, mask: torch.Tensor = None, is_causal: bool = None
     ) -> torch.Tensor:
         """
         Args:
@@ -466,9 +465,9 @@ class BuiltinGQAAttention(nn.Module):
         seq_len_kv = context.size(1)
 
         # 1) Project Q, K, V
-        q = self.q_proj(x)      # (bsz, seq_len_q, n_q_heads * head_dim)
-        k = self.k_proj(context) # (bsz, seq_len_kv, n_kv_heads * head_dim)
-        v = self.v_proj(context) # (bsz, seq_len_kv, n_kv_heads * head_dim)
+        q = self.q_proj(x)  # (bsz, seq_len_q, n_q_heads * head_dim)
+        k = self.k_proj(context)  # (bsz, seq_len_kv, n_kv_heads * head_dim)
+        v = self.v_proj(context)  # (bsz, seq_len_kv, n_kv_heads * head_dim)
 
         # 2) Reshape into [batch, n_q_heads, seq_len, head_dim] for Q
         #    and [batch, n_kv_heads, seq_len, head_dim] for K/V.
@@ -495,11 +494,13 @@ class BuiltinGQAAttention(nn.Module):
         #    enable_gqa=True tells PyTorch we have different # of heads for Q vs K/V
         #    and it will replicate K/V heads if needed.
         out = F.scaled_dot_product_attention(
-            q, k, v,
+            q,
+            k,
+            v,
             attn_mask=final_attn_mask,
             dropout_p=self.dropout_p if self.training else 0.0,
             is_causal=is_causal,
-            enable_gqa=True  # <--- GQA flag
+            enable_gqa=True,  # <--- GQA flag
         )
 
         # 5) out shape is [bsz, n_q_heads, seq_len_q, head_dim]. We need to bring it back to [bsz, seq_len_q, n_q_heads * head_dim].
@@ -508,4 +509,3 @@ class BuiltinGQAAttention(nn.Module):
         # 6) Final linear
         out = self.out_proj(out)
         return out
-

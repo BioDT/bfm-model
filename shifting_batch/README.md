@@ -10,4 +10,3 @@ At each time, we have the current batches (used in training) and the next batche
 |----------------|--------|--------|---------|---------|
 | create_batch   | [0:k]  | [k:2k] | [2k:3k] |         |
 | train + delete |        | [0:k]  | [k:2k]  | [2k:3k] |
-

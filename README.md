@@ -98,7 +98,7 @@ Good Trainer example: https://github.com/SeanNaren/min-LLM/blob/fsdp/train.py#L2
 Interesting addition for CLI args generation: https://github.com/google/python-fire
 
 
-## Resources 
+## Resources
 
 + [FSDP Lighting](https://lightning.ai/docs/pytorch/stable/advanced/model_parallel/fsdp.html)
 
@@ -107,8 +107,8 @@ Interesting addition for CLI args generation: https://github.com/google/python-f
 
 [ ] Include the species_extinction_variables into the Encoder's latents and embeddings. Currently swaped with the species distribution - which have an extra dim, that needs handling.
 
-[ ] Fix the configurable patch size: 
-```        
+[ ] Fix the configurable patch size:
+```
 #TODO Check why this gives weird error. For now hardcode the # of patches
         # num_patches = (H // self.patch_size) * (W // self.patch_size)
         num_patches = 3040

@@ -17,7 +17,15 @@ dimensions_to_keep_by_key = {
 }
 # TODO: this should be saved in the standardization config!!!
 
-def _rescale_recursive(obj: dict, stats: dict, dimensions_to_keep_by_key: dict | list, prefix: List[str] = [], mode: Literal["standardize", "normalize"] = "normalize", direction: Literal["original", "scaled"] = "scaled"):
+
+def _rescale_recursive(
+    obj: dict,
+    stats: dict,
+    dimensions_to_keep_by_key: dict | list,
+    prefix: List[str] = [],
+    mode: Literal["standardize", "normalize"] = "normalize",
+    direction: Literal["original", "scaled"] = "scaled",
+):
     if isinstance(obj, torch.Tensor):
         # print("current_key", current_key)
         if stats:
@@ -27,37 +35,45 @@ def _rescale_recursive(obj: dict, stats: dict, dimensions_to_keep_by_key: dict |
             min_val = stats["min"]
             max_val = stats["max"]
             if dimensions_to_keep_by_key:
-                assert isinstance(dimensions_to_keep_by_key, list), f"dimensions_to_keep_by_key should be a list, got {type(dimensions_to_keep_by_key)}, {dimensions_to_keep_by_key}"
+                assert isinstance(
+                    dimensions_to_keep_by_key, list
+                ), f"dimensions_to_keep_by_key should be a list, got {type(dimensions_to_keep_by_key)}, {dimensions_to_keep_by_key}"
                 # print("dimensions_to_keep_by_key:", dimensions_to_keep_by_key)
                 # print("obj.shape:", obj.shape)
-                assert len(dimensions_to_keep_by_key) == 1, f"dimensions_to_keep_by_key should have length 1, got {len(dimensions_to_keep_by_key)}"
+                assert (
+                    len(dimensions_to_keep_by_key) == 1
+                ), f"dimensions_to_keep_by_key should have length 1, got {len(dimensions_to_keep_by_key)}"
                 dimension_to_keep = dimensions_to_keep_by_key[0]
                 shape_on_splitted_dimension = obj.shape[dimension_to_keep]
                 splitted = torch.chunk(obj, chunks=shape_on_splitted_dimension, dim=dimension_to_keep)
                 # print(format_prefix(prefix), "real mean:", [splitted[i].mean() for i in range(shape_on_splitted_dimension)], "real std:", [splitted[i].std() for i in range(shape_on_splitted_dimension)])
                 if mode == "standardize":
                     if direction == "scaled":
-                        splitted_changed = [(splitted[i] - mean_val[i]) / std_val[i]  for i in range(shape_on_splitted_dimension)]
+                        splitted_changed = [(splitted[i] - mean_val[i]) / std_val[i] for i in range(shape_on_splitted_dimension)]
                     else:
                         splitted_changed = [splitted[i] * std_val[i] + mean_val[i] for i in range(shape_on_splitted_dimension)]
                 elif mode == "normalize":
                     # min-max normalization
                     if direction == "scaled":
-                        splitted_changed = [(splitted[i] - min_val[i]) / (max_val[i] - min_val[i])  for i in range(shape_on_splitted_dimension)]
+                        splitted_changed = [
+                            (splitted[i] - min_val[i]) / (max_val[i] - min_val[i]) for i in range(shape_on_splitted_dimension)
+                        ]
                     else:
-                        splitted_changed = [splitted[i] * (max_val[i] - min_val[i]) + min_val[i] for i in range(shape_on_splitted_dimension)]
+                        splitted_changed = [
+                            splitted[i] * (max_val[i] - min_val[i]) + min_val[i] for i in range(shape_on_splitted_dimension)
+                        ]
                 res = torch.cat(splitted_changed, dim=dimension_to_keep)
             else:
                 # print("mean:", mean, "std:", std)
                 if mode == "standardize":
                     if direction == "scaled":
-                        res = torch.add(obj, - mean_val) / std_val #(obj - mean) / std
+                        res = torch.add(obj, -mean_val) / std_val  # (obj - mean) / std
                     else:
-                        res = torch.add(obj / std_val, mean_val)  #(obj / std) + mean
+                        res = torch.add(obj / std_val, mean_val)  # (obj / std) + mean
                 elif mode == "normalize":
                     # min-max normalization
                     if direction == "scaled":
-                        res = torch.add(obj, - min_val) / (max_val - min_val)
+                        res = torch.add(obj, -min_val) / (max_val - min_val)
                     else:
                         res = torch.add(obj / (max_val - min_val), min_val)
             return res
@@ -67,7 +83,9 @@ def _rescale_recursive(obj: dict, stats: dict, dimensions_to_keep_by_key: dict |
     elif isinstance(obj, dict):
         for k, v in obj.items():
             if k not in ["batch_metadata", "metadata"]:
-                obj[k] = _rescale_recursive(v, stats.get(k, {}), dimensions_to_keep_by_key.get(k, {}), prefix=prefix + [k], mode=mode, direction=direction)
+                obj[k] = _rescale_recursive(
+                    v, stats.get(k, {}), dimensions_to_keep_by_key.get(k, {}), prefix=prefix + [k], mode=mode, direction=direction
+                )
         return obj
     else:
         # print("type not supported:", type(obj), f"current_key: {current_key}")
@@ -76,6 +94,7 @@ def _rescale_recursive(obj: dict, stats: dict, dimensions_to_keep_by_key: dict |
 
 def format_prefix(prefix: List[str]) -> str:
     return ".".join(prefix)
+
 
 def visit_obj(obj, prefix: List[str] = []):
     if isinstance(obj, torch.Tensor):
@@ -98,11 +117,7 @@ def visit_obj(obj, prefix: List[str] = []):
     elif isinstance(obj, list):
         if len(obj):
             item = obj[0]
-            if (
-                isinstance(item, float)
-                or isinstance(item, int)
-                or isinstance(item, str)
-            ):
+            if isinstance(item, float) or isinstance(item, int) or isinstance(item, str):
                 print(format_prefix(prefix), len(obj), "list", type(item))
             else:
                 for i, v in enumerate(obj):

@@ -30,7 +30,7 @@ data:
     # stats_path: /data/projects/biodt/storage/batches/statistics.json # hinton
     mode: normalize # normalize (mean and std), standardize (min-max)
 #TODO Checkpointing path: /scratch-shared/<username>
- 
+
 training:
   batch_size: 1
   workers: 15

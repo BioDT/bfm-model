@@ -13,9 +13,11 @@ def load_last_run_id(run_id_file: str):
             return f.read().strip()
     return None
 
+
 def save_run_id(run_id_file: str, run_id: str):
     with open(run_id_file, "w") as f:
         f.write(run_id)
+
 
 def print_auto_logged_info(r, mlflow_client):
     tags = {k: v for k, v in r.data.tags.items() if not k.startswith("mlflow.")}
@@ -25,6 +27,7 @@ def print_auto_logged_info(r, mlflow_client):
     print(f"params: {r.data.params}")
     print(f"metrics: {r.data.metrics}")
     print(f"tags: {tags}")
+
 
 def get_latest_checkpoint(ckpt_dir, pattern="*.ckpt"):
     checkpoint_files = glob.glob(os.path.join(ckpt_dir, pattern))
@@ -37,7 +40,7 @@ def get_latest_checkpoint(ckpt_dir, pattern="*.ckpt"):
 
 def inspect_batch_shapes_dict(
     batch_dict,
-    group_names = [
+    group_names=[
         "surface_variables",
         "single_variables",
         "atmospheric_variables",
@@ -46,7 +49,7 @@ def inspect_batch_shapes_dict(
         "agriculture_variables",
         "forest_variables",
         "species_variables",
-    ]
+    ],
 ):
     """
     Inspect and print the shapes of each variable in the given (potentially nested) dictionary-based batch.
@@ -142,12 +145,14 @@ def inspect_batch_shapes_dict(
 
     print("=== End of Batch Inspection ===\n")
 
+
 def compute_next_timestamp(old_time_str, hours=6):
     """
     Example function to parse an ISO date, add specified number of hours, return new iso string.
     Adjust to your date/time logic.
     """
     from datetime import datetime, timedelta
+
     dt_format = "%Y-%m-%dT%H:%M:%S"
     old_dt = datetime.strptime(old_time_str, dt_format)
     new_dt = old_dt + timedelta(hours=hours)
@@ -156,7 +161,7 @@ def compute_next_timestamp(old_time_str, hours=6):
 
 def inspect_batch_shapes_namedtuple(
     batch_obj,
-    group_names = [
+    group_names=[
         "surface_variables",
         "single_variables",
         "atmospheric_variables",
@@ -165,7 +170,7 @@ def inspect_batch_shapes_namedtuple(
         "agriculture_variables",
         "forest_variables",
         "species_variables",
-    ]
+    ],
 ):
     """
     Inspect shapes in a namedtuple-based Batch.
@@ -192,22 +197,24 @@ def inspect_batch_shapes_namedtuple(
                 print(f"  {var_name}: shape {var_tensor.shape}")
             else:
                 print(f"  {var_name}: not a tensor")
-    
+
     print("=== End of Namedtuple Batch Inspection ===\n")
 
 
-def plot_europe_timesteps_and_difference(var_name: str,
-                                         tensor: torch.Tensor,
-                                         timestamps: list,
-                                         pressure_levels: list = None,
-                                         output_dir: str = "./plots",
-                                         channels: list = None,
-                                         plot: bool = True,
-                                         save: bool = True):
+def plot_europe_timesteps_and_difference(
+    var_name: str,
+    tensor: torch.Tensor,
+    timestamps: list,
+    pressure_levels: list = None,
+    output_dir: str = "./plots",
+    channels: list = None,
+    plot: bool = True,
+    save: bool = True,
+):
     """
     Plots and saves maps for Timestep 1, Timestep 2, and their difference over Europe,
     using fixed coordinate arrays. It also includes metadata in the titles and filenames.
-    
+
     Parameters:
       var_name (str): Name of the variable (used for titles and filenames).
       tensor (torch.Tensor): Input tensor with shape:
@@ -219,10 +226,10 @@ def plot_europe_timesteps_and_difference(var_name: str,
       channels (list, optional): List of channel indices to plot (if tensor is 5D). If not provided, all channels will be plotted.
     """
     os.makedirs(output_dir, exist_ok=True)
-    
+
     # Convert tensor to numpy.
     tensor_np = tensor.cpu().numpy()
-    
+
     # Determine whether we have a channel dimension.
     if tensor_np.ndim == 4:
         # [batch, 2, lat, lon] -> treat as single channel.
@@ -232,7 +239,7 @@ def plot_europe_timesteps_and_difference(var_name: str,
         channels_to_plot = channels if channels is not None else list(range(num_channels))
     else:
         raise ValueError(f"Unexpected tensor shape: {tensor_np.shape}")
-    
+
     # Fixed coordinate arrays:
     # Latitude: 152 points from 72.0 down to 34.25, then sorted ascending.
     lat_fixed = np.linspace(72, 34.25, 152)
@@ -240,16 +247,16 @@ def plot_europe_timesteps_and_difference(var_name: str,
     # Longitude: 320 points linearly spaced from -30.0 to 40.0.
     lon_fixed = np.linspace(-30, 40, 320)
     # Create a meshgrid.
-    Lon, Lat = np.meshgrid(lon_fixed, lat_fixed, indexing='xy')
-    
+    Lon, Lat = np.meshgrid(lon_fixed, lat_fixed, indexing="xy")
+
     # Define Europe bounding box.
     europe_extent = [-30, 40, 34.25, 72]
-    
+
     # Unpack timestamps.
     if len(timestamps) != 2:
         raise ValueError("timestamps must be a list of two elements (for Timestep 1 and Timestep 2).")
     tstamp0, tstamp1 = timestamps
-    
+
     # Loop over channels.
     for ch in channels_to_plot:
         # Extract t1 and t2 from tensor.
@@ -259,9 +266,9 @@ def plot_europe_timesteps_and_difference(var_name: str,
         else:
             t1_data = tensor_np[0, 0, ch, :, :]
             t2_data = tensor_np[0, 1, ch, :, :]
-        
+
         diff_data = t2_data - t1_data
-        
+
         # Construct additional metadata for title/filename.
         pressure_info = ""
         if "atmospheric_variables" in var_name and pressure_levels is not None:
@@ -269,56 +276,49 @@ def plot_europe_timesteps_and_difference(var_name: str,
                 pressure_info = f"_p{pressure_levels[ch]}"
             except IndexError:
                 pressure_info = ""
-        
+
         # Create figure with 3 subplots.
-        fig, axes = plt.subplots(1, 3, figsize=(18, 6),
-                                 subplot_kw={'projection': ccrs.PlateCarree()})
-        
+        fig, axes = plt.subplots(1, 3, figsize=(18, 6), subplot_kw={"projection": ccrs.PlateCarree()})
+
         # Plot Timestep 1.
         ax = axes[0]
         ax.set_extent(europe_extent, crs=ccrs.PlateCarree())
         try:
-            ax.coastlines(resolution='50m')
+            ax.coastlines(resolution="50m")
         except Exception as e:
             print("Error drawing coastlines on Timestep 1:", e)
-        cf1 = ax.contourf(Lon, Lat, t1_data, levels=60, cmap='viridis',
-                          transform=ccrs.PlateCarree())
+        cf1 = ax.contourf(Lon, Lat, t1_data, levels=60, cmap="viridis", transform=ccrs.PlateCarree())
         ax.set_title(f"{var_name} (Ch {ch}{pressure_info})\nTimestep 1\n{tstamp0}")
-        fig.colorbar(cf1, ax=ax, orientation='vertical', label="Value")
-        
+        fig.colorbar(cf1, ax=ax, orientation="vertical", label="Value")
+
         # Plot Timestep 2.
         ax = axes[1]
         ax.set_extent(europe_extent, crs=ccrs.PlateCarree())
         try:
-            ax.coastlines(resolution='50m')
+            ax.coastlines(resolution="50m")
         except Exception as e:
             print("Error drawing coastlines on Timestep 2:", e)
-        cf2 = ax.contourf(Lon, Lat, t2_data, levels=60, cmap='viridis',
-                          transform=ccrs.PlateCarree())
+        cf2 = ax.contourf(Lon, Lat, t2_data, levels=60, cmap="viridis", transform=ccrs.PlateCarree())
         ax.set_title(f"{var_name} (Ch {ch}{pressure_info})\nTimestep 2\n{tstamp1}")
-        fig.colorbar(cf2, ax=ax, orientation='vertical', label="Value")
-        
+        fig.colorbar(cf2, ax=ax, orientation="vertical", label="Value")
+
         # Plot Difference.
         ax = axes[2]
         ax.set_extent(europe_extent, crs=ccrs.PlateCarree())
         try:
-            ax.coastlines(resolution='50m')
+            ax.coastlines(resolution="50m")
         except Exception as e:
             print("Error drawing coastlines on Difference plot:", e)
-        cf_diff = ax.contourf(Lon, Lat, diff_data, levels=60, cmap='RdBu_r',
-                              transform=ccrs.PlateCarree())
+        cf_diff = ax.contourf(Lon, Lat, diff_data, levels=60, cmap="RdBu_r", transform=ccrs.PlateCarree())
         ax.set_title(f"{var_name} (Ch {ch}{pressure_info})\nDifference (T2-T1)")
-        fig.colorbar(cf_diff, ax=ax, orientation='vertical', label="Difference")
-        
+        fig.colorbar(cf_diff, ax=ax, orientation="vertical", label="Difference")
+
         plt.tight_layout()
         fig.canvas.draw()
         if save and plot:
             # Construct filename.
-            filename = os.path.join(
-                output_dir,
-                f"{var_name}_ch{ch}{pressure_info}_t0_{tstamp0}_t1_{tstamp1}.jpeg"
-            )
-            plt.savefig(filename, dpi=300, bbox_inches='tight')
+            filename = os.path.join(output_dir, f"{var_name}_ch{ch}{pressure_info}_t0_{tstamp0}_t1_{tstamp1}.jpeg")
+            plt.savefig(filename, dpi=300, bbox_inches="tight")
             plt.show()
             plt.close(fig)
             print(f"Saved plot: {filename}")
@@ -331,7 +331,7 @@ def compute_species_occurrences(batch) -> dict:
     Compute the number of occurrences for each species variable in the batch.
     For each variable in batch.species_variables, count the number of nonzero elements
     for Timestep 1 and Timestep 2. Also log the timestamps from batch.batch_metadata.
-    
+
     Args:
         batch: An object (e.g., a namedtuple) with at least:
             - batch_metadata (with attribute 'timestamp': list of two strings)
@@ -339,7 +339,7 @@ def compute_species_occurrences(batch) -> dict:
               Each tensor is either:
                   4D: [batch, 2, lat, lon] or
                   5D: [batch, 2, channel, lat, lon]
-    
+
     Returns:
         dict: A dictionary mapping each species variable name to its statistics:
               {
@@ -350,14 +350,14 @@ def compute_species_occurrences(batch) -> dict:
                 },
                 ...
               }
-              
+
               For a 4D tensor, "occurrences" is a dict:
                   {"t0": count_at_timestep_1, "t1": count_at_timestep_2}
               For a 5D tensor, "occurrences" is a dict mapping channel indices to:
                   {"t0": count_at_timestep_1, "t1": count_at_timestep_2}
     """
     result = {}
-    
+
     # Access metadata using attribute access.
     metadata = batch.batch_metadata
     # Assume metadata.timestamp is a list of two strings.
@@ -367,7 +367,7 @@ def compute_species_occurrences(batch) -> dict:
     except (AttributeError, IndexError):
         timestamp_t0 = "unknown"
         timestamp_t1 = "unknown"
-    
+
     # Process each species variable.
     species_vars = batch.species_variables
     for var_name, tensor in species_vars.items():
@@ -389,11 +389,7 @@ def compute_species_occurrences(batch) -> dict:
                 occ_stats[f"channel_{ch}"] = {"t0": count_t0, "t1": count_t1}
         else:
             occ_stats = {"note": "Unsupported tensor shape for occurrence count."}
-        
-        result[var_name] = {
-            "timestamp_t0": timestamp_t0,
-            "timestamp_t1": timestamp_t1,
-            "occurrences": occ_stats
-        }
-    
+
+        result[var_name] = {"timestamp_t0": timestamp_t0, "timestamp_t1": timestamp_t1, "occurrences": occ_stats}
+
     return result

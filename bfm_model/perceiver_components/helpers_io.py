@@ -6,14 +6,18 @@ import torch.nn.functional as F
 from einops import rearrange, repeat
 from torch import nn
 
-from bfm_model.perceiver_components.helpers import _GLU
+from bfm_model.perceiver_components.helpers import (
+    _GLU,
+)
 from bfm_model.perceiver_components.helpers import Attention as BaseAttention
 from bfm_model.perceiver_components.helpers import (
     BuiltinGQAAttention as BaseBuiltinGQAttention,
 )
 from bfm_model.perceiver_components.helpers import FeedForward as BaseFeedForward
 from bfm_model.perceiver_components.helpers import GQAAttention as BaseGQAttention
-from bfm_model.perceiver_components.helpers import PreNorm
+from bfm_model.perceiver_components.helpers import (
+    PreNorm,
+)
 
 
 def dropout_seq(seq: torch.Tensor, mask: Optional[torch.Tensor], dropout: float):

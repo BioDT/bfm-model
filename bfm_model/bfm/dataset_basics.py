@@ -29,7 +29,6 @@ def load_batches(batch_directory: str, device: torch.device = torch.device("cpu"
     return batches
 
 
-
 def print_batch_shapes(batch: dict) -> None:
     """
     Print the shapes of all variables in the DataBatch (now a dictionary).
@@ -192,4 +191,3 @@ def print_nan_counts(batch: dict) -> None:
 # print(batches[0].__dict__.keys())
 
 # print_batch_variables(batches[0])
-
