@@ -21,7 +21,7 @@ before_script:
   # - source venv/bin/activate
   - pip install poetry
   - poetry install
-  - source `poetry env info --path`/bin/activate
+  - eval $(poetry env activate)
 lint:
   # before_script:
   #   - apt update && apt install -y --no-install-recommends git
