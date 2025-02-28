@@ -22,6 +22,7 @@ before_script:
   # - source venv/bin/activate
   - pip install poetry
   - poetry install
+  - eval $(poetry env activate)
 
 stages:
 - lint
@@ -33,15 +34,13 @@ lint:
   #   - apt update && apt install -y --no-install-recommends git
   script:
     # - pre-commit run --all-files # TODO: solve broken pre-commit (hooks not compatible with pre-commit<3.2)
-    - eval $(poetry env activate)
     - echo "This is the lint stage"
 test:
   stage: test
   script:
     - echo "This is the test stage"
-    - eval $(poetry env activate)
-    - python3 -m unittest -v
-    - pytest -vv --junitxml=tests/report.xml
+    - poetry run python -m unittest -v
+    - poetry run pytest -vv --junitxml=tests/report.xml
   artifacts:
     when: always
     reports:
