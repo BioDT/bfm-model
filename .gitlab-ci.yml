@@ -14,6 +14,7 @@ variables:
 cache:
   paths:
     - .cache/pip
+    - /root/.cache/pypoetry/virtualenvs
 before_script:
   - python --version ; pip --version  # For debugging
   # - pip install virtualenv
@@ -22,12 +23,20 @@ before_script:
   - pip install poetry
   - poetry install
   - eval $(poetry env activate)
+  - sudo apt install pre-commit
+
+stages:
+- lint
+- test
+
 lint:
+  stage: lint
   # before_script:
   #   - apt update && apt install -y --no-install-recommends git
   script:
     - pre-commit run --all-files
-testing:
+test:
+  stage: test
   script:
     - echo "This is the test stage"
     - cd tests
