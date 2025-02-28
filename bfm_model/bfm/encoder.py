@@ -432,7 +432,7 @@ class BFMEncoder(nn.Module):
 
         # 2) Move the 'var_count' dimension after batch dim => [B, var_count, ...].
         # e.g. [2, 2, 152, 320] => [2, 2, 152, 320] if var_count=2 is dimension 0, B=2 dimension 1 => we do a transpose:
-        dims = list(x.shape)
+        # dims = list(x.shape)
         # dims[0] = var_count, dims[1] = B, ...
         # We want => [B, var_count, ...].
         # so do: x = x.permute(1, 0, 2, 3, ...) if 4D
@@ -453,12 +453,12 @@ class BFMEncoder(nn.Module):
         if x.dim() == 4:
             B, V, H, W = x.shape
             x = x.reshape(B, V, H, W)  # trivial, no time
-            channel_dim = V
+            # channel_dim = V
         else:
             # x.dim()==5 => [B, V, T, H, W]
             B, V, T, H, W = x.shape
             x = x.reshape(B, V * T, H, W)
-            channel_dim = V * T
+            # channel_dim = V * T
         # print(f"{group_name}: merged var/time => channels => {x.shape} (C={channel_dim})")
 
         # 4) Now do patchify:
@@ -512,7 +512,7 @@ class BFMEncoder(nn.Module):
             embedding_groups["single"] = single_embed
         # print("process atmospheric")
 
-        atmos = []
+        # atmos = []
         if batch.atmospheric_variables:
             for level_idx, level in enumerate(self.atmos_levels):
                 # For each variable in atmospheric_variables, slice out dimension=2 (the levels)
@@ -544,7 +544,7 @@ class BFMEncoder(nn.Module):
             # embedding_groups["atmos"] = stacked_atmos
 
         # print("process species distribution")
-        species_distr = []
+        # species_distr = []
         if batch.species_variables:
             for level_idx in range(self.species_num):
                 # For each variable in atmospheric_variables, slice out dimension=2 (the levels)

@@ -59,7 +59,7 @@ def save_batch(batch, batch_path: str):
     print("Shape of tensor to test:", t.shape)
     if len(t.shape) == 4:
         batch = remove_batch_dimension(batch)
-    shape_species = batch["species_variables"]["dynamic"]["Distribution"].shape
+    # shape_species = batch["species_variables"]["dynamic"]["Distribution"].shape
     traverse_nested_dicts(batch)
     torch.save(batch, batch_path)
 

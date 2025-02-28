@@ -55,7 +55,7 @@ def main(cfg: DictConfig):
 
     # Setup logger
     current_time = datetime.now()
-    remote_server_uri = f"http://0.0.0.0:{cfg.mlflow.port}"
+    # remote_server_uri = f"http://0.0.0.0:{cfg.mlflow.port}"
     # tracking_uri="file:./mlruns" (default, goes to files. Serving Mlflow is separate)
     # mlf_logger = MLFlowLoggerWithSystemMetrics(experiment_name="BFM_logs", run_name=f"BFM_{current_time}")
     mlf_logger = MLFlowLogger(experiment_name="BFM_logs", run_name=f"BFM_{current_time}")

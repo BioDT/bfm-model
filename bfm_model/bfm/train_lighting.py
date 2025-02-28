@@ -455,10 +455,10 @@ def main(cfg):
 
     # Setup logger
     current_time = datetime.now()
-    remote_server_uri = f"http://0.0.0.0:{cfg.mlflow.port}"
+    # remote_server_uri = f"http://0.0.0.0:{cfg.mlflow.port}"
     mlf_logger = MLFlowLogger(experiment_name="BFM_logs", run_name=f"BFM_{current_time}", tracking_uri=f"{output_dir}/logs")
 
-    logger_run_id = mlf_logger.run_id
+    # logger_run_id = mlf_logger.run_id
     # save_run_id(f"{output_dir}/logs/run_id.txt", logger_run_id)
 
     print("Done \n Setting up the BFM")
@@ -506,6 +506,7 @@ def main(cfg):
         )
     elif cfg.training.strategy == "ddp":
         distr_strategy = DDPStrategy()
+    print(f"Using {cfg.training.strategy} strategy: {distr_strategy}")
 
     trainer = L.Trainer(
         max_epochs=cfg.training.epochs,

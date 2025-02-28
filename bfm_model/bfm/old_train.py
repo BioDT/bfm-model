@@ -232,7 +232,7 @@ def main(cfg: DictConfig):
 
     # Setup logger
     current_time = datetime.now()
-    remote_server_uri = f"http://0.0.0.0:{cfg.mlflow.port}"
+    # remote_server_uri = f"http://0.0.0.0:{cfg.mlflow.port}"
     # tracking_uri="file:./mlruns" (default, goes to files. Serving Mlflow is separate)
     # mlf_logger = MLFlowLoggerWithSystemMetrics(experiment_name="BFM_logs", run_name=f"BFM_{current_time}")
     mlf_logger = MLFlowLogger(experiment_name="BFM_logs", run_name=f"BFM_{current_time}")
@@ -241,12 +241,13 @@ def main(cfg: DictConfig):
 
     print("Done \n Setting up the BFM")
     # Custom policy for wrapping
-    my_auto_wrap_policy = functools.partial(size_based_auto_wrap_policy, min_num_params=100)
+    # my_auto_wrap_policy = functools.partial(size_based_auto_wrap_policy, min_num_params=100)
 
     if cfg.training.strategy == "fsdp":
         distr_strategy = FSDPStrategy(sharding_strategy="FULL_SHARD", auto_wrap_policy=size_based_auto_wrap_policy)
     elif cfg.training.strategy == "ddp":
         distr_strategy = DDPStrategy()
+    print(f"Using {cfg.training.strategy} strategy: {distr_strategy}")
 
     model = BFM(
         surface_vars=(["t2m", "msl"]),

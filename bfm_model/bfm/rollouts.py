@@ -11,7 +11,7 @@ from lightning.pytorch.loggers import MLFlowLogger
 from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader, Dataset
 
-from bfm_model.bfm.batch_utils import *
+from bfm_model.bfm.batch_utils import save_batch
 from bfm_model.bfm.dataloder import LargeClimateDataset, custom_collate
 from bfm_model.bfm.train_lighting import BFM_lighting
 from bfm_model.bfm.utils import compute_next_timestamp, inspect_batch_shapes_namedtuple
@@ -232,11 +232,11 @@ def main(cfg: DictConfig):
     )
 
     # Setup logger
-    current_time = datetime.now()
-    remote_server_uri = f"http://0.0.0.0:{cfg.mlflow.port}"
+    # current_time = datetime.now()
+    # remote_server_uri = f"http://0.0.0.0:{cfg.mlflow.port}"
     # tracking_uri="file:./mlruns" (default, goes to files. Serving Mlflow is separate)
     # mlf_logger = MLFlowLoggerWithSystemMetrics(experiment_name="BFM_logs", run_name=f"BFM_{current_time}")
-    mlf_logger = MLFlowLogger(experiment_name="BFM_logs", run_name=f"BFM_{current_time}")
+    # mlf_logger = MLFlowLogger(experiment_name="BFM_logs", run_name=f"BFM_{current_time}")
 
     checkpoint_path = cfg.evaluation.checkpoint_path
     # Load Model from Checkpoint
