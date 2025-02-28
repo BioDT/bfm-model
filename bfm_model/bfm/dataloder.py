@@ -7,30 +7,31 @@ import torch
 from omegaconf.dictconfig import DictConfig
 from torch.utils.data import DataLoader, Dataset, default_collate
 
-from src.bfm.src.dataset_basics import *
-from src.bfm.src.scaler import _rescale_recursive, dimensions_to_keep_by_key, load_stats
+from bfm_model.bfm.dataset_basics import *
+from bfm_model.bfm.scaler import (
+    _rescale_recursive,
+    dimensions_to_keep_by_key,
+    load_stats,
+)
 
 # Namedtuple definitions
-Batch = namedtuple("Batch", [
-    "batch_metadata",
-    "surface_variables",
-    "single_variables",
-    "species_variables",
-    "atmospheric_variables",
-    "species_extinction_variables",
-    "land_variables",
-    "agriculture_variables",
-    "forest_variables",
-])
+Batch = namedtuple(
+    "Batch",
+    [
+        "batch_metadata",
+        "surface_variables",
+        "single_variables",
+        "species_variables",
+        "atmospheric_variables",
+        "species_extinction_variables",
+        "land_variables",
+        "agriculture_variables",
+        "forest_variables",
+    ],
+)
 
-Metadata = namedtuple("Metadata", [
-    "latitudes",
-    "longitudes",
-    "timestamp",
-    "lead_time",
-    "pressure_levels",
-    "species_list"
-])
+Metadata = namedtuple("Metadata", ["latitudes", "longitudes", "timestamp", "lead_time", "pressure_levels", "species_list"])
+
 
 def custom_collate(batch_list):
     """
@@ -45,7 +46,7 @@ def custom_collate(batch_list):
     # If we got a list of Batches:
     if isinstance(batch_list[0], Batch):
         # We need to collate them into a single Batch of stacked tensors where appropriate.
-        
+
         def collate_dicts(dict_list):
             # dict_list: list of dicts, one per sample
             # keys should be identical for all samples
@@ -65,7 +66,7 @@ def custom_collate(batch_list):
         # For metadata, lat/lon/pressure_levels are identical or global.
         # timestamp might differ per sample.
         # We'll just take them as is. If needed, we can stack or keep lists.
-        
+
         latitudes = batch_list[0].batch_metadata.latitudes
         longitudes = batch_list[0].batch_metadata.longitudes
         pressure_levels = batch_list[0].batch_metadata.pressure_levels
@@ -83,7 +84,7 @@ def custom_collate(batch_list):
             timestamp=timestamps[0],  # a list of timestamps, one per sample
             lead_time=lead_time,
             pressure_levels=pressure_levels,
-            species_list=species_list
+            species_list=species_list,
         )
 
         surface_vars = collate_dicts([b.surface_variables for b in batch_list])
@@ -104,7 +105,7 @@ def custom_collate(batch_list):
             land_variables=land_vars,
             agriculture_variables=agriculture_vars,
             forest_variables=forest_vars,
-            species_variables=species_vars
+            species_variables=species_vars,
         )
 
     # Fallback for other types if encountered
@@ -184,7 +185,6 @@ def crop_variables(variables, new_H, new_W, handle_nans=True, nan_mode="mean_cli
     return processed_vars
 
 
-
 class LargeClimateDataset(Dataset):
     """
     A dataset where each file in `data_dir` is a single sample.
@@ -205,7 +205,7 @@ class LargeClimateDataset(Dataset):
     def __init__(self, data_dir: str, scaling_settings: DictConfig, num_species: int = 2):
         self.data_dir = data_dir
         self.num_species = num_species
-        self.files = [os.path.join(data_dir, f) for f in os.listdir(data_dir) if f.endswith('.pt')]
+        self.files = [os.path.join(data_dir, f) for f in os.listdir(data_dir) if f.endswith(".pt")]
         self.files.sort()
         self.scaling_settings = scaling_settings
         self.scaling_statistics = load_stats(scaling_settings.stats_path)
@@ -216,7 +216,7 @@ class LargeClimateDataset(Dataset):
 
     def __getitem__(self, idx):
         fpath = self.files[idx]
-        data = torch.load(fpath, map_location='cpu', weights_only=True)
+        data = torch.load(fpath, map_location="cpu", weights_only=True)
 
         latitudes = data["batch_metadata"]["latitudes"]
         longitudes = data["batch_metadata"]["longitudes"]
@@ -229,7 +229,7 @@ class LargeClimateDataset(Dataset):
         W = len(data["batch_metadata"]["longitudes"])
 
         # crop dimensions to be divisible by patch size
-        patch_size = 4 # TODO make this configurable
+        patch_size = 4  # TODO make this configurable
         new_H = (H // patch_size) * patch_size
         new_W = (W // patch_size) * patch_size
 
@@ -244,7 +244,7 @@ class LargeClimateDataset(Dataset):
         agriculture_vars = crop_variables(data["agriculture_variables"], new_H, new_W)
         forest_vars = crop_variables(data["forest_variables"], new_H, new_W)
         species_vars = crop_variables(data["species_variables"]["dynamic"], new_H, new_W, nan_mode="zero", fix_dim=True)
-        species_vars_wanted = {k: v for k,v in species_vars.items() if k in ["Distribution"]}
+        species_vars_wanted = {k: v for k, v in species_vars.items() if k in ["Distribution"]}
         # crop metadata dimensions
         latitude_var = torch.tensor(latitudes[:new_H])
         longitude_var = torch.tensor(longitudes[:new_W])
@@ -259,9 +259,8 @@ class LargeClimateDataset(Dataset):
         lead_time_hours = (end - start).total_seconds() / 3600.0
         # Fix the species distribution shapes
         dist = species_vars_wanted["Distribution"].permute(0, 3, 1, 2)  # => [T, C=22, H=153, W=152]
-        species_vars_wanted["Distribution"] = dist[:, :self.num_species, :, :].to(torch.float32) # Select only 3 species for now
-        species_ids_wanted = species_list[:self.num_species]
-        
+        species_vars_wanted["Distribution"] = dist[:, : self.num_species, :, :].to(torch.float32)  # Select only 3 species for now
+        species_ids_wanted = species_list[: self.num_species]
 
         metadata = Metadata(
             latitudes=latitude_var,
@@ -281,10 +280,9 @@ class LargeClimateDataset(Dataset):
             land_variables=land_vars,
             agriculture_variables=agriculture_vars,
             forest_variables=forest_vars,
-            species_variables=species_vars_wanted
+            species_variables=species_vars_wanted,
         )
-    
-    
+
     def scale_batch(self, batch: dict | Batch, direction: Literal["original", "scaled"] = "scaled"):
         """
         Scale a batch of data back or forward.
@@ -297,11 +295,18 @@ class LargeClimateDataset(Dataset):
             # convert from NamedTuple to dict
             batch = batch._asdict()
             convert_to_batch = True
-        _rescale_recursive(batch, self.scaling_statistics, dimensions_to_keep_by_key=dimensions_to_keep_by_key, mode=self.scaling_settings.mode, direction=direction)
+        _rescale_recursive(
+            batch,
+            self.scaling_statistics,
+            dimensions_to_keep_by_key=dimensions_to_keep_by_key,
+            mode=self.scaling_settings.mode,
+            direction=direction,
+        )
         if convert_to_batch:
             # convert back to NamedTuple
             batch = Batch(**batch)
         return batch
+
 
 def compute_variable_statistics(tensor: torch.Tensor) -> dict:
     """
@@ -309,10 +314,10 @@ def compute_variable_statistics(tensor: torch.Tensor) -> dict:
     - min, max, mean, std
     - nan_count, inf_count
     - optional: shape, dtype
-    
+
     Args:
         tensor (torch.Tensor): The tensor to analyze
-    
+
     Returns:
         dict: A dictionary of computed statistics
     """
@@ -325,7 +330,7 @@ def compute_variable_statistics(tensor: torch.Tensor) -> dict:
     stats["max"] = float(t.max().item())
     stats["mean"] = float(t.mean().item())
     stats["std"] = float(t.std().item())
-    
+
     # Count special values
     stats["nan_count"] = int(torch.isnan(t).sum().item())
     stats["inf_count"] = int(torch.isinf(t).sum().item())
@@ -377,7 +382,9 @@ def compute_batch_statistics(batch: Batch) -> dict:
     stats_result["surface_variables"] = process_var_dict(batch.surface_variables, "surface_variables")
     stats_result["single_variables"] = process_var_dict(batch.single_variables, "single_variables")
     stats_result["atmospheric_variables"] = process_var_dict(batch.atmospheric_variables, "atmospheric_variables")
-    stats_result["species_extinction_variables"] = process_var_dict(batch.species_extinction_variables, "species_extinction_variables")
+    stats_result["species_extinction_variables"] = process_var_dict(
+        batch.species_extinction_variables, "species_extinction_variables"
+    )
     stats_result["land_variables"] = process_var_dict(batch.land_variables, "land_variables")
     stats_result["agriculture_variables"] = process_var_dict(batch.agriculture_variables, "agriculture_variables")
     stats_result["forest_variables"] = process_var_dict(batch.forest_variables, "forest_variables")
@@ -394,11 +401,11 @@ def test_dataset_and_dataloader(data_dir):
     dataset = LargeClimateDataset(data_dir, num_species=10)
     dataloader = DataLoader(
         dataset,
-        batch_size=1,        # Fetch two samples for testing
-        num_workers=0,       # For debugging, keep workers=0 to avoid async complexity
+        batch_size=1,  # Fetch two samples for testing
+        num_workers=0,  # For debugging, keep workers=0 to avoid async complexity
         pin_memory=False,
         collate_fn=custom_collate,
-        shuffle=False
+        shuffle=False,
     )
 
     batch = next(iter(dataloader))
@@ -409,13 +416,16 @@ def test_dataset_and_dataloader(data_dir):
         print(f"\nGroup: {group_name}")
         for var_name, var_stats in group_dict.items():
             if "min" in var_stats:
-                print(f"  {var_name} => Min: {var_stats['min']}, Max: {var_stats['max']}, Mean: {var_stats['mean']}, Std: {var_stats['std']}")
-                print(f"     NaN: {var_stats['nan_count']}, Inf: {var_stats['inf_count']}, shape: {var_stats['shape']}, dtype: {var_stats['dtype']}")
+                print(
+                    f"  {var_name} => Min: {var_stats['min']}, Max: {var_stats['max']}, Mean: {var_stats['mean']}, Std: {var_stats['std']}"
+                )
+                print(
+                    f"     NaN: {var_stats['nan_count']}, Inf: {var_stats['inf_count']}, shape: {var_stats['shape']}, dtype: {var_stats['dtype']}"
+                )
             else:
                 print(f"  {var_name} => {var_stats}")
-    
-    print("\nTest completed successfully.")
 
+    print("\nTest completed successfully.")
 
 
 if __name__ == "__main__":

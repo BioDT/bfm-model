@@ -3,7 +3,7 @@ from typing import List
 import torch
 import typer
 
-from src.bfm.src.dataloder import Batch, Metadata
+from bfm_model.bfm.dataloder import Batch, Metadata
 
 app = typer.Typer(pretty_exceptions_enable=False)
 
@@ -67,6 +67,7 @@ def save_batch(batch, batch_path: str):
 def format_prefix(prefix: List[str]) -> str:
     return ".".join(prefix)
 
+
 def visit_debug_tensors(obj, prefix: List[str] = []):
     nan_values = torch.isnan(obj.view(-1)).sum().item()
     inf_values = torch.isinf(obj.view(-1)).sum().item()
@@ -82,10 +83,12 @@ def visit_debug_tensors(obj, prefix: List[str] = []):
         res_str += f" min_max range: [{min_not_nan:.3f}, {max_not_nan:.3f}], mean: {mean:.3f}, std: {std:.3f}"
     print(res_str)
 
+
 def visit_remove_batch_dimension(obj, prefix: List[str] = []):
     assert isinstance(obj, torch.Tensor)
     print(format_prefix(prefix), "reshape before", obj.shape)
     return torch.reshape(obj, obj.shape[1:])
+
 
 def remove_batch_dimension(obj):
     return traverse_nested_dicts(obj, visit_tensor_function=visit_remove_batch_dimension)
@@ -103,11 +106,7 @@ def traverse_nested_dicts(obj, prefix: List[str] = [], visit_tensor_function=vis
     elif isinstance(obj, list):
         if len(obj):
             item = obj[0]
-            if (
-                isinstance(item, float)
-                or isinstance(item, int)
-                or isinstance(item, str)
-            ):
+            if isinstance(item, float) or isinstance(item, int) or isinstance(item, str):
                 print(format_prefix(prefix), len(obj), "list", type(item))
             else:
                 for i, v in enumerate(obj):
@@ -125,9 +124,11 @@ def _inspect_batch(file_path: str):
     data = load_batch(batch_path=file_path)
     traverse_nested_dicts(data)
 
+
 @app.command()
 def inspect_batch(file_path: str):
     return _inspect_batch(file_path)
+
 
 if __name__ == "__main__":
     app()

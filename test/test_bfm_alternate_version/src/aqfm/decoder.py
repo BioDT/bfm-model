@@ -11,8 +11,8 @@ import torch.nn as nn
 from einops import rearrange, repeat
 from torch.utils.data import DataLoader
 
-from src.perceiver_components.helpers_io import dropout_seq
-from src.perceiver_core.perceiver_io import PerceiverIO
+from bfm_model.perceiver_components.helpers_io import dropout_seq
+from bfm_model.perceiver_core.perceiver_io import PerceiverIO
 
 
 class AQDecoder(nn.Module):

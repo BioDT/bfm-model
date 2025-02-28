@@ -4,7 +4,10 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from src.swin_transformer.helpers.patches_area import EARTH_RADIUS, compute_polygon_area
+from bfm_model.swin_transformer.helpers.patches_area import (
+    EARTH_RADIUS,
+    compute_polygon_area,
+)
 
 
 class FourierExpansion(nn.Module):

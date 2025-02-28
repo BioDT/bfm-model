@@ -3,7 +3,7 @@ import unittest
 import torch
 import torch.nn as nn
 
-from src.perceiver_core.perceiver_original import Perceiver
+from bfm_model.perceiver_core.perceiver_original import Perceiver
 
 
 class TestPerceiver(unittest.TestCase):

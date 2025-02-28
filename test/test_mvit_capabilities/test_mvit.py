@@ -3,7 +3,7 @@ from datetime import timedelta
 
 import torch
 
-from src.mvit.mvit_model import MViT
+from bfm_model.mvit.mvit_model import MViT
 
 
 def test_mvit():

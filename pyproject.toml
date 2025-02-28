@@ -1,5 +1,5 @@
 [tool.poetry]
-name = "src"
+name = "bfm-model"
 version = "0.3.0"
 description = "First steps towards developing an Artificial Intelligence Foundation Model for Biodiversity research and conservation."
 authors = ["Athanasios Trantas <thanasis.trantas@tno.nl>", "Martino Mensio <martino.mensio@tno.nl>", "Sebastian Gribincea <sebastian.gribincea@tno.nl>"]
@@ -21,9 +21,9 @@ pynvml = "^12.0.0"
 fvcore = "0.1.5.post20221221"
 timm = "1.0.14"
 typer = "^0.15.1"
-cartopy = "^0.24.1"
 
-[tool.poetry.dev-dependencies]
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.3.4"
 pytorch-lightning = "^1.6.0"
 seaborn = "^0.13.2"
 pandas = "^2.2.2"
@@ -40,6 +40,7 @@ fvcore = "^0.1.5"
 openpyxl = "^3.1.5"
 pytorch-forecasting = "^1.2.0"
 xarray = "^2024.10"
+cartopy = "^0.24.1"
 
 [build-system]
 requires = ["poetry-core"]

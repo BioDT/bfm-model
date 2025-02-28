@@ -22,12 +22,11 @@ from torch.distributed.fsdp.wrap import enable_wrap, size_based_auto_wrap_policy
 from torch.utils.data import DataLoader, Dataset
 from torch.utils.data._utils.collate import default_collate
 
-from src.bfm.src.bfm import BFM
-from src.bfm.src.dataloder import LargeClimateDataset, custom_collate
+from bfm_model.bfm.bfm import BFM
+from bfm_model.bfm.dataloder import LargeClimateDataset, custom_collate
 
 # Optional: Enable distributed debug logs
 # os.environ["TORCH_DISTRIBUTED_DEBUG"] = "DETAIL"
-
 
 
 class BFM_pipe(LightningModule):

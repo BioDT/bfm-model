@@ -45,13 +45,13 @@ poetry shell
 Start an MLFLow server
 ```bash
 # change here port if you get [Errno 98] Address already in use
-# also change port in the src/bfm/src/configs
+# also change port in the bfm_model/bfm/configs
 # & - optional, for interactive mode
 mlflow server --host 0.0.0.0 --port 8082 [&]
 ```
 On another terminal (if not running in interactive mode), run the train recipe
 ```bash
-python src/bfm/src/train.py
+python bfm_model/bfm/train.py
 ```
 
 In case of running the AQFM training script, make sure that the port you defined in it corresponds to the port of the MLFlow running server.

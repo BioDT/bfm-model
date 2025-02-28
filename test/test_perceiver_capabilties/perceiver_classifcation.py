@@ -11,7 +11,7 @@ from torchmetrics.functional import accuracy
 from torchvision import transforms
 from torchvision.datasets import MNIST
 
-from src.perceiver_core.perceiver_original import Perceiver
+from bfm_model.perceiver_core.perceiver_original import Perceiver
 
 
 class PerceiverClassifier(pl.LightningModule):

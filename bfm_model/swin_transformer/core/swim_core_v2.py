@@ -4,14 +4,14 @@ import torch
 import torch.nn as nn
 from timm.models.layers import to_3tuple
 
-from src.swin_transformer.core.swin_components import (
+from bfm_model.swin_transformer.core.swin_components import (
     PatchMerging3D,
     PatchSplitting3D,
     SwinTransformer3DLayer,
 )
-from src.swin_transformer.helpers.fourier_expansion import lead_time_expansion
-from src.swin_transformer.helpers.low_rank_adaptation import LoRAMode, LoRARollout
-from src.swin_transformer.helpers.utilities import init_weights
+from bfm_model.swin_transformer.helpers.fourier_expansion import lead_time_expansion
+from bfm_model.swin_transformer.helpers.low_rank_adaptation import LoRAMode, LoRARollout
+from bfm_model.swin_transformer.helpers.utilities import init_weights
 
 
 class Basic3DEncoderLayer(SwinTransformer3DLayer):

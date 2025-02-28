@@ -31,26 +31,26 @@ Example usage:
     output = model(batch, lead_time)
 """
 
+import os
 from collections import namedtuple
 from datetime import datetime, timedelta
 from typing import Literal
-import os
 
 import torch
-import torch.nn as nn
-
-from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 import torch.distributed as dist
 import torch.multiprocessing as mp
+import torch.nn as nn
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 
-from src.bfm.src.dataset_basics import load_batches
-from src.bfm.src.dataloder import crop_variables
-from src.bfm.src.decoder import BFMDecoder
-from src.bfm.src.encoder import BFMEncoder
-from src.mvit.mvit_model import MViT
-from src.swin_transformer.core.swim_core_v2 import Swin3DTransformer
+from bfm_model.bfm.dataloder import crop_variables
+from bfm_model.bfm.dataset_basics import load_batches
+from bfm_model.bfm.decoder import BFMDecoder
+from bfm_model.bfm.encoder import BFMEncoder
+from bfm_model.mvit.mvit_model import MViT
+from bfm_model.swin_transformer.core.swim_core_v2 import Swin3DTransformer
 
 DEVICE = "cuda:0"
+
 
 class BFM(nn.Module):
     """
@@ -198,7 +198,7 @@ class BFM(nn.Module):
 
         """
         # print(f"BFM batch size: {batch_size}")
-        ### V1 
+        ### V1
         encoded = self.encoder(batch, lead_time, batch_size)
         # print("Encoded shape", encoded.shape)
 
@@ -227,10 +227,9 @@ class BFM(nn.Module):
         # print("Decoded output:", output)
         return output
 
-
         # 1) Encode input: shape [B_local, L_total, E]
 
-        ### V2 
+        ### V2
         # encoded = self.encoder(batch, lead_time)
         # B_local, L_total, E = encoded.shape
 
@@ -263,10 +262,10 @@ class BFM(nn.Module):
         #     f"encoder shape {encoded.shape}"
         # )
         # patch_shape = (depth, num_patches_h, num_patches_w)
-        
+
         #########################################
         ####### V3
-               # ---------------------------------------------------
+        # ---------------------------------------------------
         # Step 1: local encoding
         # ---------------------------------------------------
         # encoded_local = self.encoder(batch, lead_time)  # [B_local, L_local, E]
@@ -283,7 +282,7 @@ class BFM(nn.Module):
         # # ---------------------------------------------------
         # # Step 3: compute patch shape from the global dims
         # # ---------------------------------------------------
-        # # Suppose each sample has an image of shape (H, W). 
+        # # Suppose each sample has an image of shape (H, W).
         # # We do a 2D patching: h = H//patch_size, w = W//patch_size
         # num_patches_h = self.H // self.encoder.patch_size
         # num_patches_w = self.W // self.encoder.patch_size
@@ -309,7 +308,7 @@ class BFM(nn.Module):
         # patch_shape = (depth, num_patches_h, num_patches_w)
         # print(f"[Rank {rank}] Computed patch_shape={patch_shape}, depth={depth}")
 
-        # #TODO Test this 
+        # #TODO Test this
         # if self.backbone_type == "mvit":
         #     encoded = encoded.view(encoded.size(0), -1, self.encoder.embed_dim)
         #     print(f"Reshaped encoded for MViT: {encoded.shape}")
@@ -318,7 +317,6 @@ class BFM(nn.Module):
 
         # # decode
         # output = self.decoder(backbone_output, batch, lead_time)
-
 
         # ### V4
         #     # 1) Locally encode: shape [B_local, L_local, E]
@@ -330,7 +328,7 @@ class BFM(nn.Module):
         # # => B_local is the same as before, L_global = world_size * L_local
 
         # # 3) If you truly have only 1 local sample per rank => B_local=1
-        # #    Then total "batch" is still 1. 
+        # #    Then total "batch" is still 1.
         # #    So you can do: B_global = B_local (which might be 1)
         # #    tokens_per_sample = L_global // B_global = L_global
         # B_global = B_local  # e.g. 1
@@ -359,7 +357,7 @@ class BFM(nn.Module):
         Gathers partial tokens from each rank along the tokens dimension (dim=1).
         This is for the case where a single sample is horizontally (or by tokens) split
         across ranks, so that each rank has [B_local, partial_L, E].
-        
+
         After all_gather, we cat on dim=1 -> [B_local, world_size*partial_L, E].
         """
         if not dist.is_initialized():
@@ -368,13 +366,12 @@ class BFM(nn.Module):
         # 1) all_gather list
         world_size = dist.get_world_size()
         gather_list = [torch.zeros_like(encoded_local) for _ in range(world_size)]
-        dist.all_gather(gather_list, encoded_local)  
+        dist.all_gather(gather_list, encoded_local)
         # gather_list[r] now has shape [B_local, L_local, E] from rank r
 
         # 2) cat along dim=1 (token dimension)
         global_encoded = torch.cat(gather_list, dim=1)
         return global_encoded
-
 
     def _all_gather_encoded_simple(self, encoded_local: torch.Tensor) -> torch.Tensor:
         """
@@ -412,14 +409,14 @@ class BFM(nn.Module):
         """
         Gathers local encoder outputs [B_local, L_local, E] from all ranks into a single
         global tensor [B_global, L_global, E], so that your subsequent patch logic won't fail.
-        
+
         This method can be adapted to your data distribution (whether you're splitting by batch or tokens).
         Here we assume you're collecting the entire batch/tokens on rank=0, then broadcasting.
         """
         if not dist.is_initialized():
             # Single-process fallback
             return encoded_local
-        
+
         # Prepare shape info
         local_shape = torch.tensor(encoded_local.shape, dtype=torch.long, device=encoded_local.device)  # [3]
         all_shape_list = [torch.zeros_like(local_shape) for _ in range(dist.get_world_size())]
@@ -446,21 +443,13 @@ class BFM(nn.Module):
 
         rank = dist.get_rank()
         world_size = dist.get_world_size()
-        
+
         if rank == 0:
-            global_encoded = torch.zeros(
-                (B_global, L_global, embed_dim),
-                dtype=encoded_local.dtype,
-                device=encoded_local.device
-            )
+            global_encoded = torch.zeros((B_global, L_global, embed_dim), dtype=encoded_local.dtype, device=encoded_local.device)
         else:
             # allocate minimal placeholder
-            global_encoded = torch.zeros(
-                (1, 1, embed_dim),
-                dtype=encoded_local.dtype,
-                device=encoded_local.device
-            )
-        
+            global_encoded = torch.zeros((1, 1, embed_dim), dtype=encoded_local.dtype, device=encoded_local.device)
+
         # Now gather the data content
         # We'll do a naive gather_by_rank approach
         # Another approach is "dist.all_gather_into_tensor" if you have a recent PyTorch
@@ -478,19 +467,20 @@ class BFM(nn.Module):
                 dist.recv(tmp, src=i)
                 global_encoded[offset_b : offset_b + b_i, :l_i, :] = tmp
             offset_b += b_i
-        
+
         # Now broadcast global_encoded from rank=0 back to all ranks
         dist.broadcast(global_encoded, src=0)
-        
+
         return global_encoded
-    
+
 
 def setup(rank, world_size):
-    os.environ['MASTER_ADDR'] = 'localhost'
-    os.environ['MASTER_PORT'] = '12355'
+    os.environ["MASTER_ADDR"] = "localhost"
+    os.environ["MASTER_PORT"] = "12355"
 
     # initialize the process group
     dist.init_process_group("nccl", rank=rank, world_size=world_size)
+
 
 def cleanup():
     dist.destroy_process_group()
@@ -510,7 +500,9 @@ def main():
     print("\nFirst batch variable counts:")
     print(f"Surface variables: {len(batch['surface_variables'])} vars")
     print(f"Single variables: {len(batch['single_variables'])} vars")
-    print(f"Atmospheric variables: {len(batch['atmospheric_variables'])} vars × {len(batch['batch_metadata']['pressure_levels'])} levels")
+    print(
+        f"Atmospheric variables: {len(batch['atmospheric_variables'])} vars × {len(batch['batch_metadata']['pressure_levels'])} levels"
+    )
     print(f"Species variables: {len(batch['species_extinction_variables'])} vars")
     print(f"Land variables: {len(batch['land_variables'])} vars")
     print(f"Agriculture variables: {len(batch['agriculture_variables'])} vars")
@@ -547,17 +539,16 @@ def main():
     print(f"Grid size: {new_H}×{new_W}")
     print(f"Number of patches: {new_H//patch_size}×{new_W//patch_size}")
 
-
     # init model
     model = BFM(
-        surface_vars=tuple(batch['surface_variables'].keys()),
-        single_vars=tuple(batch['single_variables'].keys()),
-        atmos_vars=tuple(batch['atmospheric_variables'].keys()),
-        species_vars=tuple(batch['species_extinction_variables'].keys()),
-        land_vars=tuple(batch['land_variables'].keys()),
-        agriculture_vars=tuple(batch['agriculture_variables'].keys()),
-        forest_vars=tuple(batch['forest_variables'].keys()),
-        atmos_levels=batch['batch_metadata']['pressure_levels'],
+        surface_vars=tuple(batch["surface_variables"].keys()),
+        single_vars=tuple(batch["single_variables"].keys()),
+        atmos_vars=tuple(batch["atmospheric_variables"].keys()),
+        species_vars=tuple(batch["species_extinction_variables"].keys()),
+        land_vars=tuple(batch["land_variables"].keys()),
+        agriculture_vars=tuple(batch["agriculture_variables"].keys()),
+        forest_vars=tuple(batch["forest_variables"].keys()),
+        atmos_levels=batch["batch_metadata"]["pressure_levels"],
         H=new_H,
         W=new_W,
         backbone_type="mvit",  # or "swin"
@@ -572,7 +563,7 @@ def main():
     # pass each batch through the model
     for i, batch in enumerate(batches):
         print(f"\nProcessing batch {i+1}/{len(batches)}")
-        timestamp = batch['batch_metadata']['timestamp']
+        timestamp = batch["batch_metadata"]["timestamp"]
 
         dt_format = "%Y-%m-%dT%H:%M:%S"
 

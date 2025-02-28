@@ -6,7 +6,7 @@ import unittest
 
 import torch
 
-from src.components.pos_encoder import (
+from bfm_model.perceiver_components.pos_encoder import (
     FourierPositionEncoding,
     PositionEncodingProjector,
     TrainablePositionEncoding,

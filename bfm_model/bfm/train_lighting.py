@@ -16,12 +16,12 @@ from omegaconf import DictConfig, OmegaConf
 from torch.distributed.fsdp.wrap import enable_wrap, size_based_auto_wrap_policy, wrap
 from torch.utils.data import DataLoader
 
-from src.bfm.src.dataloder import LargeClimateDataset, custom_collate
-from src.bfm.src.decoder import BFMDecoder
-from src.bfm.src.encoder import BFMEncoder
-from src.bfm.src.utils import save_run_id
-from src.mvit.mvit_model import MViT
-from src.swin_transformer.core.swim_core_v2 import Swin3DTransformer
+from bfm_model.bfm.dataloder import LargeClimateDataset, custom_collate
+from bfm_model.bfm.decoder import BFMDecoder
+from bfm_model.bfm.encoder import BFMEncoder
+from bfm_model.bfm.utils import save_run_id
+from bfm_model.mvit.mvit_model import MViT
+from bfm_model.swin_transformer.core.swim_core_v2 import Swin3DTransformer
 
 
 class BFM_lighting(LightningModule):
@@ -80,8 +80,8 @@ class BFM_lighting(LightningModule):
         num_heads: int = 16,
         head_dim: int = 2,
         depth: int = 2,
-        learning_rate: float = 5e-4, 
-        weight_decay: float = 5e-6, 
+        learning_rate: float = 5e-4,
+        weight_decay: float = 5e-6,
         batch_size: int = 1,
         warmup_steps: int = 1000,
         total_steps: int = 20000,
@@ -221,7 +221,7 @@ class BFM_lighting(LightningModule):
             **kwargs,
         )
 
-    def forward(self, batch, lead_time = timedelta(hours=6), batch_size: int = 1):
+    def forward(self, batch, lead_time=timedelta(hours=6), batch_size: int = 1):
         """
         Forward pass of the model.
 
@@ -234,7 +234,7 @@ class BFM_lighting(LightningModule):
 
         """
         # print(f"BFM batch size: {batch_size}")
-        ### V1 
+        ### V1
         encoded = self.encoder(batch, lead_time, batch_size)
         # print("Encoded shape", encoded.shape)
 
@@ -268,7 +268,7 @@ class BFM_lighting(LightningModule):
         output = self(batch, lead_time, batch_size=self.batch_size)
         print("Validation time!")
         loss = self.compute_loss(output, batch)
-        self.log("val_loss", loss, batch_size=self.batch_size) # on_step=False, on_epoch=True, prog_bar=True, sync_dist=True
+        self.log("val_loss", loss, batch_size=self.batch_size)  # on_step=False, on_epoch=True, prog_bar=True, sync_dist=True
         return loss
 
     def training_step(self, batch, batch_idx):
@@ -339,7 +339,7 @@ class BFM_lighting(LightningModule):
                     w = group_weights.get(var_name, 1.0)
                 else:
                     w = group_weights
-                    
+
                 # Log each variable's raw loss
                 self.log(f"{var_name} raw loss", loss_var, batch_size=target.size(0))
                 group_loss += w * loss_var
@@ -366,7 +366,7 @@ class BFM_lighting(LightningModule):
             cosine_decay = 0.5 * (1 + math.cos(math.pi * progress))
             # Scale so that at the end (progress=1), the multiplier is 0.1.
             return 0.9 * cosine_decay + 0.1
-    
+
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=12000, eta_min=self.learning_rate / 10)
@@ -391,18 +391,11 @@ class OptimizerParamsLogger(L.Callback):
                 lr = param_group.get("lr")
                 wd = param_group.get("weight_decay")
                 # Log the current learning rate and weight decay as metrics.
+                mlflow_logger.experiment.log_metric(run_id, f"optimizer_{opt_idx}_group_{pg_idx}_lr", lr, step=current_step)
                 mlflow_logger.experiment.log_metric(
-                    run_id,
-                    f"optimizer_{opt_idx}_group_{pg_idx}_lr",
-                    lr,
-                    step=current_step
+                    run_id, f"optimizer_{opt_idx}_group_{pg_idx}_weight_decay", wd, step=current_step
                 )
-                mlflow_logger.experiment.log_metric(
-                    run_id,
-                    f"optimizer_{opt_idx}_group_{pg_idx}_weight_decay",
-                    wd,
-                    step=current_step
-                )
+
 
 class FSDPEvalCallback(L.Callback):
     def __init__(self, eval_interval=10):
@@ -434,8 +427,12 @@ def main(cfg):
     output_dir = HydraConfig.get().runtime.output_dir
 
     print("Setting up Dataloader ...")
-    dataset = LargeClimateDataset(data_dir=cfg.data.data_path, scaling_settings=cfg.data.scaling, num_species=cfg.data.species_number)
-    test_dataset = LargeClimateDataset(data_dir=cfg.data.test_data_path, scaling_settings=cfg.data.scaling, num_species=cfg.data.species_number)  # Adapt
+    dataset = LargeClimateDataset(
+        data_dir=cfg.data.data_path, scaling_settings=cfg.data.scaling, num_species=cfg.data.species_number
+    )
+    test_dataset = LargeClimateDataset(
+        data_dir=cfg.data.test_data_path, scaling_settings=cfg.data.scaling, num_species=cfg.data.species_number
+    )  # Adapt
 
     val_dataloader = DataLoader(
         test_dataset,
@@ -459,9 +456,7 @@ def main(cfg):
     # Setup logger
     current_time = datetime.now()
     remote_server_uri = f"http://0.0.0.0:{cfg.mlflow.port}"
-    mlf_logger = MLFlowLogger(experiment_name="BFM_logs", 
-                              run_name=f"BFM_{current_time}",
-                              tracking_uri=f"{output_dir}/logs")
+    mlf_logger = MLFlowLogger(experiment_name="BFM_logs", run_name=f"BFM_{current_time}", tracking_uri=f"{output_dir}/logs")
 
     logger_run_id = mlf_logger.run_id
     # save_run_id(f"{output_dir}/logs/run_id.txt", logger_run_id)
@@ -483,7 +478,7 @@ def main(cfg):
         num_latent_tokens=cfg.model.num_latent_tokens,
         backbone_type=cfg.model.backbone,
         patch_size=cfg.model.patch_size,
-        embed_dim= cfg.model.embed_dim,
+        embed_dim=cfg.model.embed_dim,
         num_heads=cfg.model.num_heads,
         head_dim=cfg.model.head_dim,
         depth=cfg.model.depth,
@@ -491,25 +486,24 @@ def main(cfg):
         weight_decay=cfg.training.wd,
         batch_size=cfg.training.batch_size,
     )
-    
+
     model_summary = ModelSummary(BFM, max_depth=2)
     print(model_summary)
-    
-    
+
     checkpoint_callback = ModelCheckpoint(
-        dirpath=f"{output_dir}/checkpoints", 
-        save_top_k=1, 
+        dirpath=f"{output_dir}/checkpoints",
+        save_top_k=1,
         monitor="val_loss",
         mode="min",
         # save_last=True
-        )
-    
+    )
+
     print(f"Will be saving checkpoints at: {output_dir}/checkpoints")
 
     if cfg.training.strategy == "fsdp":
-        distr_strategy = FSDPStrategy(sharding_strategy="FULL_SHARD", 
-                                      auto_wrap_policy=size_based_auto_wrap_policy,
-                                      state_dict_type="full")
+        distr_strategy = FSDPStrategy(
+            sharding_strategy="FULL_SHARD", auto_wrap_policy=size_based_auto_wrap_policy, state_dict_type="full"
+        )
     elif cfg.training.strategy == "ddp":
         distr_strategy = DDPStrategy()
 
@@ -525,7 +519,7 @@ def main(cfg):
         # limit_train_batches=10,      # Process 10 batches per epoch.
         # limit_val_batches=2,
         # limit_test_batches=10,
-        val_check_interval=cfg.training.eval_every,       # Run validation every 4 training batches.
+        val_check_interval=cfg.training.eval_every,  # Run validation every 4 training batches.
         check_val_every_n_epoch=None,
         # limit_train_batches=0.003, # For debugging to see what happens at the end of epoch
         # check_val_every_n_epoch=None,  # Do eval every 1 epochs
@@ -539,10 +533,10 @@ def main(cfg):
 
     # with mlflow.start_run() as run:
     if cfg.training.checkpoint_path:
-            print(f"Loading and resuming training from {cfg.training.checkpoint_path}")
-            trainer.fit(BFM, train_dataloaders=train_dataloader, 
-                        val_dataloaders=val_dataloader,
-                        ckpt_path=cfg.training.checkpoint_path)
+        print(f"Loading and resuming training from {cfg.training.checkpoint_path}")
+        trainer.fit(
+            BFM, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader, ckpt_path=cfg.training.checkpoint_path
+        )
     else:
         print("Start training from scratch")
         trainer.fit(BFM, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader)
@@ -559,5 +553,6 @@ def main(cfg):
     print("Finished testing successfully")
     trainer.print(torch.cuda.memory_summary())
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()

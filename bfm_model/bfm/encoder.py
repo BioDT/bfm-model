@@ -47,10 +47,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange, repeat
 
-from src.bfm.src.dataset_basics import load_batches
-from src.perceiver_components.helpers_io import dropout_seq
-from src.perceiver_components.pos_encoder import build_position_encoding
-from src.perceiver_core.perceiver_io import PerceiverIO
+from bfm_model.bfm.dataset_basics import load_batches
+from bfm_model.perceiver_components.helpers_io import dropout_seq
+from bfm_model.perceiver_components.pos_encoder import build_position_encoding
+from bfm_model.perceiver_core.perceiver_io import PerceiverIO
 
 
 class BFMEncoder(nn.Module):
@@ -178,7 +178,9 @@ class BFMEncoder(nn.Module):
         self.single_token_embeds = self._create_patch_embed(len(single_vars), patch_size, embed_dim, max_history_size)
         self.atmos_token_embeds = self._create_patch_embed(len(atmos_vars), patch_size, embed_dim, max_history_size)
         self.species_token_embeds = self._create_patch_embed(len(species_vars), patch_size, embed_dim, max_history_size)
-        self.species_distr_token_embeds = self._create_patch_embed(len(species_distr_vars), patch_size, embed_dim, max_history_size)
+        self.species_distr_token_embeds = self._create_patch_embed(
+            len(species_distr_vars), patch_size, embed_dim, max_history_size
+        )
         self.land_token_embeds = self._create_patch_embed(len(land_vars), patch_size, embed_dim, max_history_size)
         self.agriculture_token_embeds = self._create_patch_embed(len(agriculture_vars), patch_size, embed_dim, max_history_size)
         self.forest_token_embeds = self._create_patch_embed(len(forest_vars), patch_size, embed_dim, max_history_size)
@@ -196,7 +198,7 @@ class BFMEncoder(nn.Module):
         self.H = H
         self.W = W
 
-        # Initialize perceiver 
+        # Initialize perceiver
         self._initialize_perceiver(H, W)
 
         # init weights
@@ -261,7 +263,7 @@ class BFMEncoder(nn.Module):
             W (int): Width of input grid
         """
         # get number of patches
-        #TODO Check why this gives weird error. For now hardcode the # of patches
+        # TODO Check why this gives weird error. For now hardcode the # of patches
         num_patches = (H // self.patch_size) * (W // self.patch_size)
         # num_patches = 3040
         print(f"Num of patches in Encoder: {num_patches}")
@@ -463,12 +465,7 @@ class BFMEncoder(nn.Module):
         # We want => [B, (H/p1)*(W/p2), C*(p1*p2)]
         # einops pattern: "b c (h p1) (w p2) -> b (h w) (c p1 p2)"
         # Make sure H,W are multiples of p1,p2
-        x = rearrange(
-            x,
-            "b c (h p1) (w p2) -> b (h w) (c p1 p2)",
-            p1=self.patch_size,
-            p2=self.patch_size
-        )
+        x = rearrange(x, "b c (h p1) (w p2) -> b (h w) (c p1 p2)", p1=self.patch_size, p2=self.patch_size)
         # print(f"{group_name}: after patchify => {x.shape}")
 
         # 5) Now x is [B, num_patches, C*(p1*p2)] => feed token_embeds
@@ -518,21 +515,19 @@ class BFMEncoder(nn.Module):
         atmos = []
         if batch.atmospheric_variables:
             for level_idx, level in enumerate(self.atmos_levels):
-            # For each variable in atmospheric_variables, slice out dimension=2 (the levels)
-            # shape => [v, b, H, W] for that single level.
+                # For each variable in atmospheric_variables, slice out dimension=2 (the levels)
+                # shape => [v, b, H, W] for that single level.
                 level_vars = {}
                 for var_name, var_data in batch.atmospheric_variables.items():
                     # var_data is [v, b, l, H, W], but typically v=1 if "var_data" is truly one variable
-                    # or if we're grouping multiple variables. 
+                    # or if we're grouping multiple variables.
                     # We slice out the level dimension at index 2:
                     sliced = var_data[..., level_idx, :, :]  # shape: [v, b, H, W]
                     level_vars[var_name] = sliced
 
                 # Now pass that dictionary (one level) to the correct embedding
                 level_embed = self.process_variable_group(
-                    level_vars,
-                    self.atmos_token_embeds,  # sized for 2 variables, 1 level at a time
-                    f"Atmospheric Level {level}"
+                    level_vars, self.atmos_token_embeds, f"Atmospheric Level {level}"  # sized for 2 variables, 1 level at a time
                 )
 
                 if level_embed is not None:
@@ -543,22 +538,22 @@ class BFMEncoder(nn.Module):
             # TODO For now we just add them to the list of embeddings.
             # TODO v1
             # If we processed any levels, stack them [L, num_patches, embed_dim]
-                # if len(atmos) > 0:
-                #     stacked_atmos = torch.stack(atmos, dim=0)  # shape: [num_levels, num_patches, embed_dim]
-                    # embeddings.append(stacked_atmos)
-                    # embedding_groups["atmos"] = stacked_atmos
+            # if len(atmos) > 0:
+            #     stacked_atmos = torch.stack(atmos, dim=0)  # shape: [num_levels, num_patches, embed_dim]
+            # embeddings.append(stacked_atmos)
+            # embedding_groups["atmos"] = stacked_atmos
 
         # print("process species distribution")
         species_distr = []
         if batch.species_variables:
             for level_idx in range(self.species_num):
-            # For each variable in atmospheric_variables, slice out dimension=2 (the levels)
-            # shape => [v, b, H, W] for that single level.
+                # For each variable in atmospheric_variables, slice out dimension=2 (the levels)
+                # shape => [v, b, H, W] for that single level.
                 species_num_vars = {}
                 for var_name, var_data in batch.species_variables.items():
                     # print(f"var_data_shape {var_data.shape}")
                     # var_data is [v, b, l, H, W], but typically v=1 if "var_data" is truly one variable
-                    # or if we're grouping multiple variables. 
+                    # or if we're grouping multiple variables.
                     # We slice out the level dimension at index 2:
                     sliced = var_data[..., level_idx, :, :]  # shape: [v, b, H, W]
                     # print(f"var_data shape {var_data.shape} | sliced shape {sliced.shape}")
@@ -569,7 +564,7 @@ class BFMEncoder(nn.Module):
                 species_num_emb = self.process_variable_group(
                     species_num_vars,
                     self.species_distr_token_embeds,  # sized for 2 variables, 1 level at a time
-                    f"Species Distribution {level_idx}"
+                    f"Species Distribution {level_idx}",
                 )
                 if species_num_emb is not None:
                     # species_distr.append(species_num_emb)

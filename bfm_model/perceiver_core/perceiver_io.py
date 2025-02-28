@@ -4,16 +4,16 @@ import torch
 import torch.nn as nn
 from einops import rearrange, repeat
 
-from src.perceiver_components.helpers_io import (
+from bfm_model.perceiver_components.helpers_io import (
     Attention,
-    GQAttention,
     BuiltinGQAttention,
     FeedForward,
+    GQAttention,
     PreNorm,
     cache_fn,
     dropout_seq,
 )
-from src.perceiver_components.pos_encoder import build_position_encoding
+from bfm_model.perceiver_components.pos_encoder import build_position_encoding
 
 
 class PerceiverIO(nn.Module):
@@ -146,7 +146,11 @@ class PerceiverIO(nn.Module):
         return (self.num_input_axes * ((self.num_fourier_bands * 2) + 1)) if self.position_encoding_type == "fourier" else 0
 
     def _build_cross_attention_blocks(
-        self, latent_dimension: int, cross_attention_heads: int, cross_attention_head_dim: int, num_kv_heads: int,
+        self,
+        latent_dimension: int,
+        cross_attention_heads: int,
+        cross_attention_head_dim: int,
+        num_kv_heads: int,
     ) -> nn.ModuleList:
         """
         Build the cross-attention blocks for the encoder.
@@ -176,7 +180,11 @@ class PerceiverIO(nn.Module):
                 PreNorm(
                     latent_dimension,
                     BuiltinGQAttention(
-                        latent_dimension, self.total_input_dim, n_q_heads=cross_attention_heads, n_kv_heads=num_kv_heads, head_dim=cross_attention_head_dim
+                        latent_dimension,
+                        self.total_input_dim,
+                        n_q_heads=cross_attention_heads,
+                        n_kv_heads=num_kv_heads,
+                        head_dim=cross_attention_head_dim,
                     ),
                     context_dimension=self.total_input_dim,
                 ),
@@ -204,10 +212,11 @@ class PerceiverIO(nn.Module):
         #     latent_dimension, Attention(latent_dimension, heads=latent_attention_heads, head_dim=latent_attention_head_dim)
         # )
         return PreNorm(
-            latent_dimension, BuiltinGQAttention(
-                        latent_dimension, n_q_heads=latent_attention_heads, 
-                        n_kv_heads=num_kv_heads, head_dim=latent_attention_head_dim
-                    ))
+            latent_dimension,
+            BuiltinGQAttention(
+                latent_dimension, n_q_heads=latent_attention_heads, n_kv_heads=num_kv_heads, head_dim=latent_attention_head_dim
+            ),
+        )
 
     @cache_fn
     def _get_latent_feedforward(self, latent_dimension: int, **kwargs) -> PreNorm:
@@ -260,8 +269,12 @@ class PerceiverIO(nn.Module):
         return layers
 
     def _build_decoder_cross_attention(
-        self, queries_dim: int, latent_dimension: int, cross_attention_heads: int, cross_attention_head_dim: int,
-        num_kv_heads: int
+        self,
+        queries_dim: int,
+        latent_dimension: int,
+        cross_attention_heads: int,
+        cross_attention_head_dim: int,
+        num_kv_heads: int,
     ) -> PreNorm:
         """
         Build the decoder cross-attention layer.
@@ -278,8 +291,13 @@ class PerceiverIO(nn.Module):
         return PreNorm(
             queries_dim,
             # Attention(queries_dim, latent_dimension, heads=cross_attention_heads, head_dim=cross_attention_head_dim),
-            BuiltinGQAttention(queries_dim, latent_dimension, n_q_heads=cross_attention_heads, n_kv_heads=num_kv_heads, 
-                        head_dim=cross_attention_head_dim),
+            BuiltinGQAttention(
+                queries_dim,
+                latent_dimension,
+                n_q_heads=cross_attention_heads,
+                n_kv_heads=num_kv_heads,
+                head_dim=cross_attention_head_dim,
+            ),
             context_dimension=latent_dimension,
         )
 

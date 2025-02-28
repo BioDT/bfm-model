@@ -6,7 +6,7 @@ import torch.nn as nn
 from fvcore.common.registry import Registry
 from torch.nn.init import trunc_normal_
 
-from src.mvit.attention import MultiScaleTransformerBlock
+from bfm_model.mvit.attention import MultiScaleTransformerBlock
 
 model_registry = Registry("MODEL")
 

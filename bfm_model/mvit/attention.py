@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 from torch.nn.init import trunc_normal_
 
-from src.mvit.common import MLPBlock, StochasticDepth
+from bfm_model.mvit.common import MLPBlock, StochasticDepth
 
 
 def attention_pool(

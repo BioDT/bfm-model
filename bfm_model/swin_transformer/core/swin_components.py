@@ -7,11 +7,11 @@ import torch.nn.functional as F
 from einops import rearrange
 from timm.models.layers import DropPath, to_3tuple
 
-from src.swin_transformer.helpers.adaptive_layer_norm import AdaptiveLayerNorm
-from src.swin_transformer.helpers.fourier_expansion import lead_time_expansion
-from src.swin_transformer.helpers.low_rank_adaptation import LoRAMode, LoRARollout
-from src.swin_transformer.helpers.utilities import adjust_windows, init_weights
-from src.swin_transformer.helpers.window_operations import (
+from bfm_model.swin_transformer.helpers.adaptive_layer_norm import AdaptiveLayerNorm
+from bfm_model.swin_transformer.helpers.fourier_expansion import lead_time_expansion
+from bfm_model.swin_transformer.helpers.low_rank_adaptation import LoRAMode, LoRARollout
+from bfm_model.swin_transformer.helpers.utilities import adjust_windows, init_weights
+from bfm_model.swin_transformer.helpers.window_operations import (
     apply_or_remove_3d_padding,
     compute_3d_shifted_window_mask,
     window_partition_and_reverse_3d,

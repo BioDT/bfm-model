@@ -11,10 +11,10 @@ from lightning.pytorch.loggers import MLFlowLogger
 from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader, Dataset
 
-from src.bfm.src.batch_utils import *
-from src.bfm.src.dataloder import LargeClimateDataset, custom_collate
-from src.bfm.src.train_lighting import BFM_lighting
-from src.bfm.src.utils import compute_next_timestamp, inspect_batch_shapes_namedtuple
+from bfm_model.bfm.batch_utils import *
+from bfm_model.bfm.dataloder import LargeClimateDataset, custom_collate
+from bfm_model.bfm.train_lighting import BFM_lighting
+from bfm_model.bfm.utils import compute_next_timestamp, inspect_batch_shapes_namedtuple
 
 
 def rollout_forecast(trainer, model, initial_batch, test_dataset, steps=2, batch_size=1):
@@ -34,15 +34,15 @@ def rollout_forecast(trainer, model, initial_batch, test_dataset, steps=2, batch
         def __init__(self, one_batch):
             super().__init__()
             self.one_batch = one_batch
-        
+
         def __len__(self):
             # we have exactly 1 item in this dataset
             return 1
-        
+
         def __getitem__(self, idx):
             # Return the namedtuple or dictionary directly
             return self.one_batch
-        
+
     def single_item_collate(batch_list):
         """
         A custom collate for a single-item dataset.
@@ -50,32 +50,32 @@ def rollout_forecast(trainer, model, initial_batch, test_dataset, steps=2, batch
         exactly as is (could be a namedtuple or dict).
         """
         return batch_list[0]
-        
+
     def run_predict_on_batch(batch_dict):
-            """
-            1) Build single-item dataset
-            2) Build DataLoader
-            3) run trainer.predict
-            4) Combine predictions
-            """
-            ds = SingleBatchDataset(batch_dict)
+        """
+        1) Build single-item dataset
+        2) Build DataLoader
+        3) run trainer.predict
+        4) Combine predictions
+        """
+        ds = SingleBatchDataset(batch_dict)
 
-            dl = DataLoader(ds, batch_size=B, collate_fn=single_item_collate, shuffle=False)
-            
-            # returns a list of predictions (one per batch item, but we only have 1)
-            preds_list = trainer.predict(model, dataloaders=dl)
-            
-            # predictions_unscaled = test_dataset.scale_batch(preds_list, direction="original")
+        dl = DataLoader(ds, batch_size=B, collate_fn=single_item_collate, shuffle=False)
 
-            # print(preds_list)
+        # returns a list of predictions (one per batch item, but we only have 1)
+        preds_list = trainer.predict(model, dataloaders=dl)
 
-            return preds_list
+        # predictions_unscaled = test_dataset.scale_batch(preds_list, direction="original")
+
+        # print(preds_list)
+
+        return preds_list
 
     # For each step in the rollout
     for step_idx in range(steps):
         # run predict
         preds = run_predict_on_batch(current_batch)  # shape depends on your model, e.g. [B, C, H, W]
-        
+
         # store
         rollout_dict["predictions"].append(preds)
         rollout_dict["batches"].append(copy.deepcopy(current_batch))
@@ -89,37 +89,31 @@ def rollout_forecast(trainer, model, initial_batch, test_dataset, steps=2, batch
 
         # Build a new batch that has (last old time) + (predicted new time).
         new_batch = build_new_batch_with_prediction(current_batch, preds[0])
-        
+
         # This new_batch becomes the "current_batch" for the next iteration
         current_batch = new_batch
 
     return rollout_dict
 
 
-
-def build_new_batch_with_prediction(
-    old_batch,
-    prediction_dict,
-    groups=None,
-    time_dim=1
-):
+def build_new_batch_with_prediction(old_batch, prediction_dict, groups=None, time_dim=1):
     """
     Build a new batch from `old_batch` by:
       - Keeping the last old timestep (since old_batch has T=2)
       - Appending the newly predicted timestep from `prediction_dict`
-    
+
     This ensures the new batch again has T=2 time steps:
        [ (old_batch's last), (model's new prediction) ]
-    
+
     Args:
-        old_batch (namedtuple `Batch`): 
+        old_batch (namedtuple `Batch`):
             A batch with exactly 2 timesteps for each variable group, e.g. shape => [B,2,...].
         prediction_dict (dict):
             A dict keyed by group_name, then var_name -> predicted tensor of shape [B, ..., H, W].
             If it lacks a time dimension, we unsqueeze it so shape => [B,1,...,H,W].
         groups (list[str]): The variable group names to process. If None, we use a default set.
         time_dim (int): The dimension index for time, typically 1 if shape => [B,T, ...].
-    
+
     Returns:
         new_batch (namedtuple `Batch`):
             A new batch of identical structure, also with T=2, but the second time is the newly predicted step.
@@ -158,7 +152,7 @@ def build_new_batch_with_prediction(
 
             # find predicted data
             if var_name in group_vars_pred:
-                pred_tensor = group_vars_pred[var_name]  
+                pred_tensor = group_vars_pred[var_name]
                 # print(f"var_name {var_name} pred tensor shape: {pred_tensor.shape}")
                 # e.g. [B, (channels?), H, W], or [B,1,channels,H,W].
                 # If missing a time dim, unsqueeze it:
@@ -180,9 +174,9 @@ def build_new_batch_with_prediction(
     old_ts = old_md["timestamp"]
     if len(old_ts) >= 1:
         # We'll keep old_ts[-1] + new_time
-        # or do old_ts[-2], old_ts[-1] => shift forward. 
+        # or do old_ts[-2], old_ts[-1] => shift forward.
         # The old batch had exactly 2 timestamps => old_ts[-1] is the last one.
-        new_time_str = compute_next_timestamp(old_ts[-1])  
+        new_time_str = compute_next_timestamp(old_ts[-1])
         # e.g. if old_ts==[t0, t1], new_ts=>[t1, t2]
         new_ts_list = [old_ts[-1], new_time_str]
         old_md["timestamp"] = new_ts_list
@@ -221,9 +215,11 @@ def main(cfg: DictConfig):
     # Seed the experiment for numpy, torch and python.random.
     seed_everything(42, workers=True)
 
-    #Load the Test Dataset
+    # Load the Test Dataset
     print("Setting up Dataloader ...")
-    test_dataset = LargeClimateDataset(data_dir="data_small/rollout", scaling_settings=cfg.data.scaling, num_species=cfg.data.species_number)
+    test_dataset = LargeClimateDataset(
+        data_dir="data_small/rollout", scaling_settings=cfg.data.scaling, num_species=cfg.data.species_number
+    )
     print("Reading test data from :", "data_small/rollout")
     test_dataloader = DataLoader(
         test_dataset,
@@ -243,49 +239,52 @@ def main(cfg: DictConfig):
     mlf_logger = MLFlowLogger(experiment_name="BFM_logs", run_name=f"BFM_{current_time}")
 
     checkpoint_path = cfg.evaluation.checkpoint_path
-    #Load Model from Checkpoint
+    # Load Model from Checkpoint
     print(f"Loading model from checkpoint: {checkpoint_path}")
 
     device = torch.device(cfg.evaluation.test_device)
     print("weigths device", device)
 
-    loaded_model = BFM_lighting.load_from_checkpoint(checkpoint_path,
-                                    map_location=device,
-                                    surface_vars=(["t2m", "msl"]),
-                                    single_vars=(["lsm"]),
-                                    atmos_vars=(["z", "t"]),
-                                    species_vars=(["ExtinctionValue"]),
-                                    species_distr_vars=(["Distribution"]),
-                                    land_vars=(["Land", "NDVI"]),
-                                    agriculture_vars=(["AgricultureLand", "AgricultureIrrLand", "ArableLand", "Cropland"]),
-                                    forest_vars=(["Forest"]),
-                                    atmos_levels=cfg.data.atmos_levels,
-                                    species_num=cfg.data.species_number,
-                                    H=cfg.model.H,
-                                    W=cfg.model.W,
-                                    num_latent_tokens=cfg.model.num_latent_tokens,
-                                    backbone_type=cfg.model.backbone,
-                                    patch_size=cfg.model.patch_size,
-                                    embed_dim= cfg.model.embed_dim,
-                                    num_heads=cfg.model.num_heads,
-                                    head_dim=cfg.model.head_dim,
-                                    depth=cfg.model.depth,)
+    loaded_model = BFM_lighting.load_from_checkpoint(
+        checkpoint_path,
+        map_location=device,
+        surface_vars=(["t2m", "msl"]),
+        single_vars=(["lsm"]),
+        atmos_vars=(["z", "t"]),
+        species_vars=(["ExtinctionValue"]),
+        species_distr_vars=(["Distribution"]),
+        land_vars=(["Land", "NDVI"]),
+        agriculture_vars=(["AgricultureLand", "AgricultureIrrLand", "ArableLand", "Cropland"]),
+        forest_vars=(["Forest"]),
+        atmos_levels=cfg.data.atmos_levels,
+        species_num=cfg.data.species_number,
+        H=cfg.model.H,
+        W=cfg.model.W,
+        num_latent_tokens=cfg.model.num_latent_tokens,
+        backbone_type=cfg.model.backbone,
+        patch_size=cfg.model.patch_size,
+        embed_dim=cfg.model.embed_dim,
+        num_heads=cfg.model.num_heads,
+        head_dim=cfg.model.head_dim,
+        depth=cfg.model.depth,
+    )
 
-    trainer = L.Trainer(accelerator=cfg.training.accelerator,
+    trainer = L.Trainer(
+        accelerator=cfg.training.accelerator,
         devices=cfg.training.devices,
         precision=cfg.training.precision,
         log_every_n_steps=cfg.training.log_steps,
         # logger=mlf_logger,
         enable_checkpointing=False,
-        enable_progress_bar=True,)
+        enable_progress_bar=True,
+    )
 
     # test_results is typically a list of dicts (one per test dataloader)
     print("=== Test Results ===")
 
     test_sample = next(iter(test_dataloader))
-    rollout_dict = rollout_forecast(trainer, model=loaded_model, 
-                                    initial_batch=test_sample, test_dataset=test_dataset, steps=10)
-    
+    rollout_dict = rollout_forecast(trainer, model=loaded_model, initial_batch=test_sample, test_dataset=test_dataset, steps=10)
+
     # Store the rollout dictionary
     f = open("rollouts.pkl", "wb")
     pickle.dump(rollout_dict, f)
@@ -296,6 +295,7 @@ def main(cfg: DictConfig):
         save_batch(batch_dict, f"rollout_batches/prediction_{timestamps[0]}_to_{timestamps[1]}.pt")
         print(f"\n--- Inspecting Batch {i} ---")
         inspect_batch_shapes_namedtuple(batch_dict)
+
 
 if __name__ == "__main__":
     main()

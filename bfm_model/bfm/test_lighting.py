@@ -8,8 +8,8 @@ from lightning.pytorch.loggers import MLFlowLogger
 from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader
 
-from src.bfm.src.dataloder import LargeClimateDataset, custom_collate
-from src.bfm.src.train_lighting import BFM_lighting
+from bfm_model.bfm.dataloder import LargeClimateDataset, custom_collate
+from bfm_model.bfm.train_lighting import BFM_lighting
 
 
 @hydra.main(version_base=None, config_path="configs", config_name="train_config")
@@ -38,9 +38,11 @@ def main(cfg: DictConfig):
     # Seed the experiment for numpy, torch and python.random.
     seed_everything(42, workers=True)
 
-    #Load the Test Dataset
+    # Load the Test Dataset
     print("Setting up Dataloader ...")
-    test_dataset = LargeClimateDataset(data_dir=cfg.data.test_data_path, scaling_settings=cfg.data.scaling, num_species=cfg.data.species_number)  # Adapt
+    test_dataset = LargeClimateDataset(
+        data_dir=cfg.data.test_data_path, scaling_settings=cfg.data.scaling, num_species=cfg.data.species_number
+    )  # Adapt
     print("Reading test data from :", cfg.data.test_data_path)
     test_dataloader = DataLoader(
         test_dataset,
@@ -70,30 +72,31 @@ def main(cfg: DictConfig):
         enable_progress_bar=True,
     )
 
-    bfm_model = BFM_lighting(surface_vars=(["t2m", "msl"]),
-                            single_vars=(["lsm"]),
-                            atmos_vars=(["z", "t"]),
-                            species_vars=(["ExtinctionValue"]),
-                            species_distr_vars=(["Distribution"]),
-                            land_vars=(["Land", "NDVI"]),
-                            agriculture_vars=(["AgricultureLand", "AgricultureIrrLand", "ArableLand", "Cropland"]),
-                            forest_vars=(["Forest"]),
-                            atmos_levels=cfg.data.atmos_levels,
-                            species_num=cfg.data.species_number,
-                            H=cfg.model.H,
-                            W=cfg.model.W,
-                            num_latent_tokens=cfg.model.num_latent_tokens,
-                            backbone_type=cfg.model.backbone,
-                            patch_size=cfg.model.patch_size,
-                            embed_dim= cfg.model.embed_dim,
-                            num_heads=cfg.model.num_heads,
-                            head_dim=cfg.model.head_dim,
-                            depth=cfg.model.depth,
-                            batch_size=cfg.evaluation.batch_size,)
-
+    bfm_model = BFM_lighting(
+        surface_vars=(["t2m", "msl"]),
+        single_vars=(["lsm"]),
+        atmos_vars=(["z", "t"]),
+        species_vars=(["ExtinctionValue"]),
+        species_distr_vars=(["Distribution"]),
+        land_vars=(["Land", "NDVI"]),
+        agriculture_vars=(["AgricultureLand", "AgricultureIrrLand", "ArableLand", "Cropland"]),
+        forest_vars=(["Forest"]),
+        atmos_levels=cfg.data.atmos_levels,
+        species_num=cfg.data.species_number,
+        H=cfg.model.H,
+        W=cfg.model.W,
+        num_latent_tokens=cfg.model.num_latent_tokens,
+        backbone_type=cfg.model.backbone,
+        patch_size=cfg.model.patch_size,
+        embed_dim=cfg.model.embed_dim,
+        num_heads=cfg.model.num_heads,
+        head_dim=cfg.model.head_dim,
+        depth=cfg.model.depth,
+        batch_size=cfg.evaluation.batch_size,
+    )
 
     checkpoint_path = cfg.evaluation.checkpoint_path
-    #Load Model from Checkpoint
+    # Load Model from Checkpoint
     print(f"Loading model from checkpoint: {checkpoint_path}")
     # V1 Do the inference
     test_results = trainer.test(model=bfm_model, ckpt_path=checkpoint_path, dataloaders=test_dataloader)

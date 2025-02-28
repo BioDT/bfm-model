@@ -9,8 +9,13 @@ import torch.nn.functional as F
 from einops import rearrange, repeat
 from einops.layers.torch import Reduce
 
-from src.perceiver_components.helpers import Attention, FeedForward, PreNorm, cache_fn
-from src.perceiver_components.pos_encoder import build_position_encoding
+from bfm_model.perceiver_components.helpers import (
+    Attention,
+    FeedForward,
+    PreNorm,
+    cache_fn,
+)
+from bfm_model.perceiver_components.pos_encoder import build_position_encoding
 
 
 class Perceiver(nn.Module):

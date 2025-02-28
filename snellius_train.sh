@@ -25,4 +25,4 @@ source ${venv_path}bin/activate
 export LD_LIBRARY_PATH=${venv_path}/lib/:$LD_LIBRARY_PATH
 export PYTHONPATH=${venv_path}/lib/python3.11/site-packages/:$PYTHONPATH
 
-srun python src/bfm/src/train_lighting.py
+srun python bfm_model/bfm/train_lighting.py

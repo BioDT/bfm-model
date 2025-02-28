@@ -6,12 +6,14 @@ import torch.nn.functional as F
 from einops import rearrange, repeat
 from torch import nn
 
-from src.perceiver_components.helpers import _GLU
-from src.perceiver_components.helpers import Attention as BaseAttention
-from src.perceiver_components.helpers import GQAAttention as BaseGQAttention
-from src.perceiver_components.helpers import BuiltinGQAAttention as BaseBuiltinGQAttention
-from src.perceiver_components.helpers import FeedForward as BaseFeedForward
-from src.perceiver_components.helpers import PreNorm
+from bfm_model.perceiver_components.helpers import _GLU
+from bfm_model.perceiver_components.helpers import Attention as BaseAttention
+from bfm_model.perceiver_components.helpers import (
+    BuiltinGQAAttention as BaseBuiltinGQAttention,
+)
+from bfm_model.perceiver_components.helpers import FeedForward as BaseFeedForward
+from bfm_model.perceiver_components.helpers import GQAAttention as BaseGQAttention
+from bfm_model.perceiver_components.helpers import PreNorm
 
 
 def dropout_seq(seq: torch.Tensor, mask: Optional[torch.Tensor], dropout: float):
@@ -132,11 +134,12 @@ class Attention(BaseAttention):
     def __init__(self, q_dim: int, context_dim: int = None, heads: int = 8, head_dim: int = 64):
         super().__init__(q_dim, context_dim, heads, head_dim, dropout=0)  # keep dropout to 0 for Perceiver IO
 
+
 class GQAttention(BaseGQAttention):
     def __init__(self, q_dim: int, context_dim: int = None, n_q_heads: int = 8, n_kv_heads: int = 4, head_dim: int = 64):
         super().__init__(q_dim, context_dim, n_q_heads, n_kv_heads, head_dim, dropout=0)  # keep dropout to 0 for Perceiver IO
 
+
 class BuiltinGQAttention(BaseBuiltinGQAttention):
     def __init__(self, q_dim: int, context_dim: int = None, n_q_heads: int = 8, n_kv_heads: int = 4, head_dim: int = 64):
         super().__init__(q_dim, context_dim, n_q_heads, n_kv_heads, head_dim, dropout=0)  # keep dropout to 0 for Perceiver IO
-

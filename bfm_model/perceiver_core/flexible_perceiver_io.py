@@ -5,14 +5,14 @@ import torch.nn as nn
 import torch.optim as optim
 from einops import repeat
 
-from src.perceiver_components.helpers_io import (
+from bfm_model.perceiver_components.helpers_io import (
     Attention,
     FeedForward,
     PreNorm,
     cache_fn,
     dropout_seq,
 )
-from src.perceiver_components.pos_encoder import build_position_encoding
+from bfm_model.perceiver_components.pos_encoder import build_position_encoding
 
 
 class FlexiblePerceiverIO(nn.Module):
