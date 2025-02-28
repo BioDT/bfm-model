@@ -16,7 +16,7 @@ cache:
     - .cache/pip
     - /root/.cache/pypoetry/virtualenvs
 before_script:
-  - apt install pre-commit
+  - apt update && apt install pre-commit
   # - pip install virtualenv
   # - virtualenv venv
   # - source venv/bin/activate
