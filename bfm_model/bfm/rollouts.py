@@ -1,6 +1,5 @@
 import copy
 import os
-import pickle
 from datetime import datetime
 
 import hydra
@@ -28,7 +27,7 @@ def rollout_forecast(trainer, model, initial_batch, test_dataset, steps=2, batch
         "lead_times": [],
     }
 
-    current_batch = copy.deepcopy(initial_batch)  # so we don't overwrite user input
+    current_batch = copy.deepcopy(initial_batch)
     B = batch_size
 
     class SingleBatchDataset(Dataset):
@@ -83,7 +82,7 @@ def rollout_forecast(trainer, model, initial_batch, test_dataset, steps=2, batch
 
         # handle times
         # Suppose your "Batch" has metadata => lead_time, timestamps...
-        # We'll store the new predicted time.
+        # Store the new predicted time.
         step_timestamp = current_batch.batch_metadata.timestamp[-1]
         rollout_dict["timestamps"].append(step_timestamp)
         rollout_dict["lead_times"].append(current_batch.batch_metadata.lead_time)
@@ -155,7 +154,6 @@ def build_new_batch_with_prediction(old_batch, prediction_dict, groups=None, tim
             if var_name in group_vars_pred:
                 pred_tensor = group_vars_pred[var_name]
                 # print(f"var_name {var_name} pred tensor shape: {pred_tensor.shape}")
-                # e.g. [B, (channels?), H, W], or [B,1,channels,H,W].
                 # If missing a time dim, unsqueeze it:
                 if pred_tensor.dim() == last_slice.dim() - 1:
                     # e.g. old had 5 dims, new has 4 => unsqueeze time
@@ -218,7 +216,7 @@ def main(cfg: DictConfig):
 
     # Load the Test Dataset
     print("Setting up Dataloader ...")
-    data_dir = "data_small/2009_batches"
+    data_dir = "data_small/2009_batches" # Needs a single batch item to start the rollouts from
     test_dataset = LargeClimateDataset(
         data_dir=data_dir, scaling_settings=cfg.data.scaling, num_species=cfg.data.species_number
     )
@@ -292,10 +290,6 @@ def main(cfg: DictConfig):
     test_sample = next(iter(test_dataloader))
     rollout_dict = rollout_forecast(trainer, model=loaded_model, initial_batch=test_sample, test_dataset=test_dataset, steps=5)
 
-    # Store the rollout dictionary
-    # f = open("rollouts.pkl", "wb")
-    # pickle.dump(rollout_dict, f)
-    # f.close()
     os.makedirs("rollout_batches", exist_ok=True)
     for i, batch_dict in enumerate(rollout_dict["batches"]):
         timestamps = batch_dict.batch_metadata.timestamp

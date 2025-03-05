@@ -93,23 +93,23 @@ An interesting discussion: https://github.com/pytorch/pytorch/issues/122057
 
 Issue PyTorch 2.1.2 vs 2.2.0
 
-Good Trainer example: https://github.com/SeanNaren/min-LLM/blob/fsdp/train.py#L235-L243
-
-Interesting addition for CLI args generation: https://github.com/google/python-fire
-
-
 ## Resources
 
 + [FSDP Lighting](https://lightning.ai/docs/pytorch/stable/advanced/model_parallel/fsdp.html)
 
++ Good Trainer example: https://github.com/SeanNaren/min-LLM/blob/fsdp/train.py#L235-L243
+
++ Interesting addition for CLI args generation: https://github.com/google/python-fire
 
 ## TODODs
+[ ] Finetune routine implementation with LoRA and optinally VeRA
 
-[ ] Include the species_extinction_variables into the Encoder's latents and embeddings. Currently swaped with the species distribution - which have an extra dim, that needs handling.
+[ ] Finetune dataset setup 
 
-[ ] Fix the configurable patch size:
-```
-#TODO Check why this gives weird error. For now hardcode the # of patches
-        # num_patches = (H // self.patch_size) * (W // self.patch_size)
-        num_patches = 3040
-```
+a) Presence and absence of species: [Geolifeclef](https://www.kaggle.com/competitions/geolifeclef-2023-lifeclef-2023-x-fgvc10/data 
+)
+b) Invasive species [flavonge](https://floraveg.eu/) & [opendap](http://opendap.biodt.eu/ias-pdt/0/outputs/)
+
+[ ] Validate distributed training strategy
+
+[ ] 

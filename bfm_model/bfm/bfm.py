@@ -32,8 +32,7 @@ Example usage:
 """
 
 import os
-from collections import namedtuple
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Literal
 
 import torch
@@ -48,8 +47,6 @@ from bfm_model.bfm.decoder import BFMDecoder
 from bfm_model.bfm.encoder import BFMEncoder
 from bfm_model.mvit.mvit_model import MViT
 from bfm_model.swin_transformer.core.swim_core_v2 import Swin3DTransformer
-
-DEVICE = "cuda:0"
 
 
 class BFM(nn.Module):

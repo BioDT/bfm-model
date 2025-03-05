@@ -423,14 +423,14 @@ class BFMEncoder(nn.Module):
             print(f"\n{group_name}: No variables found")
             return None
 
-        # 1) Stack variables => shape [var_count, B, [T,] H, W].
+        # Stack variables => shape [var_count, B, [T,] H, W].
         # e.g. if 2 variables, each [2, 152, 320], then stacking => [2, 2, 152, 320].
         # or if each is [2, 3, 152, 320], => [2, 2, 3, 152, 320].
         values = list(variables.values())  # list of Tensors
         x = torch.stack(values, dim=0)
         # print(f"{group_name}: after stacking => {x.shape}")
 
-        # 2) Move the 'var_count' dimension after batch dim => [B, var_count, ...].
+        # Move the 'var_count' dimension after batch dim => [B, var_count, ...].
         # e.g. [2, 2, 152, 320] => [2, 2, 152, 320] if var_count=2 is dimension 0, B=2 dimension 1 => we do a transpose:
         # dims = list(x.shape)
         # dims[0] = var_count, dims[1] = B, ...
@@ -447,7 +447,7 @@ class BFMEncoder(nn.Module):
 
         # print(f"{group_name}: after permute => {x.shape}")
 
-        # 3) Merge    into a single channel dimension => shape [B, C, H, W].
+        # Merge    into a single channel dimension => shape [B, C, H, W].
         # if x.dim()==4, => [B, V, H, W]. then C = V
         # if x.dim()==5, => [B, V, T, H, W]. then C = V * T
         if x.dim() == 4:
@@ -461,14 +461,14 @@ class BFMEncoder(nn.Module):
             # channel_dim = V * T
         # print(f"{group_name}: merged var/time => channels => {x.shape} (C={channel_dim})")
 
-        # 4) Now do patchify:
+        # Now do patchify:
         # We want => [B, (H/p1)*(W/p2), C*(p1*p2)]
         # einops pattern: "b c (h p1) (w p2) -> b (h w) (c p1 p2)"
         # Make sure H,W are multiples of p1,p2
         x = rearrange(x, "b c (h p1) (w p2) -> b (h w) (c p1 p2)", p1=self.patch_size, p2=self.patch_size)
         # print(f"{group_name}: after patchify => {x.shape}")
 
-        # 5) Now x is [B, num_patches, C*(p1*p2)] => feed token_embeds
+        # Now x is [B, num_patches, C*(p1*p2)] => feed token_embeds
         # token_embeds expects the last dim = in_features that matches its linear layer
         x = token_embeds(x)  # => [B, num_patches, embed_dim]
         # print(f"{group_name}: after token_embeds => {x.shape}")
@@ -570,15 +570,6 @@ class BFMEncoder(nn.Module):
                     # species_distr.append(species_num_emb)
                     embeddings.append(species_num_emb)
                     embedding_groups["species_distr"] = species_num_emb
-
-            # TODO Revise the logic why we need to stack them
-            # TODO For now we just add them to the list of embeddings.
-            # TODO v1
-            # # If we processed any levels, stack them [L, num_patches, embed_dim]
-            #     if len(species_distr) > 0:
-            #         stacked_species_distr = torch.stack(species_distr, dim=0)  # shape: [batch_size, num_patches, embed_dim]
-            #         embeddings.append(stacked_species_distr)
-            #         embedding_groups["species_distr"] = stacked_species_distr
 
         # print("process species extinction")
         species_embed = self.process_variable_group(

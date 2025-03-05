@@ -1,5 +1,4 @@
 import math
-from collections import namedtuple
 from datetime import datetime, timedelta
 from typing import Literal
 
@@ -12,7 +11,7 @@ from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import MLFlowLogger
 from lightning.pytorch.strategies import DDPStrategy, FSDPStrategy
 from lightning.pytorch.utilities.model_summary import ModelSummary
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import OmegaConf
 from torch.distributed.fsdp.wrap import enable_wrap, size_based_auto_wrap_policy, wrap
 from torch.utils.data import DataLoader
 
@@ -99,26 +98,6 @@ class BFM_lighting(LightningModule):
         self.total_steps = total_steps
         self.td_learning = td_learning
 
-        # The variable weights come from: w_var = 1 / standard_dev
-        # self.variable_weights = {
-        #     "surface_variables": {
-        #         "t2m": 0.13,
-        #         "msl": 0.00011,
-        #         # ... add more if surface has more
-        #     },
-        #     "single_variables": {"lsm": 2.27},
-        #     "atmospheric_variables": {"z": 1.22e-5, "t": 0.036},
-        #     "species_extinction_variables": {"ExtinctionValue": 38.0},
-        #     "land_variables": {"Land": 5.84e-4, "NDVI": 19.6},
-        #     "agriculture_variables": {
-        #         "AgricultureLand": 0.053,
-        #         "AgricultureIrrLand": 0.0,  # or skip if purely zero
-        #         "ArableLand": 0.085,
-        #         "Cropland": 0.36,
-        #     },
-        #     "forest_variables": {"Forest": 0.11},
-        #     "species_variables": {"Distribution": 1},
-        # }
         self.variable_weights = {
             "surface_variables": {
                 "t2m": 1.7,
@@ -131,7 +110,7 @@ class BFM_lighting(LightningModule):
             "land_variables": {"Land": 0.2, "NDVI": 1.48},
             "agriculture_variables": {
                 "AgricultureLand": 0.4,
-                "AgricultureIrrLand": 0.92,  # or skip if purely zero
+                "AgricultureIrrLand": 0.92,
                 "ArableLand": 0.38,
                 "Cropland": 0.51,
             },
@@ -236,7 +215,6 @@ class BFM_lighting(LightningModule):
 
         """
         # print(f"BFM batch size: {batch_size}")
-        ### V1
         encoded = self.encoder(batch, lead_time, batch_size)
         # print("Encoded shape", encoded.shape)
 
@@ -356,7 +334,7 @@ class BFM_lighting(LightningModule):
                 count += 1
 
         if count > 0:
-            total_loss /= count  # average across groups (optiona
+            total_loss /= count  # average across groups
 
         print(f"Loss: {total_loss}")
         return total_loss
@@ -431,13 +409,12 @@ def main(cfg):
 
     output_dir = HydraConfig.get().runtime.output_dir
 
-    print("Setting up Dataloader ...")
     dataset = LargeClimateDataset(
         data_dir=cfg.data.data_path, scaling_settings=cfg.data.scaling, num_species=cfg.data.species_number
     )
     test_dataset = LargeClimateDataset(
         data_dir=cfg.data.test_data_path, scaling_settings=cfg.data.scaling, num_species=cfg.data.species_number
-    )  # Adapt
+    )
 
     val_dataloader = DataLoader(
         test_dataset,
@@ -457,7 +434,7 @@ def main(cfg):
         shuffle=True,
         pin_memory=True,
     )
-
+    print(f"Setting up Daloaders with length train: {len(train_dataloader)} and test: {len(val_dataloader)}")
     # Setup logger
     current_time = datetime.now()
     # log the metrics in the hydra folder (easier to find)
@@ -517,6 +494,7 @@ def main(cfg):
         )
     elif cfg.training.strategy == "ddp":
         distr_strategy = DDPStrategy()
+
     print(f"Using {cfg.training.strategy} strategy: {distr_strategy}")
 
     trainer = L.Trainer(
@@ -531,10 +509,10 @@ def main(cfg):
         # limit_train_batches=10,      # Process 10 batches per epoch.
         # limit_val_batches=2,
         # limit_test_batches=10,
-        val_check_interval=cfg.training.eval_every,  # Run validation every 4 training batches.
+        val_check_interval=cfg.training.eval_every,  # Run validation every n training batches.
         check_val_every_n_epoch=None,
         # limit_train_batches=0.003, # For debugging to see what happens at the end of epoch
-        # check_val_every_n_epoch=None,  # Do eval every 1 epochs
+        # check_val_every_n_epoch=None,  # Do eval every n epochs
         # val_check_interval=3, # Does not work in Distributed settings | Do eval every 10 training steps => 10 steps x 8 batch_size = Every 80 Batches
         callbacks=[checkpoint_callback],
     )

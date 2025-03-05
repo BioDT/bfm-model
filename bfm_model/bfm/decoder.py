@@ -33,16 +33,11 @@ Example usage:
 """
 
 import math
-from collections import namedtuple
-from datetime import datetime, timedelta
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from einops import rearrange, repeat
 
 from bfm_model.bfm.dataset_basics import load_batches
-from bfm_model.perceiver_components.helpers_io import dropout_seq
 from bfm_model.perceiver_components.pos_encoder import build_position_encoding
 from bfm_model.perceiver_core.perceiver_io import PerceiverIO
 
@@ -354,31 +349,6 @@ class BFMDecoder(nn.Module):
         lead_time_encode = self._time_encoding(lead_times)
         lead_time_emb = self.lead_time_embed(lead_time_encode)
         queries = queries + lead_time_emb.unsqueeze(1)
-
-        # V1
-        # # Add absolute time embedding
-        # absolute_times = torch.tensor(
-        #     [[t.timestamp() / 3600 for t in time_list] for time_list in [batch.batch_metadata.timestamp]],
-        #     dtype=torch.float32,
-        #     device=x.device,
-        # )
-        # V2
-        ## TODO FIX IT , tuple and str
-        # a_time_mod =[[
-        #         datetime.strptime(t_str, "%Y-%m-%dT%H:%M:%S").timestamp() / 3600.0
-        #         for t_str in time_list
-        #     ]
-        #     for time_list in [batch.batch_metadata.timestamp]
-        # ]
-
-        # absolute_times = torch.tensor(a_time_mod, dtype=torch.float32, device=x.device)
-        # absolute_times = torch.tensor([1, 2], dtype=torch.float32, device=x.device)
-
-        # V1
-        # absolute_time_encode = self._time_encoding(absolute_times)
-        # absolute_time_embed = self.absolute_time_embed(absolute_time_encode)
-        # absolute_time_embed = absolute_time_embed.mean(dim=1, keepdim=True)
-        # queries = queries + absolute_time_embed
 
         # Apply Perceiver IO
         decoded = self.perceiver_io(x, queries=queries)

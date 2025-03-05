@@ -135,7 +135,7 @@ def crop_variables(variables, new_H, new_W, handle_nans=True, nan_mode="mean_cli
             cropped = v[:, :new_H, :new_W, :]
         else:
             cropped = v[..., :new_H, :new_W]
-        # 1) Handle infinities
+        # Handle infinities
         inf_mask = torch.isinf(cropped)
         inf_count = inf_mask.sum().item()
         if inf_count > 0:
@@ -147,7 +147,7 @@ def crop_variables(variables, new_H, new_W, handle_nans=True, nan_mode="mean_cli
             else:
                 cropped = torch.clip(cropped, -1e6, 1e6)
 
-        # 2) Handle NaNs if requested
+        # Handle NaNs if requested
         if handle_nans:
             nan_mask = torch.isnan(cropped)
             nan_count = nan_mask.sum().item()

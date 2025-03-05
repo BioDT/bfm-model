@@ -185,8 +185,6 @@ def inspect_batch_shapes_namedtuple(
     print("Metadata:")
     print(f"  Timestamps: {md.timestamp}")
     print(f"  Lead time: {md.lead_time}")
-    # ... lat/lon, etc.
-
     # Each group
     for group_name in group_names:
         group_data = getattr(batch_obj, group_name, None)
@@ -438,7 +436,6 @@ def plot_species_stats_from_lists(actual_list: list, predicted_list: list, group
       4. A dropdown menu (if more than group_size channels exist) lets the user select
          which channels to display.
     """
-    # STEP 1: Determine the set of channels.
     channels_set = set()
     for record in actual_list:
         occ = record.get('Distribution', {}).get('occurrences', {})
@@ -613,7 +610,6 @@ def plot_species_stats_from_lists(actual_list: list, predicted_list: list, group
             )]
         )
     
-    # STEP 7: Update layout.
     fig.update_layout(
         title="Comparison of Actual vs. Predicted Observations, Daily % Difference, and Residual Distribution",
         height=900,
