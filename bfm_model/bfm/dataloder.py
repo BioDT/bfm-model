@@ -1,7 +1,10 @@
+"""
+Copyright (C) 2025 TNO, The Netherlands. All rights reserved.
+"""
 import os
 from collections import namedtuple
 from datetime import datetime
-from typing import Literal, NamedTuple
+from typing import Literal
 
 import torch
 from omegaconf.dictconfig import DictConfig

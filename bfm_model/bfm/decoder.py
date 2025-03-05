@@ -1,4 +1,6 @@
 """
+Copyright (C) 2025 TNO, The Netherlands. All rights reserved.
+
 BFM (Biodiversity Foundation Model) Decoder Module.
 
 This module contains the decoder component of the BFM architecture, responsible for transforming

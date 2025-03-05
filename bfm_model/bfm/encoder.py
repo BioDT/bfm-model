@@ -1,4 +1,6 @@
 """
+Copyright (C) 2025 TNO, The Netherlands. All rights reserved.
+
 Encoder module for processing biodiversity data using a Perceiver IO architecture.
 
 This module provides a flexible encoder that processes multiple types of environmental variables

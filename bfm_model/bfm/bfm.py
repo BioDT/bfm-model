@@ -1,4 +1,6 @@
 """
+Copyright (C) 2025 TNO, The Netherlands. All rights reserved.
+
 BFM (Biodiversity Foundation Model) Main Module.
 
 This module contains the main BFM architecture, combining encoder, backbone and decoder components

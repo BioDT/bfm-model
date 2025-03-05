@@ -1,3 +1,6 @@
+"""
+Copyright (C) 2025 TNO, The Netherlands. All rights reserved.
+"""
 import math
 from datetime import datetime, timedelta
 from typing import Literal
