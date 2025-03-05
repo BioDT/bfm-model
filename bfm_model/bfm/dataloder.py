@@ -6,7 +6,7 @@ from typing import Literal, NamedTuple
 import torch
 from omegaconf.dictconfig import DictConfig
 from torch.utils.data import DataLoader, Dataset, default_collate
-
+from bfm_model.bfm.utils import DictObj
 from bfm_model.bfm.dataset_basics import *
 from bfm_model.bfm.scaler import (
     _rescale_recursive,
@@ -393,12 +393,15 @@ def compute_batch_statistics(batch: Batch) -> dict:
     return stats_result
 
 
+scalling_dict = {"enabled": False, "stats_path": "batch_statistics/statistics.json", "mode": "normalize"}
+scaling_object = DictObj(scalling_dict)
+
 def test_dataset_and_dataloader(data_dir):
     """
     Test function to inspect correctness.
     Print distinctive info from a single batch.
     """
-    dataset = LargeClimateDataset(data_dir, num_species=10)
+    dataset = LargeClimateDataset(data_dir, num_species=10, scaling_settings=scaling_object)
     dataloader = DataLoader(
         dataset,
         batch_size=1,  # Fetch two samples for testing
@@ -429,5 +432,5 @@ def test_dataset_and_dataloader(data_dir):
 
 
 if __name__ == "__main__":
-    data_dir = "data_small/batches/"  # Replace this with the actual directory path
+    data_dir = "data_small/rollout/"  # Replace this with the actual directory path
     test_dataset_and_dataloader(data_dir)

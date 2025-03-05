@@ -217,10 +217,11 @@ def main(cfg: DictConfig):
 
     # Load the Test Dataset
     print("Setting up Dataloader ...")
+    data_dir = "data_small/2009_batches"
     test_dataset = LargeClimateDataset(
-        data_dir="data_small/rollout", scaling_settings=cfg.data.scaling, num_species=cfg.data.species_number
+        data_dir=data_dir, scaling_settings=cfg.data.scaling, num_species=cfg.data.species_number
     )
-    print("Reading test data from :", "data_small/rollout")
+    print("Reading test data from :", data_dir)
     test_dataloader = DataLoader(
         test_dataset,
         batch_size=1,
@@ -283,12 +284,12 @@ def main(cfg: DictConfig):
     print("=== Test Results ===")
 
     test_sample = next(iter(test_dataloader))
-    rollout_dict = rollout_forecast(trainer, model=loaded_model, initial_batch=test_sample, test_dataset=test_dataset, steps=10)
+    rollout_dict = rollout_forecast(trainer, model=loaded_model, initial_batch=test_sample, test_dataset=test_dataset, steps=5)
 
     # Store the rollout dictionary
-    f = open("rollouts.pkl", "wb")
-    pickle.dump(rollout_dict, f)
-    f.close()
+    # f = open("rollouts.pkl", "wb")
+    # pickle.dump(rollout_dict, f)
+    # f.close()
     os.makedirs("rollout_batches", exist_ok=True)
     for i, batch_dict in enumerate(rollout_dict["batches"]):
         timestamps = batch_dict.batch_metadata.timestamp

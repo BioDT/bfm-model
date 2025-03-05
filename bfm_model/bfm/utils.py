@@ -397,6 +397,15 @@ def compute_species_occurrences(batch) -> dict:
 
     return result
 
+class DictObj:
+    def __init__(self, in_dict:dict):
+        assert isinstance(in_dict, dict)
+        for key, val in in_dict.items():
+            if isinstance(val, (list, tuple)):
+                setattr(self, key, [DictObj(x) if isinstance(x, dict) else x for x in val])
+            else:
+                setattr(self, key, DictObj(val) if isinstance(val, dict) else val)
+
 
 def plot_species_stats_from_lists(actual_list: list, predicted_list: list, group_size: int = 5):
     """
