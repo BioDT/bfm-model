@@ -1,14 +1,15 @@
 #!/bin/bash
 #SBATCH --job-name=bfm_model
 #SBATCH --partition=gpu_h100
-#SBATCH --time=8:00:00
+#SBATCH --time=24:00:00
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=15
 #SBATCH --gpus-per-node=1
 
 module purge
-module load 2023 Python/3.11.3-GCCcore-12.3.0
+
+module load 2024 Python/3.11.3-GCCcore-12.3.0 CUDA/12.1.1 cuDNN/8.9.2.26-CUDA-12.1.1 
 
 set -e
 

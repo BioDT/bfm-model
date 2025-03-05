@@ -6,6 +6,7 @@ from datetime import datetime
 import hydra
 import lightning as L
 import torch
+from hydra.core.hydra_config import HydraConfig
 from lightning.pytorch import seed_everything
 from lightning.pytorch.loggers import MLFlowLogger
 from omegaconf import DictConfig, OmegaConf
@@ -232,12 +233,17 @@ def main(cfg: DictConfig):
         pin_memory=True,
     )
 
+    output_dir = HydraConfig.get().runtime.output_dir
+
     # Setup logger
-    # current_time = datetime.now()
-    # remote_server_uri = f"http://0.0.0.0:{cfg.mlflow.port}"
-    # tracking_uri="file:./mlruns" (default, goes to files. Serving Mlflow is separate)
-    # mlf_logger = MLFlowLoggerWithSystemMetrics(experiment_name="BFM_logs", run_name=f"BFM_{current_time}")
-    # mlf_logger = MLFlowLogger(experiment_name="BFM_logs", run_name=f"BFM_{current_time}")
+    current_time = datetime.now()
+    # log the metrics in the hydra folder (easier to find)
+    mlf_logger_in_hydra_folder = MLFlowLogger(
+        experiment_name="BFM_logs", run_name=f"BFM_{current_time}", save_dir=f"{output_dir}/logs"
+    )
+    # also log in the .mlruns folder so that you can run mlflow server and see every run together
+    # tracking_uri = f"http://0.0.0.0:{cfg.mlflow.port}"
+    mlf_logger_in_current_folder = MLFlowLogger(experiment_name="BFM_logs", run_name=f"BFM_{current_time}")
 
     checkpoint_path = cfg.evaluation.checkpoint_path
     # Load Model from Checkpoint
@@ -275,7 +281,7 @@ def main(cfg: DictConfig):
         devices=cfg.training.devices,
         precision=cfg.training.precision,
         log_every_n_steps=cfg.training.log_steps,
-        # logger=mlf_logger,
+        logger=[mlf_logger_in_hydra_folder, mlf_logger_in_current_folder],
         enable_checkpointing=False,
         enable_progress_bar=True,
     )
