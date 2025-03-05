@@ -2,7 +2,7 @@
 name = "bfm-model"
 version = "0.3.0"
 description = "First steps towards developing an Artificial Intelligence Foundation Model for Biodiversity research and conservation."
-authors = ["Athanasios Trantas <thanasis.trantas@tno.nl>", "Martino Mensio <martino.mensio@tno.nl>", "Sebastian Gribincea <sebastian.gribincea@tno.nl>]
+authors = ["Athanasios Trantas <thanasis.trantas@tno.nl>", "Martino Mensio <martino.mensio@tno.nl>", "Sebastian Gribincea <sebastian.gribincea@tno.nl>"]
 readme = "README.md"
 # package-mode = false # for now, let's keep poetry just for the goal of requirements management
 license = {file = "LICENSE"}
