@@ -331,7 +331,7 @@ class BFM_lighting(LightningModule):
                     time0 = gt_tensor[:, 0]
                     time1 = gt_tensor[:, 1]
 
-                    true_diff = time1 - time0 
+                    true_diff = time1 - time0
                     pred_diff = pred_tensor - time0
 
                     loss_var = torch.mean(torch.abs(pred_diff - true_diff))
@@ -460,8 +460,13 @@ def main(cfg):
 
     # Setup logger
     current_time = datetime.now()
-    # remote_server_uri = f"http://0.0.0.0:{cfg.mlflow.port}"
-    mlf_logger = MLFlowLogger(experiment_name="BFM_logs", run_name=f"BFM_{current_time}", tracking_uri=f"{output_dir}/logs")
+    # log the metrics in the hydra folder (easier to find)
+    mlf_logger_in_hydra_folder = MLFlowLogger(
+        experiment_name="BFM_logs", run_name=f"BFM_{current_time}", save_dir=f"{output_dir}/logs"
+    )
+    # also log in the .mlruns folder so that you can run mlflow server and see every run together
+    # tracking_uri = f"http://0.0.0.0:{cfg.mlflow.port}"
+    mlf_logger_in_current_folder = MLFlowLogger(experiment_name="BFM_logs", run_name=f"BFM_{current_time}")
 
     # logger_run_id = mlf_logger.run_id
     # save_run_id(f"{output_dir}/logs/run_id.txt", logger_run_id)
@@ -490,7 +495,7 @@ def main(cfg):
         learning_rate=cfg.training.lr,
         weight_decay=cfg.training.wd,
         batch_size=cfg.training.batch_size,
-        td_learning=cfg.training.td_learning
+        td_learning=cfg.training.td_learning,
     )
 
     model_summary = ModelSummary(BFM, max_depth=2)
@@ -522,7 +527,7 @@ def main(cfg):
         # strategy=distr_strategy,
         # num_nodes=cfg.training.num_nodes,
         log_every_n_steps=cfg.training.log_steps,
-        logger=mlf_logger,
+        logger=[mlf_logger_in_hydra_folder, mlf_logger_in_current_folder],
         # limit_train_batches=10,      # Process 10 batches per epoch.
         # limit_val_batches=2,
         # limit_test_batches=10,
