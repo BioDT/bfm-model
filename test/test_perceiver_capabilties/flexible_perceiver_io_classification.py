@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader, TensorDataset
 from torchvision import transforms
 from torchvision.datasets import MNIST
 
-from src.perceiver_core.flexible_perceiver_io import FlexiblePerceiverIO
+from bfm_model.perceiver_core.flexible_perceiver_io import FlexiblePerceiverIO
 
 
 class JointClassifier(pl.LightningModule):

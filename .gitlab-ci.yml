@@ -1,0 +1,69 @@
+
+# To contribute improvements to CI/CD templates, please follow the Development guide at:
+# https://docs.gitlab.com/development/cicd/templates/
+# This specific template is located at:
+# https://gitlab.com/gitlab-org/gitlab/-/blob/master/lib/gitlab/ci/templates/Python.gitlab-ci.yml
+# Official language image. Look for the different tagged releases at:
+# https://hub.docker.com/r/library/python/tags/
+image: python:latest
+# Change pip's cache directory to be inside the project directory since we can
+# only cache local items.
+variables:
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+# https://pip.pypa.io/en/stable/topics/caching/
+cache:
+  paths:
+    - .cache/pip
+    - /root/.cache/pypoetry/virtualenvs
+before_script:
+  - apt-get update -qq && apt-get install -y -qq pre-commit
+  # - pip install virtualenv
+  # - virtualenv venv
+  # - source venv/bin/activate
+  - pip install poetry
+  - poetry install
+  - eval $(poetry env activate)
+
+stages:
+- lint
+- test
+
+lint:
+  stage: lint
+  # before_script:
+  #   - apt update && apt install -y --no-install-recommends git
+  script:
+    # - pre-commit run --all-files # TODO: solve broken pre-commit (hooks not compatible with pre-commit<3.2)
+    - echo "This is the lint stage"
+test:
+  stage: test
+  script:
+    - echo "This is the test stage"
+    - poetry run python -m unittest -v
+    - poetry run pytest -vv --junitxml=tests/report.xml
+  artifacts:
+    when: always
+    reports:
+      junit: tests/report.xml
+# run:
+#   script:
+#     - pip install .
+#     # run the command here
+#   artifacts:
+#     paths:
+#       - build/*
+# pages:
+#   script:
+#     - pip install sphinx sphinx-rtd-theme
+#     - cd doc
+#     - make html
+#     - mv build/html/ ../public/
+#   artifacts:
+#     paths:
+#       - public
+#   rules:
+#     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+# deploy:
+#   stage: deploy
+#   script: echo "Define your deployment script!"
+#   environment: production

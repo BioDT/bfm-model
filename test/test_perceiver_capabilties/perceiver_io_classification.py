@@ -8,7 +8,7 @@ from torchmetrics.functional import accuracy
 from torchvision import transforms
 from torchvision.datasets import MNIST
 
-from src.perceiver_core.perceiver_io import PerceiverIO
+from bfm_model.perceiver_core.perceiver_io import PerceiverIO
 
 
 class BasePerceiverIOClassifier(pl.LightningModule):

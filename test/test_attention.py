@@ -8,7 +8,7 @@ import torch
 from einops import rearrange, repeat
 from torch import nn
 
-from src.perceiver_components.helpers import Attention
+from bfm_model.perceiver_components.helpers import Attention
 
 
 class TestAttention(unittest.TestCase):

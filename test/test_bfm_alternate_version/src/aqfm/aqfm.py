@@ -35,8 +35,8 @@ from typing import Literal
 import torch
 import torch.nn as nn
 
-from src.mvit.mvit_model import MViT
-from src.swin_transformer.core.swim_core_v2 import Swin3DTransformer
+from bfm_model.mvit.mvit_model import MViT
+from bfm_model.swin_transformer.core.swim_core_v2 import Swin3DTransformer
 
 
 class AQFM(nn.Module):

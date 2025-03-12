@@ -1,8 +1,8 @@
 import torch
 import torch.nn as nn
 
-from src.mvit.attention import MultiScaleAttention, MultiScaleTransformerBlock
-from src.mvit.common import MLPBlock
+from bfm_model.mvit.attention import MultiScaleAttention, MultiScaleTransformerBlock
+from bfm_model.mvit.common import MLPBlock
 
 
 def test_mlp():

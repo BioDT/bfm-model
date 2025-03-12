@@ -1,0 +1,61 @@
+model:
+  T: 2   # Time steps
+  V_surf: 2 # Number of surface variables
+  V_atmos: 2 # Number of atmospheric variables
+  C: 3  # Number of atmospheric levels
+  V_spec: 1 # Number of extinct_species variables
+  V_land: 2 # Number of land variables
+  V_agri: 4 # Number of agriculture variables
+  V_forest: 1 # Number of forest variables
+  H: 152  # Height
+  W: 320  # Width
+  num_latent_tokens: 8 #TODO Check consistensy in name and value
+  backbone: "swin" # mvit
+  patch_size: 4 # Size of spatial patches.
+  embed_dim: 512 # Embedding dimension.
+  num_heads: 16 # Number of attention heads.
+  head_dim: 64 # Dimension of each attention head.
+  depth: 2 # Number of transformer layers.
+
+data:
+  atmos_levels: [50, 500, 1000]
+  species_number: 22 # [0-22] available species
+  data_path: /projects/prjs1134/data/projects/biodt/storage/final_dataset/train
+  # data_path: /home/thanasis.trantas/git_projects/bfm-model/data_small # hinton
+  test_data_path: /projects/prjs1134/data/projects/biodt/storage/final_dataset/test
+  # test_data_path: /home/thanasis.trantas/git_projects/bfm-model/data_small # hinton
+  scaling:
+    enabled: True
+    stats_path: batch_statistics/statistics.json # #/projects/prjs1134/data/projects/biodt/storage/batches_2025_02_17/statistics.json # snellius
+    # stats_path: /data/projects/biodt/storage/batches/statistics.json # hinton
+    mode: normalize # normalize (mean and std), standardize (min-max)
+#TODO Checkpointing path: /scratch-shared/<username>
+
+training:
+  batch_size: 3
+  workers: 15
+  epochs: 2
+  accelerator: gpu
+  precision: bf16-mixed
+  precision_in: "medium" # ["medium", "high", "highest"] https://pytorch.org/docs/stable/generated/torch.set_float32_matmul_precision.html#torch.set_float32_matmul_precision
+  devices: [0]
+  strategy: fsdp #fsdp #ddp
+  num_nodes: 1
+  gradient_clip: 1.0
+  log_steps: 1
+  lr: 0.00001  #5e-4
+  wd: 0.0000001 #5e-6
+  checkpoint_path: False
+  eval_every: 400
+  td_learning: True
+
+general:
+  do_eval: True
+
+mlflow:
+  port: 8082 # change here port if you get [Errno 98] Address already in use
+
+evaluation:
+  checkpoint_path: /home/thanasis.trantas/git_projects/bfm-model/outputs/2025-02-24/12-32-16/checkpoints/epoch=1-step=8.ckpt #/home/atrantas/bfm-model/outputs/2025-02-24/10-30-49/checkpoints/epoch=0-step=600.ckpt #/home/atrantas/bfm-model/outputs/2025-02-19/11-46-40/checkpoints/epoch=1-step=140.ckpt #outputs/2025-02-17/15-36-49/checkpoints/epoch=8-step=9.ckpt #/home/atrantas/bfm-model/outputs/2025-02-12-withcheckpoint/16-04-11/checkpoints/epoch=0-step=26.ckpt
+  batch_size: 1
+  test_device: "cuda:0"

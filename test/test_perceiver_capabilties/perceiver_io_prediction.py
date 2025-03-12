@@ -10,7 +10,7 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.preprocessing import MinMaxScaler
 from torch.utils.data import DataLoader, TensorDataset, random_split
 
-from src.perceiver_core.perceiver_io import PerceiverIO
+from bfm_model.perceiver_core.perceiver_io import PerceiverIO
 
 
 class TimeSeriesDataset(TensorDataset):
