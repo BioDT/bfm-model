@@ -42,19 +42,45 @@ poetry shell
 
 ## Run experiments
 
-Start an MLFLow server
+### Training
+
 ```bash
-# change here port if you get [Errno 98] Address already in use
-# also change port in the bfm_model/bfm/configs
-# & - optional, for interactive mode
-mlflow server --host 0.0.0.0 --port 8082 [&]
-```
-On another terminal (if not running in interactive mode), run the train recipe
-```bash
-python bfm_model/bfm/train.py
+python bfm_model/bfm/train_lighting.py
 ```
 
-In case of running the AQFM training script, make sure that the port you defined in it corresponds to the port of the MLFlow running server.
+### Testing
+
+```bash
+python bfm_model/bfm/test_lighting.py
+```
+
+### Rollout
+
+```bash
+python bfm_model/bfm/rollouts.py
+```
+
+
+## Analysing results
+
+We use [Hydra](https://hydra.cc/docs/intro/) to store all the artifacts from all the runs. In this way we can configure with yaml files, override from CLI, make multiruns with multiple parameters, and have all the results stored in the `outputs` folder.
+There, we can find by date and time all the data from the runs (configs, checkpoints, metrics, ...).
+
+
+### How to use MLflow
+
+[MLflow](https://mlflow.org/docs/latest/index.html) is used to log all the runs, and we configure it to save its internal files in the `mlruns` folder. The logging is done via filesystem, so that you don't need to have a MLflow server running during the training.
+
+You can run the MLflow server to inspect the runs with the command:
+
+```bash
+# you can customize host and port depending on your system
+mlflow server --host 0.0.0.0 --port 8082
+```
+
+On snellius, you need to forward the ports to your machine (TODO document commands)
+
+
 
 ## Connection
 
@@ -104,12 +130,12 @@ Issue PyTorch 2.1.2 vs 2.2.0
 ## TODODs
 [ ] Finetune routine implementation with LoRA and optinally VeRA
 
-[ ] Finetune dataset setup 
+[ ] Finetune dataset setup
 
-a) Presence and absence of species: [Geolifeclef](https://www.kaggle.com/competitions/geolifeclef-2023-lifeclef-2023-x-fgvc10/data 
+a) Presence and absence of species: [Geolifeclef](https://www.kaggle.com/competitions/geolifeclef-2023-lifeclef-2023-x-fgvc10/data
 )
 b) Invasive species [flavonge](https://floraveg.eu/) & [opendap](http://opendap.biodt.eu/ias-pdt/0/outputs/)
 
 [ ] Validate distributed training strategy
 
-[ ] 
+[ ]
