@@ -496,8 +496,11 @@ def main(cfg):
 
     if cfg.training.strategy == "fsdp":
         distr_strategy = FSDPStrategy(
-            sharding_strategy="FULL_SHARD", auto_wrap_policy=size_based_auto_wrap_policy(min_num_params=1e6), state_dict_type="full"
+            sharding_strategy="FULL_SHARD",
+            auto_wrap_policy=size_based_auto_wrap_policy(min_num_params=1e6),
+            activation_checkpointing_policy=lambda m: isinstance(m, Swin3DTransformer) or isinstance(m, MViT),
         )
+        
     elif cfg.training.strategy == "ddp":
         distr_strategy = DDPStrategy()
 
