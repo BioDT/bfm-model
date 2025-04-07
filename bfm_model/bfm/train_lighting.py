@@ -25,7 +25,7 @@ from bfm_model.bfm.utils import save_run_id
 from bfm_model.mvit.mvit_model import MViT
 from bfm_model.swin_transformer.core.swim_core_v2 import Swin3DTransformer
 
-
+from torch.utils.data.distributed import DistributedSampler
 class BFM_lighting(LightningModule):
     """
     Biodiversity Foundation Model.
@@ -428,8 +428,11 @@ def main(cfg):
         shuffle=False,
     )
 
+    train_sampler = DistributedSampler(dataset)
+
     train_dataloader = DataLoader(
         dataset,
+        sampler=train_sampler,
         batch_size=cfg.training.batch_size,
         num_workers=cfg.training.workers,
         collate_fn=custom_collate,
@@ -493,7 +496,7 @@ def main(cfg):
 
     if cfg.training.strategy == "fsdp":
         distr_strategy = FSDPStrategy(
-            sharding_strategy="FULL_SHARD", auto_wrap_policy=size_based_auto_wrap_policy, state_dict_type="full"
+            sharding_strategy="FULL_SHARD", auto_wrap_policy=size_based_auto_wrap_policy(min_num_params=1e6), state_dict_type="full"
         )
     elif cfg.training.strategy == "ddp":
         distr_strategy = DDPStrategy()
@@ -505,8 +508,8 @@ def main(cfg):
         accelerator=cfg.training.accelerator,
         devices=cfg.training.devices,
         precision=cfg.training.precision,
-        # strategy=distr_strategy,
-        # num_nodes=cfg.training.num_nodes,
+        strategy=distr_strategy,
+        num_nodes=cfg.training.num_nodes,
         log_every_n_steps=cfg.training.log_steps,
         logger=[mlf_logger_in_hydra_folder, mlf_logger_in_current_folder],
         # limit_train_batches=10,      # Process 10 batches per epoch.

@@ -35,12 +35,12 @@ training:
   batch_size: 3
   workers: 15
   epochs: 2
-  accelerator: gpu
+  accelerator: cuda
   precision: bf16-mixed
   precision_in: "medium" # ["medium", "high", "highest"] https://pytorch.org/docs/stable/generated/torch.set_float32_matmul_precision.html#torch.set_float32_matmul_precision
-  devices: [0]
+  devices: [0, 1, 2, 3]
   strategy: fsdp #fsdp #ddp
-  num_nodes: 1
+  num_nodes: 2
   gradient_clip: 1.0
   log_steps: 1
   lr: 0.00001  #5e-4
