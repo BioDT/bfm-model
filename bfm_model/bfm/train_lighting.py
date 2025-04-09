@@ -26,6 +26,15 @@ from bfm_model.mvit.mvit_model import MViT
 from bfm_model.swin_transformer.core.swim_core_v2 import Swin3DTransformer
 
 from torch.utils.data.distributed import DistributedSampler
+import os 
+from functools import partial
+import torch.distributed as dist
+from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
+from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import checkpoint_wrapper, apply_activation_checkpointing
+
+def activation_ckpt_policy(module):
+    return isinstance(module, (Swin3DTransformer, MViT))
+
 class BFM_lighting(LightningModule):
     """
     Biodiversity Foundation Model.
@@ -428,7 +437,9 @@ def main(cfg):
         shuffle=False,
     )
 
-    train_sampler = DistributedSampler(dataset)
+    if cfg.training.strategy == "ddp" or cfg.training.strategy == "fsdp":
+        torch.distributed.init_process_group(backend="nccl" if torch.cuda.is_available() else "gloo")
+    train_sampler = DistributedSampler(dataset, shuffle=True)
 
     train_dataloader = DataLoader(
         dataset,
@@ -437,7 +448,7 @@ def main(cfg):
         num_workers=cfg.training.workers,
         collate_fn=custom_collate,
         drop_last=True,
-        shuffle=True,
+        # shuffle=True,
         pin_memory=True,
     )
     print(f"Setting up Daloaders with length train: {len(train_dataloader)} and test: {len(val_dataloader)}")
@@ -481,6 +492,12 @@ def main(cfg):
         td_learning=cfg.training.td_learning,
     )
 
+    apply_activation_checkpointing(
+        BFM, 
+        checkpoint_wrapper_fn=checkpoint_wrapper,
+        check_fn=activation_ckpt_policy
+    )
+
     model_summary = ModelSummary(BFM, max_depth=2)
     print(model_summary)
 
@@ -497,12 +514,13 @@ def main(cfg):
     if cfg.training.strategy == "fsdp":
         distr_strategy = FSDPStrategy(
             sharding_strategy="FULL_SHARD",
-            auto_wrap_policy=size_based_auto_wrap_policy(min_num_params=1e6),
-            activation_checkpointing_policy=lambda m: isinstance(m, Swin3DTransformer) or isinstance(m, MViT),
+            auto_wrap_policy=partial(size_based_auto_wrap_policy, min_num_params=1e6),
+            # activation_checkpointing_policy=activation_ckpt_policy,
         )
-        
+
     elif cfg.training.strategy == "ddp":
         distr_strategy = DDPStrategy()
+    
 
     print(f"Using {cfg.training.strategy} strategy: {distr_strategy}")
 
@@ -551,6 +569,10 @@ def main(cfg):
 
     print("Finished testing successfully")
     trainer.print(torch.cuda.memory_summary())
+
+    # Optional: clean up the distributed process group
+    if dist.is_initialized():
+        dist.destroy_process_group()
 
 
 if __name__ == "__main__":
