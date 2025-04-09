@@ -437,18 +437,17 @@ def main(cfg):
         shuffle=False,
     )
 
-    if cfg.training.strategy == "ddp" or cfg.training.strategy == "fsdp":
-        torch.distributed.init_process_group(backend="nccl" if torch.cuda.is_available() else "gloo")
-    train_sampler = DistributedSampler(dataset, shuffle=True)
+    # if cfg.training.strategy == "ddp" or cfg.training.strategy == "fsdp":
+    #     torch.distributed.init_process_group(backend="nccl" if torch.cuda.is_available() else "gloo")
+    # train_sampler = DistributedSampler(dataset, shuffle=True)
 
     train_dataloader = DataLoader(
         dataset,
-        sampler=train_sampler,
+        shuffle=True,  # keep shuffle=True here
         batch_size=cfg.training.batch_size,
         num_workers=cfg.training.workers,
         collate_fn=custom_collate,
         drop_last=True,
-        # shuffle=True,
         pin_memory=True,
     )
     print(f"Setting up Daloaders with length train: {len(train_dataloader)} and test: {len(val_dataloader)}")
