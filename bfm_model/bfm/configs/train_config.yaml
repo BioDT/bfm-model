@@ -40,13 +40,15 @@ training:
   precision_in: "medium" # ["medium", "high", "highest"] https://pytorch.org/docs/stable/generated/torch.set_float32_matmul_precision.html#torch.set_float32_matmul_precision
   devices: 4
   strategy: fsdp #fsdp #ddp
-  num_nodes: 2
+  num_nodes: 16
   gradient_clip: 1.0
   log_steps: 1
   lr: 0.00001  #5e-4
   wd: 0.0000001 #5e-6
-  checkpoint_path: False
-  eval_every: 400
+  checkpoint_path: "/gpfs/home2/damian/projects/bfm-model/outputs"
+  # resume_from_checkpoint: False
+  checkpoint_every: 138
+  eval_every: 138
   td_learning: True
 
 general:
@@ -56,6 +58,6 @@ mlflow:
   port: 8082 # change here port if you get [Errno 98] Address already in use
 
 evaluation:
-  checkpoint_path: "/gpfs/home2/damian/projects/bfm-model/outputs/2025-04-09"
+  checkpoint_path: "/gpfs/home2/damian/projects/bfm-model/outputs"
   batch_size: 1
   test_device: "cuda:0"

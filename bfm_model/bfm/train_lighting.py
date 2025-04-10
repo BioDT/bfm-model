@@ -420,7 +420,7 @@ def main(cfg):
     seed_everything(42, workers=True)
 
     output_dir = HydraConfig.get().runtime.output_dir
-
+    print(f"Output directory: {output_dir}")
     dataset = LargeClimateDataset(
         data_dir=cfg.data.data_path, scaling_settings=cfg.data.scaling, num_species=cfg.data.species_number
     )
@@ -451,18 +451,19 @@ def main(cfg):
         pin_memory=True,
     )
     print(f"Setting up Daloaders with length train: {len(train_dataloader)} and test: {len(val_dataloader)}")
-    # Setup logger
+    # Setup logger with rank-specific paths to avoid conflicts
     current_time = datetime.now()
-    # log the metrics in the hydra folder (easier to find)
-    mlf_logger_in_hydra_folder = MLFlowLogger(
-        experiment_name="BFM_logs", run_name=f"BFM_{current_time}", save_dir=f"{output_dir}/logs"
-    )
-    # also log in the .mlruns folder so that you can run mlflow server and see every run together
-    # tracking_uri = f"http://0.0.0.0:{cfg.mlflow.port}"
-    mlf_logger_in_current_folder = MLFlowLogger(experiment_name="BFM_logs", run_name=f"BFM_{current_time}")
-
-    # logger_run_id = mlf_logger.run_id
-    # save_run_id(f"{output_dir}/logs/run_id.txt", logger_run_id)
+    rank = int(os.environ.get("RANK", "0"))
+    
+    # Single logger approach with rank-specific paths
+    mlf_logger = None
+    if "RANK" not in os.environ or os.environ["RANK"] == "0":
+        # Use rank in experiment name to avoid conflicts
+        mlf_logger = MLFlowLogger(
+            experiment_name=f"BFM_logs_r{rank}", 
+            run_name=f"BFM_{current_time}", 
+            save_dir=f"{output_dir}/logs/rank{rank}"
+        )
 
     print("Done \n Setting up the BFM")
     BFM = BFM_lighting(
@@ -502,10 +503,12 @@ def main(cfg):
 
     checkpoint_callback = ModelCheckpoint(
         dirpath=f"{output_dir}/checkpoints",
-        save_top_k=1,
-        monitor="val_loss",
+        save_top_k=3,
+        monitor="train_loss", #`log('val_loss', value)` in the `LightningModule`
         mode="min",
-        # save_last=True
+        every_n_train_steps=cfg.training.checkpoint_every,
+        filename="{epoch:02d}-{train_loss:.2f}",
+        save_last=True
     )
 
     print(f"Will be saving checkpoints at: {output_dir}/checkpoints")
@@ -531,13 +534,13 @@ def main(cfg):
         strategy=distr_strategy,
         num_nodes=cfg.training.num_nodes,
         log_every_n_steps=cfg.training.log_steps,
-        logger=[mlf_logger_in_hydra_folder, mlf_logger_in_current_folder],
+        logger=mlf_logger,  # Only the rank 0 process will have a logger
         # limit_train_batches=10,      # Process 10 batches per epoch.
         # limit_val_batches=2,
         # limit_test_batches=10,
         val_check_interval=cfg.training.eval_every,  # Run validation every n training batches.
         check_val_every_n_epoch=None,
-        # limit_train_batches=0.003, # For debugging to see what happens at the end of epoch
+        # limit_train_batches=1, # For debugging to see what happens at the end of epoch
         # check_val_every_n_epoch=None,  # Do eval every n epochs
         # val_check_interval=3, # Does not work in Distributed settings | Do eval every 10 training steps => 10 steps x 8 batch_size = Every 80 Batches
         callbacks=[checkpoint_callback],
@@ -548,23 +551,82 @@ def main(cfg):
     # mlflow.pytorch.autolog()
 
     # with mlflow.start_run() as run:
-    if cfg.training.checkpoint_path:
-        print(f"Loading and resuming training from {cfg.training.checkpoint_path}")
-        trainer.fit(
-            BFM, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader, ckpt_path=cfg.training.checkpoint_path
-        )
+    if hasattr(cfg.training, 'checkpoint_path') and cfg.training.checkpoint_path:
+        # Check if the path is a directory
+        if os.path.isdir(cfg.training.checkpoint_path):
+            # Look for checkpoint files in the directory
+            possible_checkpoints = []
+            for root, _, files in os.walk(cfg.training.checkpoint_path):
+                for file in files:
+                    if file.endswith('.ckpt') and os.path.isfile(os.path.join(root, file)):
+                        possible_checkpoints.append(os.path.join(root, file))
+            
+            if possible_checkpoints:
+                # Sort by modification time (newest first)
+                checkpoint_to_load = sorted(possible_checkpoints, key=os.path.getmtime, reverse=True)[0]
+                print(f"Found checkpoint: {checkpoint_to_load}")
+                trainer.fit(
+                    BFM, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader, 
+                    ckpt_path=checkpoint_to_load
+                )
+            else:
+                print(f"No checkpoint files found in {cfg.training.checkpoint_path}. Starting training from scratch.")
+                trainer.fit(BFM, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader)
+        else:
+            # Path is a specific file
+            print(f"Loading and resuming training from {cfg.training.checkpoint_path}")
+            trainer.fit(
+                BFM, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader, 
+                ckpt_path=cfg.training.checkpoint_path
+            )
     else:
         print("Start training from scratch")
         trainer.fit(BFM, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader)
 
-    # Manualy save a checkpoint after the end of training
-    # trainer.save_checkpoint("test.ckpt")
 
-    # print_auto_logged_info(mlflow.get_run(run_id=run.info.run_id))
+    if dist.is_initialized():
+        dist.barrier()
 
-    best_ckpt = checkpoint_callback.best_model_path
-    print(f"Finished training successfully - Lets do a Test on the best checkpoint: {best_ckpt}!")
-    trainer.test(ckpt_path="best", dataloaders=val_dataloader)
+    selected_ckpt = checkpoint_callback.best_model_path or f"{output_dir}/checkpoints/last.ckpt"
+    if not os.path.exists(selected_ckpt):
+        raise FileNotFoundError(f"Checkpoint not found at {selected_ckpt}")
+
+    if trainer.is_global_zero:
+        print(f"[Rank 0] Using checkpoint: {selected_ckpt}")
+
+    # broadcast checkpoint path
+    if dist.is_initialized():
+        ckpt_list = [selected_ckpt]
+        dist.broadcast_object_list(ckpt_list, src=0)
+        selected_ckpt = ckpt_list[0]
+
+    # All ranks must run this simultaneously
+    trainer.test(model=BFM, ckpt_path=selected_ckpt, dataloaders=val_dataloader)
+
+    # if trainer.is_global_zero:
+    #     best_ckpt = checkpoint_callback.best_model_path
+    #     if best_ckpt:
+    #         print(f"[Rank 0] Testing best checkpoint: {best_ckpt}")
+    #         selected_ckpt = best_ckpt
+    #     else:
+    #         last_ckpt = f"{output_dir}/checkpoints/last.ckpt"
+    #         if os.path.exists(last_ckpt):
+    #             print("[Rank 0] No best checkpoint found. Using last checkpoint.")
+    #             selected_ckpt = last_ckpt
+    #         else:
+    #             print("[Rank 0] No checkpoints found. Testing using current model weights.")
+    #             selected_ckpt = None
+    # else:
+    #     selected_ckpt = None
+
+    # # Ensure all ranks are synchronized and have the checkpoint path
+    # if dist.is_initialized():
+    #     checkpoint_list = [selected_ckpt]
+    #     dist.broadcast_object_list(checkpoint_list, src=0)
+    #     selected_ckpt = checkpoint_list[0]
+
+    # Now all ranks call trainer.test simultaneously
+    trainer.test(model=BFM, ckpt_path=selected_ckpt, dataloaders=val_dataloader)
 
     print("Finished testing successfully")
     trainer.print(torch.cuda.memory_summary())

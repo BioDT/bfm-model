@@ -1,11 +1,12 @@
 #!/bin/bash
 #SBATCH --job-name=bfm_model
 #SBATCH --partition=gpu_h100
-#SBATCH --time=4:00:00
-#SBATCH --nodes=2
+#SBATCH --time=3:00:00
+#SBATCH --nodes=16
 #SBATCH --ntasks-per-node=4
 #SBATCH --cpus-per-task=15
 #SBATCH --gpus-per-node=4
+#SBATCH --reservation=gpt-nl
 
 module purge
 
@@ -19,12 +20,8 @@ venv_path=${run_path}/venv # local environment
 # this can be created with scripts/install_pytorch.sh
 source ${venv_path}/bin/activate
 
-# module purge
-# module load 2023 Python/3.11.3-GCCcore-12.3.0
-# pip install -e .
-
 # this is a bit hacky - exporting the paths to the python libraries
 export LD_LIBRARY_PATH=${venv_path}/lib/:$LD_LIBRARY_PATH
 export PYTHONPATH=${venv_path}/lib/python3.11/site-packages/:$PYTHONPATH
 
-srun python bfm_model/bfm/train_lighting.py
+srun python ${run_path}/bfm_model/bfm/train_lighting.py
