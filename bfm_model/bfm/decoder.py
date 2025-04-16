@@ -313,9 +313,10 @@ class BFMDecoder(nn.Module):
 
         # get dimensions from batch metadata
         H, W = self.H, self.W
-        lat, lon = batch.batch_metadata.latitudes.squeeze(), batch.batch_metadata.longitudes.squeeze()
-        # print(f"Grid dimensions (H×W): {H}×{W}")
-        # print(f"lat shape: {lat.shape}, lon shape: {lon.shape}")
+        # batch_metadata come with shape [batch_size, lat/lon_dim] 
+        lat, lon = batch.batch_metadata.latitudes[-1], batch.batch_metadata.longitudes[-1]
+        # print(f"Decode Grid dimensions (H×W): {H}×{W}")
+        # print(f"Decode lat shape: {lat.shape}, lon shape: {lon.shape}", lat)
 
         # counting the number of queries for Perceiver IO
         total_queries = (

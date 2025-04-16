@@ -14,6 +14,8 @@ from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import MLFlowLogger
 from lightning.pytorch.strategies import DDPStrategy, FSDPStrategy
 from lightning.pytorch.utilities.model_summary import ModelSummary
+from lightning.pytorch.plugins.environments import ClusterEnvironment
+
 from omegaconf import OmegaConf
 from torch.distributed.fsdp.wrap import enable_wrap, size_based_auto_wrap_policy, wrap
 from torch.utils.data import DataLoader
@@ -35,6 +37,31 @@ from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import checkpoi
 def activation_ckpt_policy(module):
     return isinstance(module, (Swin3DTransformer, MViT))
 
+
+class MyClusterEnvironment(ClusterEnvironment):
+    @property
+    def creates_processes_externally(self) -> bool:
+        """Return True if the cluster is managed (you don't launch processes yourself)"""
+        return True
+
+    def world_size(self) -> int:
+        return int(os.environ["WORLD_SIZE"])
+
+    def global_rank(self) -> int:
+        return int(os.environ["RANK"])
+
+    def local_rank(self) -> int:
+        return int(os.environ["LOCAL_RANK"])
+
+    def node_rank(self) -> int:
+        return int(os.environ["NODE_RANK"])
+
+    def main_address(self) -> str:
+        return os.environ["MASTER_ADDRESS"]
+
+    def main_port(self) -> int:
+        return int(os.environ["MASTER_PORT"])
+    
 class BFM_lighting(LightningModule):
     """
     Biodiversity Foundation Model.
@@ -116,18 +143,18 @@ class BFM_lighting(LightningModule):
                 "msl": 1.5,
                 # ... add more if surface has more
             },
-            "single_variables": {"lsm": 0.32},
+            "single_variables": {"lsm": 1.32},
             "atmospheric_variables": {"z": 0.46, "t": 1.2},
             "species_extinction_variables": {"ExtinctionValue": 1.43},
-            "land_variables": {"Land": 0.2, "NDVI": 1.48},
+            "land_variables": {"Land": 0.8, "NDVI": 1.48},
             "agriculture_variables": {
-                "AgricultureLand": 0.4,
-                "AgricultureIrrLand": 0.92,
-                "ArableLand": 0.38,
-                "Cropland": 0.51,
+                "AgricultureLand": 1.4,
+                "AgricultureIrrLand": 1.22,
+                "ArableLand": 1.38,
+                "Cropland": 1.51,
             },
-            "forest_variables": {"Forest": 0.38},
-            "species_variables": {"Distribution": 2.0},
+            "forest_variables": {"Forest": 1.38},
+            "species_variables": {"Distribution": 1.0},
         }
 
         self.encoder = BFMEncoder(
@@ -257,30 +284,34 @@ class BFM_lighting(LightningModule):
 
     def validation_step(self, batch, batch_idx):
         lead_time = timedelta(hours=6)  # fixed lead time for pre-training
-        output = self(batch, lead_time, batch_size=self.batch_size)
+        x, y = batch
+        output = self(x, lead_time, batch_size=self.batch_size)
         print("Validation time!")
-        loss = self.compute_loss(output, batch)
-        self.log("val_loss", loss, batch_size=self.batch_size)  # on_step=False, on_epoch=True, prog_bar=True, sync_dist=True
+        loss = self.compute_loss(output, y)
+        self.log("val_loss", loss, batch_size=self.batch_size, sync_dist=True)  # on_step=False, on_epoch=True, prog_bar=True, sync_dist=True
         return loss
 
     def training_step(self, batch, batch_idx):
         lead_time = timedelta(hours=6)  # fixed lead time for pre-training
-        output = self(batch, lead_time, batch_size=self.batch_size)
-        loss = self.compute_loss(output, batch)
-        self.log("train_loss", loss, batch_size=self.batch_size)
+        x, y = batch
+        output = self(x, lead_time, batch_size=self.batch_size)
+        loss = self.compute_loss(output, y)
+        self.log("train_loss", loss, batch_size=self.batch_size, sync_dist=True)
         return loss
 
     def test_step(self, batch, batch_idx):
         lead_time = timedelta(hours=6)  # fixed lead time for pre-training
-        output = self(batch, lead_time, batch_size=self.batch_size)
+        x, y = batch
+        output = self(x, lead_time, batch_size=self.batch_size)
         print("Test time")
-        loss = self.compute_loss(output, batch)
-        self.log("test_loss", loss, batch_size=self.batch_size)
+        loss = self.compute_loss(output, y)
+        self.log("test_loss", loss, batch_size=self.batch_size, sync_dist=True)
         return loss
 
     def predict_step(self, batch, batch_idx):
+        x, y = batch
         lead_time = timedelta(hours=6)  # fixed lead time for pre-training
-        output = self(batch, lead_time, batch_size=self.batch_size)
+        output = self(x, lead_time, batch_size=self.batch_size)
         return output
 
     def compute_loss(self, output, batch):
@@ -309,7 +340,8 @@ class BFM_lighting(LightningModule):
 
             group_loss = 0.0
             var_count = 0
-
+            # x = 1, 2
+            # y = 2, 3
             for var_name, pred_tensor in pred_dict.items():
                 # If var_name not in the ground truth dict, skip
                 if var_name not in true_dict:
@@ -336,7 +368,7 @@ class BFM_lighting(LightningModule):
                 else:
                     w = group_weights
                 # Log each variable's raw loss
-                self.log(f"{var_name} raw loss", loss_var, batch_size=time1.size(0))
+                self.log(f"{var_name} raw loss", loss_var, batch_size=time1.size(0), sync_dist=True)
                 group_loss += w * loss_var
                 var_count += 1
 
@@ -454,10 +486,11 @@ def main(cfg):
     # Setup logger with rank-specific paths to avoid conflicts
     current_time = datetime.now()
     rank = int(os.environ.get("RANK", "0"))
-    
+    print(f"Will be using rank {rank} for logging")
     # Single logger approach with rank-specific paths
     mlf_logger = None
-    if "RANK" not in os.environ or os.environ["RANK"] == "0":
+    # if "RANK" not in os.environ or os.environ["RANK"] == "0":
+    if rank == 0 or rank == "0":
         # Use rank in experiment name to avoid conflicts
         mlf_logger = MLFlowLogger(
             experiment_name=f"BFM_logs_r{rank}", 
@@ -535,7 +568,7 @@ def main(cfg):
         num_nodes=cfg.training.num_nodes,
         log_every_n_steps=cfg.training.log_steps,
         logger=mlf_logger,  # Only the rank 0 process will have a logger
-        # limit_train_batches=10,      # Process 10 batches per epoch.
+        # limit_train_batches=101,      # Process 10 batches per epoch.
         # limit_val_batches=2,
         # limit_test_batches=10,
         val_check_interval=cfg.training.eval_every,  # Run validation every n training batches.
@@ -544,6 +577,7 @@ def main(cfg):
         # check_val_every_n_epoch=None,  # Do eval every n epochs
         # val_check_interval=3, # Does not work in Distributed settings | Do eval every 10 training steps => 10 steps x 8 batch_size = Every 80 Batches
         callbacks=[checkpoint_callback],
+        # plugins=[MyClusterEnvironment()],
     )
     # Experimental
     # mlflow.set_tracking_uri(output_dir)
@@ -601,7 +635,7 @@ def main(cfg):
         selected_ckpt = ckpt_list[0]
 
     # All ranks must run this simultaneously
-    trainer.test(model=BFM, ckpt_path=selected_ckpt, dataloaders=val_dataloader)
+    # trainer.test(model=BFM, ckpt_path=selected_ckpt, dataloaders=val_dataloader)
 
     # if trainer.is_global_zero:
     #     best_ckpt = checkpoint_callback.best_model_path

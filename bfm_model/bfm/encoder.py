@@ -490,8 +490,8 @@ class BFMEncoder(nn.Module):
             Shape: [batch_size, num_latents, embed_dim]
         """
         B = batch_size  # the assumption is that we are taking one batch at a time, but that can be changed of course
-        H, W = batch.batch_metadata.latitudes[0], batch.batch_metadata.longitudes[0]
-
+        H, W = len(batch.batch_metadata.latitudes[0]), len(batch.batch_metadata.longitudes[0])
+        # print(f"Encoder H, W {H}, {W}")
         if not hasattr(self, "perceiver_io"):
             self._initialize_perceiver(H, W)
 
@@ -610,14 +610,16 @@ class BFMEncoder(nn.Module):
         # print("Combined embeddings shape", x.shape)
         x = self._check_tensor(x, "Combined embeddings")
 
-        # add position encodings
-        lat, lon = batch.batch_metadata.latitudes.squeeze(), batch.batch_metadata.longitudes.squeeze()
+        # add position encodings #squeeze() was working after lat lon
+        lat, lon = batch.batch_metadata.latitudes[-1], batch.batch_metadata.longitudes[-1]
+        # print(f"encoder lat lon {lat.shape} | {lon.shape} and with squeeze {lat}")
         lat_grid, lon_grid = torch.meshgrid(lat, lon, indexing="ij")
         pos_input = torch.stack((lat_grid, lon_grid), dim=-1).to(x.device)
         # make the positions grid
 
         # reshape to patches
         H, W = pos_input.shape[:2]
+        # print(f"H, W in pos_input {H} | {W}")
         pos_input = pos_input.reshape(H // self.patch_size, self.patch_size, W // self.patch_size, self.patch_size, 2)
         pos_input = pos_input[:, self.patch_size // 2, :, self.patch_size // 2, :]
 

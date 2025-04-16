@@ -210,15 +210,15 @@ class LargeClimateDataset(Dataset):
         self.num_species = num_species
         self.files = [os.path.join(data_dir, f) for f in os.listdir(data_dir) if f.endswith(".pt")]
         self.files.sort()
+        # print("Files sorted", self.files)
         self.scaling_settings = scaling_settings
         self.scaling_statistics = load_stats(scaling_settings.stats_path)
         print(f"We scale the dataset {scaling_settings.enabled} with {scaling_settings.mode}")
 
     def __len__(self):
-        return len(self.files)
-
-    def __getitem__(self, idx):
-        fpath = self.files[idx]
+        return max(0, len(self.files) - 1)
+    
+    def load_and_process_files(self, fpath: str):
         data = torch.load(fpath, map_location="cpu", weights_only=True)
 
         latitudes = data["batch_metadata"]["latitudes"]
@@ -251,7 +251,7 @@ class LargeClimateDataset(Dataset):
         # crop metadata dimensions
         latitude_var = torch.tensor(latitudes[:new_H])
         longitude_var = torch.tensor(longitudes[:new_W])
-
+        # print("Latitues in Dataloder",latitude_var.shape, longitude_var.shape)
         # Calculate lead time
         dt_format = "%Y-%m-%dT%H:%M:%S"
         # Convert the two timestamps into datetime objects
@@ -285,6 +285,13 @@ class LargeClimateDataset(Dataset):
             forest_variables=forest_vars,
             species_variables=species_vars_wanted,
         )
+    
+    def __getitem__(self, idx):
+        fpath_x = self.files[idx]
+        fpath_y = self.files[idx + 1]
+        x = self.load_and_process_files(fpath_x)
+        y = self.load_and_process_files(fpath_y)
+        return x, y
 
     def scale_batch(self, batch: dict | Batch, direction: Literal["original", "scaled"] = "scaled"):
         """
