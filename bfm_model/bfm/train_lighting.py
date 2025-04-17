@@ -1,14 +1,19 @@
 """
 Copyright (C) 2025 TNO, The Netherlands. All rights reserved.
 """
+import os 
 import math
 from datetime import datetime, timedelta
 from typing import Literal
+from functools import partial
 
-import hydra
-import lightning as L
 import torch
-from hydra.core.hydra_config import HydraConfig
+from torch.distributed.fsdp.wrap import size_based_auto_wrap_policy
+from torch.utils.data import DataLoader
+import torch.distributed as dist
+from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import checkpoint_wrapper, apply_activation_checkpointing
+
+import lightning as L
 from lightning.pytorch import LightningModule, seed_everything
 from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import MLFlowLogger
@@ -16,23 +21,15 @@ from lightning.pytorch.strategies import DDPStrategy, FSDPStrategy
 from lightning.pytorch.utilities.model_summary import ModelSummary
 from lightning.pytorch.plugins.environments import ClusterEnvironment
 
+import hydra
+from hydra.core.hydra_config import HydraConfig
 from omegaconf import OmegaConf
-from torch.distributed.fsdp.wrap import enable_wrap, size_based_auto_wrap_policy, wrap
-from torch.utils.data import DataLoader
 
 from bfm_model.bfm.dataloder import LargeClimateDataset, custom_collate
 from bfm_model.bfm.decoder import BFMDecoder
 from bfm_model.bfm.encoder import BFMEncoder
-from bfm_model.bfm.utils import save_run_id
 from bfm_model.mvit.mvit_model import MViT
 from bfm_model.swin_transformer.core.swim_core_v2 import Swin3DTransformer
-
-from torch.utils.data.distributed import DistributedSampler
-import os 
-from functools import partial
-import torch.distributed as dist
-from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
-from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import checkpoint_wrapper, apply_activation_checkpointing
 
 def activation_ckpt_policy(module):
     return isinstance(module, (Swin3DTransformer, MViT))

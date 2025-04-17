@@ -158,11 +158,16 @@ def compute_next_timestamp(old_time_str, hours=6):
     Adjust to your date/time logic.
     """
     from datetime import datetime, timedelta
-
+    #           "%Y-%m-%dT%H:%M:%S"
     dt_format = "%Y-%m-%dT%H:%M:%S"
+    print("old_dt", old_time_str)
+    if isinstance(old_time_str, (tuple, list)):
+        old_time_str = old_time_str[0]
     old_dt = datetime.strptime(old_time_str, dt_format)
     new_dt = old_dt + timedelta(hours=hours)
+    print(f"old dt {old_dt} vs new_dt {new_dt}")
     return new_dt.strftime(dt_format)
+
 
 
 def inspect_batch_shapes_namedtuple(

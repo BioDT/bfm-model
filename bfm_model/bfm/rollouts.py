@@ -3,7 +3,7 @@ Copyright (C) 2025 TNO, The Netherlands. All rights reserved.
 """
 import copy
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import hydra
 import lightning as L
@@ -20,7 +20,7 @@ from bfm_model.bfm.train_lighting import BFM_lighting
 from bfm_model.bfm.utils import compute_next_timestamp, inspect_batch_shapes_namedtuple
 
 
-def rollout_forecast(trainer, model, initial_batch, test_dataset, steps=2, batch_size=1):
+def rollout_forecast(trainer, model, initial_batch, steps=2, batch_size=1):
 
     # Container for results
     rollout_dict = {
@@ -98,6 +98,39 @@ def rollout_forecast(trainer, model, initial_batch, test_dataset, steps=2, batch
 
     return rollout_dict
 
+def update_batch_metadata(batch_metadata: dict, hours: int = 6):
+    """
+    Returns an updated BatchMetadata, keeping all original fields
+    except for updating the "timestamp" and "lead_time" fields.
+    
+    Assumptions:
+      - batch_metadata.timestamp is a list (e.g. [t0, t1]) in ISO format.
+      - We update it so that new timestamp becomes [old_ts[-1], compute_next_timestamp(old_ts[-1], hours)]
+      - batch_metadata.lead_time is updated by adding hours.
+    """
+    meta_dict = batch_metadata._asdict()
+    
+    if "timestamp" in meta_dict and isinstance(meta_dict["timestamp"], list) and len(meta_dict["timestamp"]) >= 1:
+        old_ts = meta_dict["timestamp"]
+        new_time = compute_next_timestamp(old_ts[-1], hours=hours)
+        meta_dict["timestamp"] = [old_ts[-1], new_time]
+    
+    # Update lead_time.
+    if "lead_time" in meta_dict:
+        lt = meta_dict["lead_time"]
+        # Convert Tensor to float.
+        if hasattr(lt, "cpu"):
+            lead_time_val = lt.cpu().numpy()[0]
+        # Convert timedelta to float (hours).
+        elif isinstance(lt, timedelta):
+            lead_time_val = lt.total_seconds() / 3600.0
+        else:
+            lead_time_val = float(lt)
+        meta_dict["lead_time"] = timedelta(hours=lead_time_val + hours)
+    # print(f"DEBUG: updated metadata dict: {meta_dict}")
+    
+    return batch_metadata._replace(**meta_dict)
+
 
 def build_new_batch_with_prediction(old_batch, prediction_dict, groups=None, time_dim=1):
     """
@@ -171,23 +204,11 @@ def build_new_batch_with_prediction(old_batch, prediction_dict, groups=None, tim
 
         new_batch = new_batch._replace(**{group_name: group_vars_old})
 
-    # Update metadata
-    old_md = new_batch.batch_metadata._asdict()
-    old_ts = old_md["timestamp"]
-    if len(old_ts) >= 1:
-        # We'll keep old_ts[-1] + new_time
-        # or do old_ts[-2], old_ts[-1] => shift forward.
-        # The old batch had exactly 2 timestamps => old_ts[-1] is the last one.
-        new_time_str = compute_next_timestamp(old_ts[-1])
-        # e.g. if old_ts==[t0, t1], new_ts=>[t1, t2]
-        new_ts_list = [old_ts[-1], new_time_str]
-        old_md["timestamp"] = new_ts_list
-
-        # lead_time => add 6 hours
-        old_md["lead_time"] += 6
-
-    new_batch = new_batch._replace(batch_metadata=new_batch.batch_metadata._replace(**old_md))
-
+    # Update only the timestamp and lead_time in the metadata.
+    new_metadata = update_batch_metadata(new_batch.batch_metadata, hours=6)
+    new_batch = new_batch._replace(batch_metadata=new_metadata)
+    print(f"new batch in creation timestamps: {new_batch.batch_metadata.timestamp}")
+    
     return new_batch
 
 
@@ -291,12 +312,13 @@ def main(cfg: DictConfig):
     print("=== Test Results ===")
 
     test_sample = next(iter(test_dataloader))
-    rollout_dict = rollout_forecast(trainer, model=loaded_model, initial_batch=test_sample, test_dataset=test_dataset, steps=5)
+    rollout_dict = rollout_forecast(trainer, model=loaded_model, initial_batch=test_sample, steps=1)
+    # print(f"len rollout dict {len(rollout_dict)}| items in", rollout_dict["batches"][0].batch_metadata)
 
     os.makedirs("rollout_batches", exist_ok=True)
     for i, batch_dict in enumerate(rollout_dict["batches"]):
         timestamps = batch_dict.batch_metadata.timestamp
-        save_batch(batch_dict, f"rollout_batches/prediction_{timestamps[0]}_to_{timestamps[1]}.pt")
+        # save_batch(batch_dict, f"rollout_batches/prediction_{timestamps[0]}_to_{timestamps[1]}.pt")
         print(f"\n--- Inspecting Batch {i} ---")
         inspect_batch_shapes_namedtuple(batch_dict)
 

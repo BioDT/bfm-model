@@ -4,31 +4,65 @@ Copyright (C) 2025 TNO, The Netherlands. All rights reserved.
 import copy
 import os
 from typing import Literal
-
+from functools import partial
 from datetime import datetime, timedelta
 import random
 from collections import deque, namedtuple
-import hydra
-import lightning as L
+
 import torch
+import torch.distributed as dist
+from torch.utils.data import DataLoader, Dataset
+from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import checkpoint_wrapper, apply_activation_checkpointing
+from torch.distributed.fsdp.wrap import size_based_auto_wrap_policy
+
+import hydra
 from hydra.core.hydra_config import HydraConfig
+from omegaconf import DictConfig, OmegaConf
+
+import lightning as L
 from lightning.pytorch import seed_everything, LightningModule
 from lightning.pytorch.loggers import MLFlowLogger
-from omegaconf import DictConfig, OmegaConf
-from torch.utils.data import DataLoader, Dataset
+from lightning.pytorch.utilities.model_summary import ModelSummary
+from lightning.pytorch.callbacks import ModelCheckpoint
+from lightning.pytorch.strategies import DDPStrategy, FSDPStrategy
 
-from bfm_model.bfm.batch_utils import save_batch
+
 from bfm_model.bfm.dataloder import LargeClimateDataset, custom_collate
-from bfm_model.bfm.train_lighting import BFM_lighting
-from bfm_model.bfm.utils import compute_next_timestamp, inspect_batch_shapes_namedtuple
 from bfm_model.bfm.rollouts import build_new_batch_with_prediction
-
 from bfm_model.bfm.decoder import BFMDecoder
 from bfm_model.bfm.encoder import BFMEncoder
 from bfm_model.mvit.mvit_model import MViT
 from bfm_model.swin_transformer.core.swim_core_v2 import Swin3DTransformer
 
+def activation_ckpt_policy(module):
+    return isinstance(module, (Swin3DTransformer, MViT))
 
+# class SequentialWindowDataset(Dataset):
+#     """
+#     Wrap a *pair‑yielding* base dataset.
+
+#     base_ds[idx]               -> (x_t      , y_{t+1})
+#     this[idx] (steps = N)      -> ([x_t … x_{t+N}] ,
+#                                    [y_{t+1} … y_{t+N+1}])
+
+#     The two returned lists have length `steps+1`.
+#     """
+#     def __init__(self, base_ds: Dataset, steps: int):
+#         assert steps >= 1, "`steps` must be at least 1"
+#         self.base  = base_ds
+#         self.steps = steps
+
+#     def __len__(self):
+#         # need idx .. idx+steps, plus one extra y => idx+steps must be < len(base)-1
+#         return len(self.base) - (self.steps + 1)
+
+#     def __getitem__(self, idx):
+#         xs, ys = [], []
+#         for k in range(self.steps + 1):
+#             x_k, y_k = self.base[idx + k]          # base returns a tuple
+#             xs.append(x_k)
+#             ys.append(y_k)
+#         return xs, ys
 
 class SequentialWindowDataset(Dataset):
     """
@@ -46,7 +80,6 @@ class SequentialWindowDataset(Dataset):
 
     def __getitem__(self, idx):
         return [self.base[idx + k] for k in range(self.steps + 1)]  # list length = steps+1
-
 
 class BFM_Forecastinglighting(LightningModule):
     """
@@ -109,7 +142,7 @@ class BFM_Forecastinglighting(LightningModule):
         batch_size: int = 1,
         warmup_steps: int = 1000,
         total_steps: int = 20000,
-        td_learning: bool = True,
+        td_learning: bool = False,
         use_lora: bool = True,
         ground_truth_dataset=None, 
         rollout_steps: int = 2,
@@ -312,67 +345,60 @@ class BFM_Forecastinglighting(LightningModule):
             self.eval()
             with torch.no_grad():
                 preds = self(current_batch, self.lead_time, batch_size=batch_size)
-
-            # preds = run_predict_on_batch(current_batch)  # shape depends on your model, e.g. [B, C, H, W]
-
             # store
             rollout_dict["predictions"].append(preds)
-            rollout_dict["batches"].append(copy.deepcopy(current_batch))
-
-            # handle times
-            # Suppose your "Batch" has metadata => lead_time, timestamps...
-            # Store the new predicted time.
-            step_timestamp = current_batch.batch_metadata.timestamp[-1]
-            rollout_dict["timestamps"].append(step_timestamp)
-            rollout_dict["lead_times"].append(current_batch.batch_metadata.lead_time)
-
             # Build a new batch that has (last old time) + (predicted new time).
             new_batch = build_new_batch_with_prediction(current_batch, preds)
-
-            # This new_batch becomes the "current_batch" for the next iteration
             current_batch = new_batch
+            rollout_dict["batches"].append(copy.deepcopy(current_batch))
+            step_timestamp = current_batch.batch_metadata.timestamp
+            rollout_dict["timestamps"].append(step_timestamp)
+            rollout_dict["lead_times"].append(current_batch.batch_metadata.lead_time)
+            # This new_batch becomes the "current_batch" for the next iteration
 
         return rollout_dict
 
 
     def validation_step(self, batch, batch_idx):
-        lead_time = timedelta(hours=6)  # fixed lead time for pre-training
-        output = self(batch, lead_time, batch_size=self.batch_size)
-        print("Validation time!")
-        loss = self.compute_loss(output, batch)
-        self.log("val_loss", loss, batch_size=self.batch_size)  # on_step=False, on_epoch=True, prog_bar=True, sync_dist=True
-        return loss
-
-    def training_step(self, batch, batch_idx):
-
-        # buffer_item = self.replay_buffer.sample(batch_size=1)[0]
-        initial_batch = batch[0] # Expected shape [B,2,...] , select the first only
-        print(f"DEBUG: training_step - sampled batch timestamp: {initial_batch.batch_metadata.timestamp}")
-
-        rollout_result = self.rollout_forecast(initial_batch, steps=self.rollout_steps, batch_size=1)
-        print("Rollout timestamps",rollout_result["timestamps"])
+        x = batch
+        initial_batch = x[0] 
+        rollout_result = self.rollout_forecast(initial_batch, steps=self.rollout_steps, batch_size=self.batch_size)
         total_loss = 0.0
-        valid_steps = 0
+        rb_count = 0
+        for rb in rollout_result["batches"]:
+            ts = rb.batch_metadata.timestamp
+            target_ts = ts if isinstance(ts, list) and len(ts) > 1 else ts
+            target_batch = x[rb_count+1]
+            target_timestamp = target_batch.batch_metadata.timestamp
+            loss = self.compute_loss(rb, target_batch)
+            rb_count+=1
+            total_loss += loss
+        self.log("train_loss", total_loss)
+        loss_with_grad = total_loss.clone().detach().requires_grad_(True)
+        return loss_with_grad
+    
+    def training_step(self, batch, batch_idx):
+        x = batch
+        # buffer_item = self.replay_buffer.sample(batch_size=1)[0]
+        initial_batch = x[0] # Expected shape [B,2,...] , select the first only
+        print(f"DEBUG: training_step - sampled batch timestamp (initial): {initial_batch.batch_metadata.timestamp}")
+        print(f"Length of our batches for train {len(x)}")
+        rollout_result = self.rollout_forecast(initial_batch, steps=self.rollout_steps, batch_size=self.batch_size)
+        print("Rollout timestamps", rollout_result["timestamps"])
+        total_loss = 0.0
         rb_count = 0
         for rb in rollout_result["batches"]:
             print(f"Batch {rb_count}")
-            # Use the second timestamp as the target.
             ts = rb.batch_metadata.timestamp
-            target_ts = ts[rb_count] if isinstance(ts, list) and len(ts) > 1 else ts
-            print(f"DEBUG: training_step - evaluating rollout batch with target timestamp: {target_ts}")
+            target_ts = ts if isinstance(ts, list) and len(ts) > 1 else ts
+            print(f"DEBUG: training_step - evaluating ROLLOUT batch with timestamp: {target_ts}")
+            target_batch = x[rb_count+1]
+            target_timestamp = target_batch.batch_metadata.timestamp
+            loss = self.compute_loss(rb, target_batch)
+            print(f"DEBUG: training_step - evaluating TARGET batch with target timestamp: {target_timestamp}")
             rb_count+=1
-            output = self(rb, self.lead_time, batch_size=self.batch_size)
-            loss = self.compute_loss(output, rb)
-            print(f"DEBUG: training_step - evaluating rollout batch with target timestamp: {target_ts}")
-
             total_loss += loss
-            valid_steps += 1
-
-        if valid_steps > 0:
-            total_loss = total_loss / valid_steps
-        else:
-            total_loss = torch.tensor(0.0, requires_grad=True, device=self.device)
-        
+            print(f"Step: {rb_count} Accumulated Loss: {total_loss}")
         # Update replay buffer: add the last rollout batch (as a rollout sample).
         # self.replay_buffer.push(BufferItem(batch=rollout_result["batches"][-1], is_rollout=True))
         # print(f"DEBUG: training_step - no matching ground truth found for timestamp {target_ts}")
@@ -383,43 +409,38 @@ class BFM_Forecastinglighting(LightningModule):
         #     fresh_sample = next(iter(dl))
         #     self.replay_buffer.push(BufferItem(batch=fresh_sample, is_rollout=False))
         #     print(f"DEBUG: training_step - refreshed replay buffer with new ground truth sample: {fresh_sample.batch_metadata.timestamp}")
-
+        print(f"Total trajectory loss:", total_loss)
         self.log("train_loss", total_loss)
-        return total_loss
+        loss_with_grad = total_loss.clone().detach().requires_grad_(True)
+        return loss_with_grad
+    
 
     def test_step(self, batch, batch_idx):
-        lead_time = timedelta(hours=6)  # fixed lead time for pre-training
-        output = self(batch, lead_time, batch_size=self.batch_size)
-        print("Test time")
-        loss = self.compute_loss(output, batch)
-        self.log("test_loss", loss, batch_size=self.batch_size)
-        return loss
-
+        x= batch
+        initial_batch = x[0] 
+        rollout_result = self.rollout_forecast(initial_batch, steps=self.rollout_steps, batch_size=1)
+        total_loss = 0.0
+        rb_count = 0
+        for rb in rollout_result["batches"]:
+            ts = rb.batch_metadata.timestamp
+            target_ts = ts if isinstance(ts, list) and len(ts) > 1 else ts
+            target_batch = x[rb_count+1]
+            target_timestamp = target_batch.batch_metadata.timestamp
+            loss = self.compute_loss(rb, target_batch)
+            rb_count+=1
+            total_loss += loss
+        self.log("train_loss", total_loss)
+        loss_with_grad = total_loss.clone().detach().requires_grad_(True)
+        return loss_with_grad
+    #TODO ADD IT
     def predict_step(self, batch, batch_idx):
         lead_time = timedelta(hours=6)  # fixed lead time for pre-training
         output = self(batch, lead_time, batch_size=self.batch_size)
         return output
-    
+
     def compute_loss(self, output, batch):
-        """
-        Computes an average trajectory loss over multiple rollout timesteps.
-        
-        Assumptions:
-        - For each modality (group) and variable, the prediction tensor (from output)
-            has shape [B, T_pred, ...]. 
-        - The ground truth in the batch has shape [B, T_gt, ...] with T_gt = T_pred + 1,
-            where the 0th time index is the initial state and indices 1...T_gt-1 correspond 
-            to the rollout target states.
-        
-        Two loss options are provided:
-        - If self.td_learning is True, then for each rollout step t (from 1 to T_gt-1)
-            we compute:
-            loss_t = mean(|(pred[t-1] - gt[t-1]) - (gt[t] - gt[t-1])|).
-        - Otherwise, we compute the L₁ error directly by comparing
-            pred[t-1] with gt[t], averaged over the trajectory.
-        
-        The loss is averaged over all variables in a group and finally across groups.
-        """
+        # batch = target:      t1, t2
+        # output = prediction: t1, t2
         total_loss = 0.0
         count = 0
 
@@ -433,56 +454,50 @@ class BFM_Forecastinglighting(LightningModule):
             "forest_variables",
             "species_variables",
         ]
-
+        # print(f"OUTPUT {output} \n BATCH {batch}")
         for group_name in groups:
-            # Skip groups not present in either output or ground truth.
-            if group_name not in output or group_name not in batch._asdict():
-                continue
+            # If group doesn't exist in output or batch, skip
+            # if group_name not in output or group_name not in batch._asdict():
+            #     print(f"{group_name} Does not exist in output or in batch")
+            #     continue
 
-            pred_dict = output[group_name]    # Expect a dict: var_name -> predicted tensor [B, T_pred, ...]
-            true_dict = getattr(batch, group_name)  # Expect a dict: var_name -> ground truth tensor [B, T_gt, ...]
-
+            pred_dict = getattr(output, group_name)
+            true_dict = getattr(batch, group_name)
+            # print(f"pred_dict {pred_dict} \n  TRUE DICT {true_dict}")
             group_loss = 0.0
             var_count = 0
 
             for var_name, pred_tensor in pred_dict.items():
+                # If var_name not in the ground truth dict, skip
                 if var_name not in true_dict:
                     print(f"{var_name} not in true_dict")
                     continue
-
                 gt_tensor = true_dict[var_name]
-                # Assume: gt_tensor.shape = [B, T_gt, ...] and pred_tensor.shape = [B, T_pred, ...]
-                # Here T_pred should equal T_gt - 1.
-                B = gt_tensor.size(0)
-                T_gt = gt_tensor.size(1)
-                T_pred = pred_tensor.size(1)  # expected T_pred = T_gt - 1
-
+                # print("GT tensor shape:", gt_tensor.shape)
+                # print("Predict tensor shape", pred_tensor.shape)
                 if self.td_learning:
-                    # Use temporal difference loss.
-                    loss_var = 0.0
-                    # Loop from t=1 to T_gt-1.
-                    for t in range(1, T_gt):
-                        # The ground truth increment.
-                        true_diff = gt_tensor[:, t] - gt_tensor[:, t - 1]
-                        # The predicted increment: note that predictions index 0 corresponds to target t=1.
-                        pred_diff = pred_tensor[:, t - 1] - gt_tensor[:, t - 1]
-                        loss_var += torch.mean(torch.abs(pred_diff - true_diff))
-                    # Average the loss across trajectory steps.
-                    loss_var = loss_var / (T_gt - 1)
+                    time0 = gt_tensor[:, 0]
+                    time1 = gt_tensor[:, 1]
+
+                    true_diff = time1 - time0
+                    pred_diff = pred_tensor[:, 1] - time0
+                    # print("Pred and true dif shapes", pred_diff.shape, true_diff.shape)
+
+                    loss_var = torch.mean(torch.abs(pred_diff - true_diff))
                 else:
-                    # Direct forecast loss: compare the prediction at each rollout step with ground truth.
-                    # Here we compare pred_tensor[:, t] with gt_tensor[:, t+1] for t in 0...T_pred-1.
-                    loss_var = torch.mean(torch.abs(pred_tensor - gt_tensor[:, 1:]))
-                
-                # Weight the loss per variable.
+                    time1 = gt_tensor[:, 1]
+                    # print("pred and true shapes", pred_tensor[:, 1].shape, time1.shape)
+                    loss_var = torch.mean(torch.abs(pred_tensor[:, 1] - time1))
+
+                # Determine the weight for this variable.
                 group_weights = self.variable_weights.get(group_name, {})
                 if isinstance(group_weights, dict):
                     w = group_weights.get(var_name, 1.0)
                 else:
                     w = group_weights
-
-                # Log the raw loss for this variable.
-                self.log(f"{var_name} raw trajectory loss", loss_var, batch_size=B)
+                # Log each variable's raw loss
+                # print(f"{var_name} raw loss", loss_var)
+                self.log(f"{var_name} raw loss", loss_var, batch_size=time1.size(0))
                 group_loss += w * loss_var
                 var_count += 1
 
@@ -494,8 +509,9 @@ class BFM_Forecastinglighting(LightningModule):
         if count > 0:
             total_loss /= count  # average across groups
 
-        print(f"Trajectory Loss: {total_loss}")
+        # print(f"Single step Loss: {total_loss}")
         return total_loss
+    
 
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
@@ -525,7 +541,7 @@ def fetch_ground_truth(next_timestamp, dataset):
                   Returns None if no match is found.
     """
     # For simplicity, we iterate over the dataset and find a match.
-    # TODO optimized (e.g. by maintaining a dict index).
+    # In practice this should be optimized (e.g. by maintaining a dict index).
     for sample in dataset:
         print("Dataset sample timestamp", sample.batch_metadata.timestamp)
         print("Timestamp looking for", next_timestamp)
@@ -569,8 +585,7 @@ class ReplayBuffer:
 @hydra.main(version_base=None, config_path="configs", config_name="train_config")
 def main(cfg: DictConfig):
     """
-    Rollout-finetuning script using a PyTorch Lightning module with a Dataset.
-    For scaling up we need TODO implement a (prioritize) buffer concept.
+    Test/inference script using a PyTorch Lightning module.
 
     Args:
         checkpoint_path (str): Path to the trained checkpoint (.ckpt).
@@ -585,6 +600,7 @@ def main(cfg: DictConfig):
         test_results (dict or list): Test metrics returned by trainer.test().
     """
 
+    MODE = cfg.finetune.mode
     # Setup config
     print(OmegaConf.to_yaml(cfg))
     # Set the internal precision for TensorCores (H100s)
@@ -593,56 +609,57 @@ def main(cfg: DictConfig):
     # Seed the experiment for numpy, torch and python.random.
     seed_everything(42, workers=True)
 
-    # Load the Test Dataset
-    print("Setting up Dataloader ...")
-    data_dir = "data_small/2009_batches" # Needs a single batch item to start the rollouts from
-    test_dataset = LargeClimateDataset(
-        data_dir=data_dir, scaling_settings=cfg.data.scaling, num_species=cfg.data.species_number
+    output_dir = HydraConfig.get().runtime.output_dir
+    print(f"Output directory: {output_dir}")
+    dataset = LargeClimateDataset(
+        data_dir=cfg.data.data_path, scaling_settings=cfg.data.scaling, num_species=cfg.data.species_number
     )
-    test_dataset_seq = SequentialWindowDataset(test_dataset, cfg.finetune.rollout_steps)
-    print("Reading test data from :", data_dir)
-    test_dataloader = DataLoader(
-        test_dataset_seq,
-        batch_size=1,
+    test_dataset = LargeClimateDataset(
+        data_dir=cfg.data.test_data_path, scaling_settings=cfg.data.scaling, num_species=cfg.data.species_number
+    )
+    seq_dataset = SequentialWindowDataset(dataset, cfg.finetune.rollout_steps)
+    seq_test_dataset = SequentialWindowDataset(test_dataset, cfg.finetune.rollout_steps)
+
+    val_dataloader = DataLoader(
+        seq_test_dataset,
+        batch_size=cfg.finetune.batch_size,
         num_workers=cfg.training.workers,
         collate_fn=custom_collate,
         drop_last=True,
         shuffle=False,
+    )
+
+    train_dataloader = DataLoader(
+        seq_dataset,
+        shuffle=False,  # We need to keep the dates
+        batch_size=cfg.finetune.batch_size,
+        num_workers=cfg.training.workers,
+        collate_fn=custom_collate,
+        drop_last=True,
         pin_memory=True,
     )
 
-    output_dir = HydraConfig.get().runtime.output_dir
-
-    # Setup logger
+    print(f"Setting up Daloaders with length train: {len(train_dataloader)} and test: {len(val_dataloader)}")
     current_time = datetime.now()
-    # log the metrics in the hydra folder (easier to find)
-    mlf_logger_in_hydra_folder = MLFlowLogger(
-        experiment_name="BFM_logs", run_name=f"BFM_{current_time}", save_dir=f"{output_dir}/logs"
-    )
-    # also log in the .mlruns folder so that you can run mlflow server and see every run together
-    # tracking_uri = f"http://0.0.0.0:{cfg.mlflow.port}"
-    mlf_logger_in_current_folder = MLFlowLogger(experiment_name="BFM_logs", run_name=f"BFM_{current_time}")
+    rank = int(os.environ.get("RANK", "0"))
+    print(f"Will be using rank {rank} for logging")
+    # Single logger approach with rank-specific paths
+    mlf_logger = None
+    # if "RANK" not in os.environ or os.environ["RANK"] == "0":
+    if rank == 0 or rank == "0":
+        # Use rank in experiment name to avoid conflicts
+        mlf_logger = MLFlowLogger(
+            experiment_name=f"BFM_{MODE}_finetune_logs_r{rank}", 
+            run_name=f"BFM_{MODE}_finetune_{current_time}", 
+            save_dir=f"{output_dir}/logs/rank{rank}"
+        )
 
-    checkpoint_path = cfg.evaluation.checkpoint_path
+    checkpoint_path = cfg.finetune.checkpoint_path
     # Load Model from Checkpoint
     print(f"Loading model from checkpoint: {checkpoint_path}")
 
-    device = torch.device(cfg.evaluation.test_device)
-    print("weigths device", device)
-
-    trainer = L.Trainer(
-        accelerator=cfg.training.accelerator,
-        devices=cfg.training.devices,
-        precision=cfg.training.precision,
-        # log_every_n_steps=cfg.training.log_steps,
-        # logger=[mlf_logger_in_hydra_folder, mlf_logger_in_current_folder],
-        enable_checkpointing=False,
-        enable_progress_bar=True,
-    )
-
-    loaded_model = BFM_Forecastinglighting.load_from_checkpoint(
-        checkpoint_path,
-        map_location=device,
+    BFM = BFM_Forecastinglighting.load_from_checkpoint(
+        checkpoint_path=checkpoint_path,
         surface_vars=(["t2m", "msl"]),
         single_vars=(["lsm"]),
         atmos_vars=(["z", "t"]),
@@ -662,11 +679,90 @@ def main(cfg: DictConfig):
         num_heads=cfg.model.num_heads,
         head_dim=cfg.model.head_dim,
         depth=cfg.model.depth,
+        learning_rate=cfg.finetune.lr,
+        weight_decay=cfg.finetune.wd,
+        batch_size=cfg.finetune.batch_size,
+        td_learning=cfg.finetune.td_learning,
         ground_truth_dataset=test_dataset,
         strict=False,
-        use_lora=True, # We finetune using LoRA
+        use_lora=True,
+        rollout_steps=cfg.finetune.rollout_steps,
     )
 
-    trainer.fit(loaded_model, test_dataloader)
+    apply_activation_checkpointing(
+        BFM, 
+        checkpoint_wrapper_fn=checkpoint_wrapper,
+        check_fn=activation_ckpt_policy
+    )
+
+    model_summary = ModelSummary(BFM, max_depth=2)
+    print(model_summary)
+
+    checkpoint_callback = ModelCheckpoint(
+        dirpath=f"{output_dir}/checkpoints",
+        save_top_k=3,
+        monitor="train_loss", #`log('val_loss', value)` in the `LightningModule`
+        mode="min",
+        every_n_train_steps=cfg.training.checkpoint_every,
+        filename="{epoch:02d}-{train_loss:.2f}",
+        save_last=True
+    )
+
+    print(f"Will be saving checkpoints at: {output_dir}/checkpoints")
+
+    if cfg.training.strategy == "fsdp":
+        distr_strategy = FSDPStrategy(
+            sharding_strategy="FULL_SHARD",
+            auto_wrap_policy=partial(size_based_auto_wrap_policy, min_num_params=1e6),
+            # activation_checkpointing_policy=activation_ckpt_policy,
+        )
+    elif cfg.training.strategy == "ddp":
+        distr_strategy = DDPStrategy()
+    
+    print(f"Using {cfg.training.strategy} strategy: {distr_strategy}")
+
+    trainer = L.Trainer(
+        max_epochs=cfg.finetune.epochs,
+        accelerator=cfg.training.accelerator,
+        devices=cfg.training.devices,
+        precision=cfg.training.precision,
+        # strategy=distr_strategy,
+        num_nodes=cfg.training.num_nodes,
+        log_every_n_steps=cfg.training.log_steps,
+        logger=mlf_logger,  # Only the rank 0 process will have a logger
+        # limit_train_batches=101,      # Process 10 batches per epoch.
+        # limit_val_batches=2,
+        # limit_test_batches=10,
+        val_check_interval=cfg.finetune.eval_every,  # Run validation every n training batches.
+        check_val_every_n_epoch=None,
+        # limit_train_batches=1, # For debugging to see what happens at the end of epoch
+        # check_val_every_n_epoch=None,  # Do eval every n epochs
+        # val_check_interval=3, # Does not work in Distributed settings | Do eval every 10 training steps => 10 steps x 8 batch_size = Every 80 Batches
+        callbacks=[checkpoint_callback],
+        # plugins=[MyClusterEnvironment()],
+    )
+
+    #TODO Add functionality to continue finetuning from a checkpoint
+    print(f"Starting {MODE} Finetune training from scratch for a horizon of {cfg.finetune.rollout_steps} ")
+    trainer.fit(BFM, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader)
+
+
+    if dist.is_initialized():
+        dist.barrier()
+
+    selected_ckpt = checkpoint_callback.best_model_path or f"{output_dir}/checkpoints/last.ckpt"
+    if not os.path.exists(selected_ckpt):
+        raise FileNotFoundError(f"Checkpoint not found at {selected_ckpt}")
+
+    if trainer.is_global_zero:
+        print(f"[Rank 0] Using checkpoint: {selected_ckpt}")
+
+    # broadcast checkpoint path
+    if dist.is_initialized():
+        ckpt_list = [selected_ckpt]
+        dist.broadcast_object_list(ckpt_list, src=0)
+        selected_ckpt = ckpt_list[0]
+
+
 if __name__ == "__main__":
     main()
