@@ -54,12 +54,17 @@ python bfm_model/bfm/train_lighting.py
 python bfm_model/bfm/test_lighting.py
 ```
 
-### Rollout
+### Rollout Predictions
 
 ```bash
 python bfm_model/bfm/rollouts.py
 ```
 
+### Rollout Finetuning
+
+```bash
+python bfm_model/bfm/rollout_finetuning.py
+```
 
 ## Analysing results
 
@@ -130,12 +135,16 @@ Issue PyTorch 2.1.2 vs 2.2.0
 ## TODODs
 [ ] Finetune routine implementation with LoRA and optinally VeRA
 
-[ ] Finetune dataset setup
+[X] Finetune dataset setup
+
+[ ] Rollout Finetune modes: Daily (4x6h) - Weekly & Monthly
+
+[ ] Investigate if a (Prioritized) Buffer for Rollout Finetune is required
 
 a) Presence and absence of species: [Geolifeclef](https://www.kaggle.com/competitions/geolifeclef-2023-lifeclef-2023-x-fgvc10/data
 )
 b) Invasive species [flavonge](https://floraveg.eu/) & [opendap](http://opendap.biodt.eu/ias-pdt/0/outputs/)
 
-[ ] Validate distributed training strategy
+[X] Validate distributed training strategy
 
-[ ]
+[ ] 
