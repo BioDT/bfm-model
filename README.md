@@ -66,6 +66,13 @@ python bfm_model/bfm/rollouts.py
 python bfm_model/bfm/rollout_finetuning.py
 ```
 
+### In the cluster
+```bash
+sbatch snellius_train.sh 
+# or 
+sbatch snellius_finetune.sh
+```
+
 ## Analysing results
 
 We use [Hydra](https://hydra.cc/docs/intro/) to store all the artifacts from all the runs. In this way we can configure with yaml files, override from CLI, make multiruns with multiple parameters, and have all the results stored in the `outputs` folder.
@@ -133,18 +140,17 @@ Issue PyTorch 2.1.2 vs 2.2.0
 + Interesting addition for CLI args generation: https://github.com/google/python-fire
 
 ## TODODs
-[ ] Finetune routine implementation with LoRA and optinally VeRA
-
-[X] Finetune dataset setup
-
-[ ] Rollout Finetune modes: Daily (4x6h) - Weekly & Monthly
-
-[ ] Investigate if a (Prioritized) Buffer for Rollout Finetune is required
+-[x] Finetune routine implementation with LoRA and optinally VeRA (TODO)
+-[x] Finetune dataset setup
+-[x] Rollout Finetune modes: Daily (4x6h) 
+-[ ] Weekly & Monthly
+-[ ] Investigate if a (Prioritized) Buffer for Rollout Finetune is required
+-[ ] Investigate effect of batch_size on finetuning - currently low memory usage but slow execution
+-[ ] Safe tensors storage
+-[ ] Hugging Face weights upload, loading and tutorial notebook
 
 a) Presence and absence of species: [Geolifeclef](https://www.kaggle.com/competitions/geolifeclef-2023-lifeclef-2023-x-fgvc10/data
 )
 b) Invasive species [flavonge](https://floraveg.eu/) & [opendap](http://opendap.biodt.eu/ias-pdt/0/outputs/)
 
-[X] Validate distributed training strategy
-
-[ ] 
+-[x] Validate distributed training strategy

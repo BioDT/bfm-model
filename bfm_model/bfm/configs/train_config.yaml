@@ -38,9 +38,9 @@ training:
   accelerator: cuda
   precision: bf16-mixed
   precision_in: "high" # ["medium", "high", "highest"] https://pytorch.org/docs/stable/generated/torch.set_float32_matmul_precision.html#torch.set_float32_matmul_precision
-  devices: 1
+  devices: 4
   strategy: fsdp #fsdp #ddp
-  num_nodes: 1
+  num_nodes: 6
   gradient_clip: 1.0
   log_steps: 1
   lr: 0.0001  #5e-4
@@ -64,9 +64,10 @@ evaluation:
 
 finetune:
   rollout_steps: 4
-  epochs: 1
-  batch_size: 3
-  eval_every: 50
+  epochs: 10
+  batch_size: 4
+  eval_every: 200
+  checkpoint_every: 200
   lr: 0.0001  #5e-4
   wd: 0.00001 #5e-6
   td_learning: False

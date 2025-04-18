@@ -81,6 +81,7 @@ class SequentialWindowDataset(Dataset):
     def __getitem__(self, idx):
         return [self.base[idx + k] for k in range(self.steps + 1)]  # list length = steps+1
 
+
 class BFM_Forecastinglighting(LightningModule):
     """
     Biodiversity Foundation Model.
@@ -357,8 +358,36 @@ class BFM_Forecastinglighting(LightningModule):
             # This new_batch becomes the "current_batch" for the next iteration
 
         return rollout_dict
+    
+    def training_step(self, batch, batch_idx):
+        x = batch
+        initial_batch = x[0] # Expected shape [B,2,...] , select the first only
+        # print(f"[train] xs len = {len(x)}  timestamps: {[b.batch_metadata.timestamp for b in x]}")
 
+        # print(f"DEBUG: training_step - sampled batch timestamp (initial): {initial_batch.batch_metadata.timestamp}")
+        # print(f"Length of our batches for train {len(x)}")
+        rollout_result = self.rollout_forecast(initial_batch, steps=self.rollout_steps, batch_size=self.batch_size)
+        # print("Rollout timestamps", rollout_result["timestamps"])
+        total_loss = 0.0
+        rb_count = 0
+        for rb in rollout_result["batches"]:
+            # print(f"Batch {rb_count}")
+            ts = rb.batch_metadata.timestamp
+            target_ts = ts if isinstance(ts, list) and len(ts) > 1 else ts
+            # print(f"DEBUG: training_step - evaluating ROLLOUT batch with timestamp: {target_ts}")
+            target_batch = x[rb_count+1]
+            target_timestamp = target_batch.batch_metadata.timestamp
+            loss = self.compute_loss(rb, target_batch)
+            # print(f"DEBUG: training_step - evaluating TARGET batch with target timestamp: {target_timestamp}")
+            rb_count+=1
+            total_loss += loss
+            # print(f"Step: {rb_count} Accumulated Loss: {total_loss}")
 
+        print(f"Total trajectory loss:", total_loss.item())
+        self.log("train_loss", total_loss, batch_size=self.batch_size, sync_dist=True)
+        loss_with_grad = total_loss.clone().requires_grad_(True)
+        return loss_with_grad
+    
     def validation_step(self, batch, batch_idx):
         x = batch
         initial_batch = x[0] 
@@ -373,48 +402,11 @@ class BFM_Forecastinglighting(LightningModule):
             loss = self.compute_loss(rb, target_batch)
             rb_count+=1
             total_loss += loss
-        self.log("train_loss", total_loss)
+        print(f"Total trajectory loss:", total_loss.item())
+        self.log("val_loss", total_loss, batch_size=self.batch_size, sync_dist=True)
         loss_with_grad = total_loss.clone().detach().requires_grad_(True)
         return loss_with_grad
     
-    def training_step(self, batch, batch_idx):
-        x = batch
-        # buffer_item = self.replay_buffer.sample(batch_size=1)[0]
-        initial_batch = x[0] # Expected shape [B,2,...] , select the first only
-        print(f"DEBUG: training_step - sampled batch timestamp (initial): {initial_batch.batch_metadata.timestamp}")
-        print(f"Length of our batches for train {len(x)}")
-        rollout_result = self.rollout_forecast(initial_batch, steps=self.rollout_steps, batch_size=self.batch_size)
-        print("Rollout timestamps", rollout_result["timestamps"])
-        total_loss = 0.0
-        rb_count = 0
-        for rb in rollout_result["batches"]:
-            print(f"Batch {rb_count}")
-            ts = rb.batch_metadata.timestamp
-            target_ts = ts if isinstance(ts, list) and len(ts) > 1 else ts
-            print(f"DEBUG: training_step - evaluating ROLLOUT batch with timestamp: {target_ts}")
-            target_batch = x[rb_count+1]
-            target_timestamp = target_batch.batch_metadata.timestamp
-            loss = self.compute_loss(rb, target_batch)
-            print(f"DEBUG: training_step - evaluating TARGET batch with target timestamp: {target_timestamp}")
-            rb_count+=1
-            total_loss += loss
-            print(f"Step: {rb_count} Accumulated Loss: {total_loss}")
-        # Update replay buffer: add the last rollout batch (as a rollout sample).
-        # self.replay_buffer.push(BufferItem(batch=rollout_result["batches"][-1], is_rollout=True))
-        # print(f"DEBUG: training_step - no matching ground truth found for timestamp {target_ts}")
-
-        # Periodically refresh the buffer with a fresh ground truth sample.
-        # if self.global_step % self.refresh_interval == 0:
-        #     dl = DataLoader(self.ground_truth_dataset, batch_size=1, shuffle=True, drop_last=True)
-        #     fresh_sample = next(iter(dl))
-        #     self.replay_buffer.push(BufferItem(batch=fresh_sample, is_rollout=False))
-        #     print(f"DEBUG: training_step - refreshed replay buffer with new ground truth sample: {fresh_sample.batch_metadata.timestamp}")
-        print(f"Total trajectory loss:", total_loss)
-        self.log("train_loss", total_loss)
-        loss_with_grad = total_loss.clone().detach().requires_grad_(True)
-        return loss_with_grad
-    
-
     def test_step(self, batch, batch_idx):
         x= batch
         initial_batch = x[0] 
@@ -429,7 +421,8 @@ class BFM_Forecastinglighting(LightningModule):
             loss = self.compute_loss(rb, target_batch)
             rb_count+=1
             total_loss += loss
-        self.log("train_loss", total_loss)
+        print(f"Total trajectory loss:", total_loss.item())
+        self.log("test_loss", total_loss, batch_size=self.batch_size, sync_dist=True)
         loss_with_grad = total_loss.clone().detach().requires_grad_(True)
         return loss_with_grad
     #TODO ADD IT
@@ -454,6 +447,8 @@ class BFM_Forecastinglighting(LightningModule):
             "forest_variables",
             "species_variables",
         ]
+        # print(f"IN LOSS: PREDICTION {output.batch_metadata.timestamp} \n TARGET {batch.batch_metadata.timestamp}")
+
         # print(f"OUTPUT {output} \n BATCH {batch}")
         for group_name in groups:
             # If group doesn't exist in output or batch, skip
@@ -497,7 +492,7 @@ class BFM_Forecastinglighting(LightningModule):
                     w = group_weights
                 # Log each variable's raw loss
                 # print(f"{var_name} raw loss", loss_var)
-                self.log(f"{var_name} raw loss", loss_var, batch_size=time1.size(0))
+                self.log(f"{var_name} raw loss", loss_var, batch_size=time1.size(0), sync_dist=True) # to accumulate the metric across devices.
                 group_loss += w * loss_var
                 var_count += 1
 
@@ -612,10 +607,12 @@ def main(cfg: DictConfig):
     output_dir = HydraConfig.get().runtime.output_dir
     print(f"Output directory: {output_dir}")
     dataset = LargeClimateDataset(
-        data_dir=cfg.data.data_path, scaling_settings=cfg.data.scaling, num_species=cfg.data.species_number
+        data_dir=cfg.data.data_path, scaling_settings=cfg.data.scaling, num_species=cfg.data.species_number,
+        mode="finetune",
     )
     test_dataset = LargeClimateDataset(
-        data_dir=cfg.data.test_data_path, scaling_settings=cfg.data.scaling, num_species=cfg.data.species_number
+        data_dir=cfg.data.test_data_path, scaling_settings=cfg.data.scaling, num_species=cfg.data.species_number,
+        mode="finetune",
     )
     seq_dataset = SequentialWindowDataset(dataset, cfg.finetune.rollout_steps)
     seq_test_dataset = SequentialWindowDataset(test_dataset, cfg.finetune.rollout_steps)
@@ -703,7 +700,7 @@ def main(cfg: DictConfig):
         save_top_k=3,
         monitor="train_loss", #`log('val_loss', value)` in the `LightningModule`
         mode="min",
-        every_n_train_steps=cfg.training.checkpoint_every,
+        every_n_train_steps=cfg.finetune.checkpoint_every,
         filename="{epoch:02d}-{train_loss:.2f}",
         save_last=True
     )
@@ -726,11 +723,11 @@ def main(cfg: DictConfig):
         accelerator=cfg.training.accelerator,
         devices=cfg.training.devices,
         precision=cfg.training.precision,
-        # strategy=distr_strategy,
+        strategy=distr_strategy,
         num_nodes=cfg.training.num_nodes,
         log_every_n_steps=cfg.training.log_steps,
         logger=mlf_logger,  # Only the rank 0 process will have a logger
-        # limit_train_batches=101,      # Process 10 batches per epoch.
+        # limit_train_batches=2,      # Process 10 batches per epoch.
         # limit_val_batches=2,
         # limit_test_batches=10,
         val_check_interval=cfg.finetune.eval_every,  # Run validation every n training batches.

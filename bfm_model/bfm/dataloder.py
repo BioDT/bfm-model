@@ -205,9 +205,10 @@ class LargeClimateDataset(Dataset):
     }
     """
 
-    def __init__(self, data_dir: str, scaling_settings: DictConfig, num_species: int = 2):
+    def __init__(self, data_dir: str, scaling_settings: DictConfig, num_species: int = 2, mode: str = "pretrain"):
         self.data_dir = data_dir
         self.num_species = num_species
+        self.mode = mode
         self.files = [os.path.join(data_dir, f) for f in os.listdir(data_dir) if f.endswith(".pt")]
         self.files.sort()
         # print("Files sorted", self.files)
@@ -289,9 +290,14 @@ class LargeClimateDataset(Dataset):
     def __getitem__(self, idx):
         fpath_x = self.files[idx]
         fpath_y = self.files[idx + 1]
-        x = self.load_and_process_files(fpath_x)
-        y = self.load_and_process_files(fpath_y)
-        return x, y
+        if self.mode == "pretrain":
+            x = self.load_and_process_files(fpath_x)
+            y = self.load_and_process_files(fpath_y)
+            return x, y
+        else: # finetune
+            x = self.load_and_process_files(fpath_x)
+            return x
+
 
     def scale_batch(self, batch: dict | Batch, direction: Literal["original", "scaled"] = "scaled"):
         """

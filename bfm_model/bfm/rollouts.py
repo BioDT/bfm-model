@@ -98,7 +98,48 @@ def rollout_forecast(trainer, model, initial_batch, steps=2, batch_size=1):
 
     return rollout_dict
 
-def update_batch_metadata(batch_metadata: dict, hours: int = 6):
+def _last_scalar_ts(ts):
+    """
+    Walk down nested lists/tuples until we hit the last scalar string.
+    """
+    while isinstance(ts, (list, tuple)):
+        ts = ts[-1]
+    return ts          # guaranteed str
+
+def update_batch_metadata(batch_metadata, hours: int = 6):
+    """
+    Keep all original fields but normalise `timestamp` to `[t_last , t_next]`
+    where `t_last` is the *scalar* last timestamp (even if nested) and
+    `t_next  = t_last + hours`.
+    `lead_time` is incremented by `hours` (kept as float hours).
+    """
+    meta_dict = batch_metadata._asdict()
+
+    # ---------- timestamps ----------
+    ts_field = meta_dict.get("timestamp")
+    if ts_field:
+        t_last = _last_scalar_ts(ts_field)                  # flatten
+        t_next = compute_next_timestamp(t_last, hours)
+        meta_dict["timestamp"] = [t_last, t_next]
+
+    # ---------- lead_time -----------
+    lt = meta_dict.get("lead_time", 0.0)
+    if hasattr(lt, "cpu"):                # Tensor
+        lt_val = float(lt.cpu().numpy()[0])
+    elif isinstance(lt, timedelta):       # timedelta
+        lt_val = lt.total_seconds() / 3600.0
+    else:
+        lt_val = float(lt)
+    meta_dict["lead_time"] = lt_val + hours   # keep plain float
+
+    # DEBUG
+    # print(f"[update_meta] in  -> {batch_metadata.timestamp}")
+    # print(f"[update_meta] out -> {meta_dict['timestamp']}  lead={meta_dict['lead_time']}h")
+
+    return batch_metadata._replace(**meta_dict)
+
+
+def update_batch_metadata_old(batch_metadata: dict, hours: int = 6):
     """
     Returns an updated BatchMetadata, keeping all original fields
     except for updating the "timestamp" and "lead_time" fields.
@@ -207,7 +248,7 @@ def build_new_batch_with_prediction(old_batch, prediction_dict, groups=None, tim
     # Update only the timestamp and lead_time in the metadata.
     new_metadata = update_batch_metadata(new_batch.batch_metadata, hours=6)
     new_batch = new_batch._replace(batch_metadata=new_metadata)
-    print(f"new batch in creation timestamps: {new_batch.batch_metadata.timestamp}")
+    # print(f"new batch in creation timestamps: {new_batch.batch_metadata.timestamp}")
     
     return new_batch
 
