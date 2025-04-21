@@ -450,3 +450,48 @@ def test_dataset_and_dataloader(data_dir):
 if __name__ == "__main__":
     data_dir = "data_small/rollout/"  # Replace this with the actual directory path
     test_dataset_and_dataloader(data_dir)
+
+
+
+def detach_batch(batch: Batch) -> Batch:
+    """
+    Return a copy of `batch` where every torch.Tensor is detached.
+    Metadata fields remain (timestamps, etc.).
+    """
+    md = batch.batch_metadata
+    # Copy metadata as is (no tensors to detach there except lead_time if tensor)
+    new_md = Metadata(
+        latitudes=md.latitudes.detach() if hasattr(md.latitudes, "detach") else md.latitudes,
+        longitudes=md.longitudes.detach() if hasattr(md.longitudes, "detach") else md.longitudes,
+        timestamp=md.timestamp,
+        lead_time=md.lead_time.detach() if hasattr(md.lead_time, "detach") else md.lead_time,
+        pressure_levels=md.pressure_levels,
+        species_list=md.species_list,
+    )
+
+    def _detach_group(group):
+        if group is None:
+            return None
+        return {k: v.detach() for k, v in group.items()}
+
+    return Batch(
+        batch_metadata=new_md,
+        surface_variables=_detach_group(batch.surface_variables),
+        single_variables =_detach_group(batch.single_variables),
+        species_variables=_detach_group(batch.species_variables),
+        atmospheric_variables=_detach_group(batch.atmospheric_variables),
+        species_extinction_variables=_detach_group(batch.species_extinction_variables),
+        land_variables=_detach_group(batch.land_variables),
+        agriculture_variables=_detach_group(batch.agriculture_variables),
+        forest_variables=_detach_group(batch.forest_variables),
+    )
+
+def detach_preds(preds: dict) -> dict:
+    """
+    preds: {group_name: {var_name: tensor, …}, …}
+    return a deep‐detached copy.
+    """
+    return {
+        g: {v: t.detach() for v, t in vars_.items()}
+        for g, vars_ in preds.items()
+    }

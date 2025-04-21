@@ -27,7 +27,7 @@ from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.strategies import DDPStrategy, FSDPStrategy
 
 
-from bfm_model.bfm.dataloder import LargeClimateDataset, custom_collate
+from bfm_model.bfm.dataloder import LargeClimateDataset, custom_collate, detach_batch, detach_preds
 from bfm_model.bfm.rollouts import build_new_batch_with_prediction
 from bfm_model.bfm.decoder import BFMDecoder
 from bfm_model.bfm.encoder import BFMEncoder
@@ -145,9 +145,11 @@ class BFM_Forecastinglighting(LightningModule):
         total_steps: int = 20000,
         td_learning: bool = False,
         use_lora: bool = True,
+        lora_steps: int = 30,
+        lora_mode: str = "all",
         ground_truth_dataset=None, 
         rollout_steps: int = 2,
-        lead_time: int = 6, # hours
+        lead_time: float = 6.0, # hours
         refresh_interval=30,
         buffer_max_size=10, 
         initial_buffer_size=5,
@@ -232,6 +234,8 @@ class BFM_Forecastinglighting(LightningModule):
                 attn_drop_rate=0.0,
                 drop_path_rate=0.1,
                 use_lora=use_lora,
+                lora_steps=lora_steps,
+                lora_mode=lora_mode,
             )
         elif backbone_type == "mvit":
             self.backbone = MViT(
@@ -279,7 +283,22 @@ class BFM_Forecastinglighting(LightningModule):
             **kwargs,
         )
 
-    def forward(self, batch, lead_time=timedelta(hours=6), batch_size: int = 1):
+        # Freeze pretrained parts.
+        for param in self.encoder.parameters():
+            param.requires_grad = False
+        for param in self.backbone.parameters():
+            param.requires_grad = True
+        for param in self.decoder.parameters():
+            param.requires_grad = False
+
+        freeze_except_lora(self)
+
+        total = sum(p.numel() for p in self.parameters())
+        trainable = sum(p.numel() for p in self.parameters() if p.requires_grad)
+        print(f"{trainable/1e6:.2f} M / {total/1e6:.2f} M parameters will update")
+
+
+    def forward(self, batch, lead_time=timedelta(hours=6.0), batch_size: int = 1):
         """
         Forward pass of the model.
 
@@ -320,111 +339,128 @@ class BFM_Forecastinglighting(LightningModule):
         # print("Decoded output:", output)
         return output
 
-    # def populate_replay_buffer(self, num_samples):
-    #     # Populate buffer with num_samples from ground truth dataset.
-    #     dl = DataLoader(self.ground_truth_dataset, batch_size=1, shuffle=False, drop_last=False)
-    #     for i, sample in enumerate(dl):
-    #         if i >= num_samples:
-    #             break
-    #         self.replay_buffer.push(BufferItem(batch=sample, is_rollout=False))
-        
-    def rollout_forecast(self, initial_batch, steps=1, batch_size=1):
+    def rollout_forecast(
+            self,
+            initial_batch,
+            steps: int = 1,
+            batch_size: int = 1,
+            mode: str = "finetune"):
+        """
+        If mode == 'finetune' → push‑forward:
+        steps 0 … K‑2 run under no_grad (detached)
+        step  K‑1 keeps grad (memory = single step).
 
-        # Container for results
+        If mode == 'eval'    → all steps under no_grad.
+        """
         rollout_dict = {
-            "predictions": [],
             "batches": [],
             "timestamps": [],
             "lead_times": [],
         }
-        # print("Initial batch",initial_batch)
-        current_batch = copy.deepcopy(initial_batch)
-
-        # For each step in the rollout
-        for step_idx in range(steps):
-            # run predict
-            self.eval()
-            with torch.no_grad():
-                preds = self(current_batch, self.lead_time, batch_size=batch_size)
-            # store
-            rollout_dict["predictions"].append(preds)
-            # Build a new batch that has (last old time) + (predicted new time).
-            new_batch = build_new_batch_with_prediction(current_batch, preds)
-            current_batch = new_batch
-            rollout_dict["batches"].append(copy.deepcopy(current_batch))
-            step_timestamp = current_batch.batch_metadata.timestamp
-            rollout_dict["timestamps"].append(step_timestamp)
-            rollout_dict["lead_times"].append(current_batch.batch_metadata.lead_time)
-            # This new_batch becomes the "current_batch" for the next iteration
+        curr = initial_batch
+        for k in range(steps):
+            keep_grad = (mode == "finetune" and k == steps - 1)
+            with torch.set_grad_enabled(keep_grad):
+                preds = self(curr, self.lead_time, batch_size=batch_size)
+                # print("In rollout curre_bnatc metadata lead time", curr.batch_metadata.lead_time, type(curr.batch_metadata.lead_time))
+            if keep_grad:
+                next_batch = build_new_batch_with_prediction(curr, preds)
+            else:
+                next_batch = build_new_batch_with_prediction(
+                    detach_batch(curr),
+                    detach_preds(preds),
+                )
+            rollout_dict["batches"].append(next_batch)
+            rollout_dict["timestamps"].append(next_batch.batch_metadata.timestamp)
+            rollout_dict["lead_times"].append(next_batch.batch_metadata.lead_time)
+            curr = next_batch
 
         return rollout_dict
-    
+
+
     def training_step(self, batch, batch_idx):
-        x = batch
-        initial_batch = x[0] # Expected shape [B,2,...] , select the first only
-        # print(f"[train] xs len = {len(x)}  timestamps: {[b.batch_metadata.timestamp for b in x]}")
+        """
+        batch = [ Batch(t0,t1), Batch(t1,t2), … Batch(tK,tK+1) ]
+                length = rollout_steps + 1
+        """
+        xs = batch
+        init_batch = xs[0]
+        target_batch = xs[self.rollout_steps]
 
-        # print(f"DEBUG: training_step - sampled batch timestamp (initial): {initial_batch.batch_metadata.timestamp}")
-        # print(f"Length of our batches for train {len(x)}")
-        rollout_result = self.rollout_forecast(initial_batch, steps=self.rollout_steps, batch_size=self.batch_size)
-        # print("Rollout timestamps", rollout_result["timestamps"])
-        total_loss = 0.0
-        rb_count = 0
-        for rb in rollout_result["batches"]:
-            # print(f"Batch {rb_count}")
-            ts = rb.batch_metadata.timestamp
-            target_ts = ts if isinstance(ts, list) and len(ts) > 1 else ts
-            # print(f"DEBUG: training_step - evaluating ROLLOUT batch with timestamp: {target_ts}")
-            target_batch = x[rb_count+1]
-            target_timestamp = target_batch.batch_metadata.timestamp
-            loss = self.compute_loss(rb, target_batch)
-            # print(f"DEBUG: training_step - evaluating TARGET batch with target timestamp: {target_timestamp}")
-            rb_count+=1
-            total_loss += loss
-            # print(f"Step: {rb_count} Accumulated Loss: {total_loss}")
+        # push‑forward rollout
+        roll = self.rollout_forecast(
+            init_batch,
+            steps=self.rollout_steps,
+            batch_size=self.batch_size,
+            mode="finetune")
 
-        print(f"Total trajectory loss:", total_loss.item())
-        self.log("train_loss", total_loss, batch_size=self.batch_size, sync_dist=True)
-        loss_with_grad = total_loss.clone().requires_grad_(True)
-        return loss_with_grad
+        pred_last = roll["batches"][-1] # Batch (tK,ŷK+1)
+        loss = self.compute_loss(pred_last, target_batch)
+
+        traj_loss = []
+        # (optional) statistics on earlier steps without grads
+        with torch.no_grad():
+            for k in range(self.rollout_steps - 1):
+                traj_loss.append(self.compute_loss(roll["batches"][k], xs[k+1]))
+
+        trajectory_loss = torch.stack(traj_loss).sum()
+        self.log("train_loss", loss, batch_size=self.batch_size, sync_dist=True)
+        self.log("train_trajectory_loss", trajectory_loss, batch_size=self.batch_size, sync_dist=True)
+        print(f"Train Loss: {loss} | {self.rollout_steps}-Step Trajectory Loss {trajectory_loss}")
+        return loss
     
     def validation_step(self, batch, batch_idx):
-        x = batch
-        initial_batch = x[0] 
-        rollout_result = self.rollout_forecast(initial_batch, steps=self.rollout_steps, batch_size=self.batch_size)
-        total_loss = 0.0
-        rb_count = 0
-        for rb in rollout_result["batches"]:
-            ts = rb.batch_metadata.timestamp
-            target_ts = ts if isinstance(ts, list) and len(ts) > 1 else ts
-            target_batch = x[rb_count+1]
-            target_timestamp = target_batch.batch_metadata.timestamp
-            loss = self.compute_loss(rb, target_batch)
-            rb_count+=1
-            total_loss += loss
-        print(f"Total trajectory loss:", total_loss.item())
-        self.log("val_loss", total_loss, batch_size=self.batch_size, sync_dist=True)
-        loss_with_grad = total_loss.clone().detach().requires_grad_(True)
-        return loss_with_grad
+        xs = batch
+        init_batch = xs[0]
+        target_batch = xs[self.rollout_steps]
+        traj_loss = []
+        # push‑forward rollout
+        roll = self.rollout_forecast(
+            init_batch,
+            steps=self.rollout_steps,
+            batch_size=self.batch_size,
+            mode="finetune")
+
+        pred_last = roll["batches"][-1] # Batch (tK,ŷK+1)
+        loss = self.compute_loss(pred_last, target_batch)
+        # (optional) statistics on earlier steps without grads
+        with torch.no_grad():
+            for k in range(self.rollout_steps - 1):
+                traj_loss.append(self.compute_loss(roll["batches"][k], xs[k+1]))
+
+        trajectory_loss = torch.stack(traj_loss).sum()
+        self.log("val_loss", loss, batch_size=self.batch_size, sync_dist=True)
+        self.log("val_trajectory_loss", trajectory_loss, batch_size=self.batch_size, sync_dist=True)
+        print(f"Val Loss: {loss} | {self.rollout_steps}-Step Trajectory Loss {trajectory_loss}")
+
+        return loss
     
     def test_step(self, batch, batch_idx):
-        x= batch
-        initial_batch = x[0] 
-        rollout_result = self.rollout_forecast(initial_batch, steps=self.rollout_steps, batch_size=1)
-        total_loss = 0.0
-        rb_count = 0
-        for rb in rollout_result["batches"]:
-            ts = rb.batch_metadata.timestamp
-            target_ts = ts if isinstance(ts, list) and len(ts) > 1 else ts
-            target_batch = x[rb_count+1]
-            target_timestamp = target_batch.batch_metadata.timestamp
-            loss = self.compute_loss(rb, target_batch)
-            rb_count+=1
-            total_loss += loss
-        print(f"Total trajectory loss:", total_loss.item())
-        self.log("test_loss", total_loss, batch_size=self.batch_size, sync_dist=True)
-        loss_with_grad = total_loss.clone().detach().requires_grad_(True)
-        return loss_with_grad
+        xs = batch
+        init_batch = xs[0]
+        target_batch = xs[self.rollout_steps]
+        traj_loss = []
+        # push‑forward rollout
+        roll = self.rollout_forecast(
+            init_batch,
+            steps=self.rollout_steps,
+            batch_size=self.batch_size,
+            mode="finetune")
+
+        pred_last = roll["batches"][-1] # Batch (tK,ŷK+1)
+        loss = self.compute_loss(pred_last, target_batch)
+
+        # (optional) statistics on earlier steps without grads 
+        with torch.no_grad():
+            for k in range(self.rollout_steps - 1):
+                traj_loss.append(self.compute_loss(roll["batches"][k], xs[k+1]))
+                
+        trajectory_loss = torch.stack(traj_loss).sum()
+        self.log("test_loss", loss, batch_size=self.batch_size, sync_dist=True)
+        self.log("test_trajectory_loss", trajectory_loss, batch_size=self.batch_size, sync_dist=True)
+        print(f"Test Loss: {loss} | {self.rollout_steps}-Step Trajectory Loss {trajectory_loss}")
+        return loss
+    
     #TODO ADD IT
     def predict_step(self, batch, batch_idx):
         lead_time = timedelta(hours=6)  # fixed lead time for pre-training
@@ -506,76 +542,30 @@ class BFM_Forecastinglighting(LightningModule):
 
         # print(f"Single step Loss: {total_loss}")
         return total_loss
-    
 
     def configure_optimizers(self):
-        optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=12000, eta_min=self.learning_rate / 10)
+        optimizer = torch.optim.AdamW((p for p in self.parameters() if p.requires_grad), lr=self.learning_rate, weight_decay=self.weight_decay)
+        # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=12000, eta_min=self.learning_rate / 10)
         # scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=self.lr_lambda)
 
-        return [optimizer], [scheduler]
+        return [optimizer]
 
-def fetch_ground_truth(next_timestamp, dataset):
+def freeze_except_lora(model):
     """
-    Given a timestamp, fetch the corresponding ground truth Batch from the dataset.
-    
-    In our setting the dataset supplies ground truth samples that are pairs: 
-    each sample is a Batch with [t-1, t].  To get a pair [t, t+1],
-    we search the dataset (or use an index) such that the first timestep
-    matches 'next_timestamp'.
-    
-    Here we simulate it by assuming our dataset is indexed sequentially.
-    
-    Args:
-        next_timestamp: the desired timestamp for the first timestep.
-        dataset: a Dataset object that returns Batch objects.
-        
-    Returns:
-        batch_gt: a Batch whose first timestep corresponds to next_timestamp,
-                  and the second timestep is the ground truth for t+1.
-                  Returns None if no match is found.
+    • sets requires_grad=True  only for tensors whose name contains 'lora_'
+    • everything else is frozen
+    • returns list of trainable parameter names for sanity‑check
     """
-    # For simplicity, we iterate over the dataset and find a match.
-    # In practice this should be optimized (e.g. by maintaining a dict index).
-    for sample in dataset:
-        print("Dataset sample timestamp", sample.batch_metadata.timestamp)
-        print("Timestamp looking for", next_timestamp)
-        if sample.batch_metadata.timestamp[1] == next_timestamp:
-            return sample
-    return None  # no match found
-
-BufferItem = namedtuple("BufferItem", ["batch", "is_rollout"])
-
-class ReplayBuffer:
-    def __init__(self, max_size=1000):
-        self.buffer = deque(maxlen=max_size)
-    
-    def push(self, batch):
-        self.buffer.append(batch)
-    
-    def sample(self, batch_size=1, mode="random"):
-        """
-        Sample a set of items from the replay buffer.
-        
-        Args:
-            batch_size (int): The number of samples to return.
-            mode (str): "random" to use random sampling (default),
-                        "linear" to sample in the order of insertion.
-                        
-        Returns:
-            List of sampled items.
-        """
-        if mode == "random":
-            return random.sample(self.buffer, batch_size)
-        elif mode == "linear":
-            # Return the first batch_size items in the buffer in order.
-            return list(self.buffer)[:batch_size]
+    trainable = []
+    for name, param in model.named_parameters():
+        if "lora_" in name:                 # catches lora_matrix_A / B, alpha, etc.
+            param.requires_grad = True
+            trainable.append(name)
         else:
-            raise ValueError(f"Invalid sampling mode: {mode}")
-    
-    def __len__(self):
-        return len(self.buffer)
-    
+            param.requires_grad = False
+    print(f"[LoRA]  trainable params = {len(trainable)} layers")
+    return trainable
+
 
 @hydra.main(version_base=None, config_path="configs", config_name="train_config")
 def main(cfg: DictConfig):
@@ -643,13 +633,13 @@ def main(cfg: DictConfig):
     # Single logger approach with rank-specific paths
     mlf_logger = None
     # if "RANK" not in os.environ or os.environ["RANK"] == "0":
-    if rank == 0 or rank == "0":
-        # Use rank in experiment name to avoid conflicts
-        mlf_logger = MLFlowLogger(
-            experiment_name=f"BFM_{MODE}_finetune_logs_r{rank}", 
-            run_name=f"BFM_{MODE}_finetune_{current_time}", 
-            save_dir=f"{output_dir}/logs/rank{rank}"
-        )
+    # if rank == 0 or rank == "0":
+    #     # Use rank in experiment name to avoid conflicts
+    #     mlf_logger = MLFlowLogger(
+    #         experiment_name=f"BFM_{MODE}_finetune_logs_r{rank}", 
+    #         run_name=f"BFM_{MODE}_finetune_{current_time}", 
+    #         save_dir=f"{output_dir}/logs/rank{rank}"
+    #     )
 
     checkpoint_path = cfg.finetune.checkpoint_path
     # Load Model from Checkpoint
@@ -683,6 +673,8 @@ def main(cfg: DictConfig):
         ground_truth_dataset=test_dataset,
         strict=False,
         use_lora=True,
+        lora_steps=cfg.finetune.rollout_steps, # 1 month
+        lora_mode=cfg.finetune.lora_mode, # every step + layers #single
         rollout_steps=cfg.finetune.rollout_steps,
     )
 
@@ -701,7 +693,7 @@ def main(cfg: DictConfig):
         monitor="train_loss", #`log('val_loss', value)` in the `LightningModule`
         mode="min",
         every_n_train_steps=cfg.finetune.checkpoint_every,
-        filename="{epoch:02d}-{train_loss:.2f}",
+        filename="{epoch:02d}-{train_loss}",
         save_last=True
     )
 
@@ -726,8 +718,8 @@ def main(cfg: DictConfig):
         strategy=distr_strategy,
         num_nodes=cfg.training.num_nodes,
         log_every_n_steps=cfg.training.log_steps,
-        logger=mlf_logger,  # Only the rank 0 process will have a logger
-        # limit_train_batches=2,      # Process 10 batches per epoch.
+        # logger=mlf_logger,  # Only the rank 0 process will have a logger
+        # limit_train_batches=21,      # Process 10 batches per epoch.
         # limit_val_batches=2,
         # limit_test_batches=10,
         val_check_interval=cfg.finetune.eval_every,  # Run validation every n training batches.

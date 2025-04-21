@@ -30,7 +30,8 @@ def rollout_forecast(trainer, model, initial_batch, steps=2, batch_size=1):
         "lead_times": [],
     }
 
-    current_batch = copy.deepcopy(initial_batch)
+    # current_batch = copy.deepcopy(initial_batch)
+    current_batch = initial_batch
     B = batch_size
 
     class SingleBatchDataset(Dataset):
@@ -139,41 +140,41 @@ def update_batch_metadata(batch_metadata, hours: int = 6):
     return batch_metadata._replace(**meta_dict)
 
 
-def update_batch_metadata_old(batch_metadata: dict, hours: int = 6):
-    """
-    Returns an updated BatchMetadata, keeping all original fields
-    except for updating the "timestamp" and "lead_time" fields.
-    
-    Assumptions:
-      - batch_metadata.timestamp is a list (e.g. [t0, t1]) in ISO format.
-      - We update it so that new timestamp becomes [old_ts[-1], compute_next_timestamp(old_ts[-1], hours)]
-      - batch_metadata.lead_time is updated by adding hours.
-    """
-    meta_dict = batch_metadata._asdict()
-    
-    if "timestamp" in meta_dict and isinstance(meta_dict["timestamp"], list) and len(meta_dict["timestamp"]) >= 1:
-        old_ts = meta_dict["timestamp"]
-        new_time = compute_next_timestamp(old_ts[-1], hours=hours)
-        meta_dict["timestamp"] = [old_ts[-1], new_time]
-    
-    # Update lead_time.
-    if "lead_time" in meta_dict:
-        lt = meta_dict["lead_time"]
-        # Convert Tensor to float.
-        if hasattr(lt, "cpu"):
-            lead_time_val = lt.cpu().numpy()[0]
-        # Convert timedelta to float (hours).
-        elif isinstance(lt, timedelta):
-            lead_time_val = lt.total_seconds() / 3600.0
+def update_batch_metadata(batch_metadata, hours: float = 6.0):
+    md = batch_metadata._asdict()
+
+    # 1) timestamps (unchanged) …
+    ts = md["timestamp"]
+    if isinstance(ts, (list, tuple)) and ts:
+        t_last = _last_scalar_ts(ts)
+        md["timestamp"] = [t_last, compute_next_timestamp(t_last, hours)]
+
+    # 2) lead_time
+    old_lt = md["lead_time"]
+    if isinstance(old_lt, torch.Tensor):
+        arr = old_lt.detach().cpu().numpy()
+        if arr.ndim == 0:
+            # single element → float
+            new_lt = float(arr) + hours
         else:
-            lead_time_val = float(lt)
-        meta_dict["lead_time"] = timedelta(hours=lead_time_val + hours)
-    # print(f"DEBUG: updated metadata dict: {meta_dict}")
-    
-    return batch_metadata._replace(**meta_dict)
+            # batch of lead_times → list of floats
+            new_lt = (arr + hours).tolist()
+    elif isinstance(old_lt, list):
+        # already a list of floats
+        new_lt = [float(v) + hours for v in old_lt]
+    elif isinstance(old_lt, timedelta):
+        # timedelta → float hours
+        new_lt = (old_lt.total_seconds() / 3600.0) + hours
+    else:
+        # plain float or int
+        new_lt = float(old_lt) + hours
+
+    md["lead_time"] = new_lt
+
+    return batch_metadata._replace(**md)
 
 
-def build_new_batch_with_prediction(old_batch, prediction_dict, groups=None, time_dim=1):
+def build_new_batch_with_prediction(old_batch, prediction_dict, groups=None, time_dim=1, hours: int = 6):
     """
     Build a new batch from `old_batch` by:
       - Keeping the last old timestep (since old_batch has T=2)
@@ -208,7 +209,8 @@ def build_new_batch_with_prediction(old_batch, prediction_dict, groups=None, tim
         ]
 
     # Make a copy so we don't modify old_batch in place
-    new_batch = copy.deepcopy(old_batch)
+    # new_batch = copy.deepcopy(old_batch)
+    new_batch = old_batch
 
     # For each group, unify last old time with predicted new time
     for group_name in groups:
@@ -246,7 +248,7 @@ def build_new_batch_with_prediction(old_batch, prediction_dict, groups=None, tim
         new_batch = new_batch._replace(**{group_name: group_vars_old})
 
     # Update only the timestamp and lead_time in the metadata.
-    new_metadata = update_batch_metadata(new_batch.batch_metadata, hours=6)
+    new_metadata = update_batch_metadata(new_batch.batch_metadata, hours=hours)
     new_batch = new_batch._replace(batch_metadata=new_metadata)
     # print(f"new batch in creation timestamps: {new_batch.batch_metadata.timestamp}")
     

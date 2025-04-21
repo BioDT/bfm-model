@@ -141,13 +141,20 @@ Issue PyTorch 2.1.2 vs 2.2.0
 
 ## TODODs
 -[x] Finetune routine implementation with LoRA and optinally VeRA (TODO)
+
 -[x] Finetune dataset setup
+
 -[x] Rollout Finetune modes: Daily (4x6h) 
+
 -[ ] Weekly & Monthly
+
 -[ ] Investigate if a (Prioritized) Buffer for Rollout Finetune is required
+
 -[ ] Investigate effect of batch_size on finetuning - currently low memory usage but slow execution
+
 -[ ] Safe tensors storage
--[ ] Hugging Face weights upload, loading and tutorial notebook
+
+-[ ] Hugging Face weights upload, loading and tutorial notebook.
 
 a) Presence and absence of species: [Geolifeclef](https://www.kaggle.com/competitions/geolifeclef-2023-lifeclef-2023-x-fgvc10/data
 )
