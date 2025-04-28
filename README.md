@@ -93,7 +93,6 @@ mlflow server --host 0.0.0.0 --port 8082
 On snellius, you need to forward the ports to your machine (TODO document commands)
 
 
-
 ## Connection
 
 ```bash
@@ -122,6 +121,14 @@ Then you can observe mlflow with the same bind command:
 ssh -i .ssh/snelius_key -L 0.0.0.0:<desired_port_on_local>:gcn<node_id>:<mlflow_port_on_remote> <user_name>@snellius.surf.nl
 ```
 
+## Visualisation
+This repository contains various visualisation functions that are applicable for every stage of the workflow. More specific:
+
+- **Batch level:** Inspect and visualise the RAW data (2 timesteps) from the Batches along with their MAE. Run the notebook `documentation/batch_visualisation.ipynb`. You need to change the `DATA_PATH` to the directory you have the batches you want to visualise. The code plots only a single batch but it can be configured to visualise all of them and save them with the appropriate flag.
+
+- **Prediction level:** You need to have produce predictions either by running `bfm_model/bfm/test_lighting.py` or by `bfm_model/bfm/rollout_finetuning.py` and enabling the **finetune.prediction: True** on the train_config. These will create export folders with the predictions and the ground truths in a compact tensor format. To visualise them simply run `streamlit run documentation/rollout_visualisation.py ` and visit the localhost. There you can inspect the different Variable Groups with their respective Variables and Levels. 
+
+- TODO: Sharpen the colours & fix the gif timeline.
 
 ## OOM Errors:
 

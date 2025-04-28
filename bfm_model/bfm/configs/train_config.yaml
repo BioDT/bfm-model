@@ -12,7 +12,7 @@ model:
   num_latent_tokens: 8 #TODO Check consistensy in name and value
   backbone: "swin" # mvit
   patch_size: 4 # Size of spatial patches.
-  embed_dim: 128 # Embedding dimension.
+  embed_dim: 256 # Embedding dimension.
   num_heads: 16 # Number of attention heads.
   head_dim: 64 # Dimension of each attention head.
   depth: 3 # Number of transformer layers.
@@ -38,7 +38,7 @@ training:
   accelerator: cuda
   precision: bf16-mixed
   precision_in: "high" # ["medium", "high", "highest"] https://pytorch.org/docs/stable/generated/torch.set_float32_matmul_precision.html#torch.set_float32_matmul_precision
-  devices: 1
+  devices: [1]
   strategy: fsdp #fsdp #ddp
   num_nodes: 1
   gradient_clip: 1.0
@@ -58,7 +58,8 @@ mlflow:
   port: 8082 # change here port if you get [Errno 98] Address already in use
 
 evaluation:
-  checkpoint_path: #"/gpfs/scratch1/shared/damian/bflm/outputs/outputs/2025-04-09/23-06-37/checkpoints/last.ckpt" #/home/atrantas/bfm-model/outputs/2025-04-12/13-25-36/checkpoints/epoch=02-train_loss=0.04.ckpt #
+  test_data: /home/thanasis.trantas/git_projects/bfm-model/data_small/2009_batches
+  checkpoint_path: /home/thanasis.trantas/git_projects/bfm-model/model_weights/epoch=02-train_loss=0.04.ckpt #"/gpfs/scratch1/shared/damian/bflm/outputs/outputs/2025-04-09/23-06-37/checkpoints/last.ckpt" #/home/atrantas/bfm-model/outputs/2025-04-12/13-25-36/checkpoints/epoch=02-train_loss=0.04.ckpt #
   batch_size: 1
   test_device: "cuda:0"
 

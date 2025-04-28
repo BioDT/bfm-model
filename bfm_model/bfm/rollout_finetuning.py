@@ -24,7 +24,7 @@ from lightning.pytorch.utilities.model_summary import ModelSummary
 from lightning.pytorch.callbacks import ModelCheckpoint, Callback
 from lightning.pytorch.strategies import DDPStrategy, FSDPStrategy
 
-from bfm_model.bfm.dataloder import LargeClimateDataset, custom_collate, detach_graph_batch, detach_batch, detach_preds, batch_to_device, debug_batch_devices
+from bfm_model.bfm.dataloder import LargeClimateDataset, custom_collate, detach_graph_batch, detach_batch, batch_to_device
 from bfm_model.bfm.rollouts import build_new_batch_with_prediction
 from bfm_model.bfm.decoder import BFMDecoder
 from bfm_model.bfm.encoder import BFMEncoder
@@ -450,8 +450,8 @@ class BFM_Forecastinglighting(LightningModule):
         records = []
         for k, (pred, gt) in enumerate(zip(rollout, batch[1:]), start=1):
             # detach + clone + move to CPU
-            pred_cpu = detach_batch(pred)   # helper does detach.clone().cpu()
-            gt_cpu   = detach_batch(gt)
+            pred_cpu = detach_batch(pred)
+            gt_cpu = detach_batch(gt)
             records.append({
                 "idx":   batch_idx,
                 "step":  k,

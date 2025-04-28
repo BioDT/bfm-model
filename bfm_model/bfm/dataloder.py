@@ -5,7 +5,7 @@ import os
 from collections import namedtuple
 from datetime import datetime, timedelta
 from typing import Literal
-
+from copy import deepcopy
 import torch
 from omegaconf.dictconfig import DictConfig
 from torch.utils.data import DataLoader, Dataset, default_collate
@@ -487,20 +487,20 @@ def detach_batch(batch: Batch) -> Batch:
         return out
 
     return Batch(
-        batch_metadata=new_md,
-        surface_variables        = _detach_and_clone(batch.surface_variables),
-        single_variables         = _detach_and_clone(batch.single_variables),
-        species_variables        = _detach_and_clone(batch.species_variables),
-        atmospheric_variables    = _detach_and_clone(batch.atmospheric_variables),
+        batch_metadata = new_md,
+        surface_variables = _detach_and_clone(batch.surface_variables),
+        single_variables = _detach_and_clone(batch.single_variables),
+        species_variables = _detach_and_clone(batch.species_variables),
+        atmospheric_variables = _detach_and_clone(batch.atmospheric_variables),
         species_extinction_variables = _detach_and_clone(batch.species_extinction_variables),
-        land_variables           = _detach_and_clone(batch.land_variables),
-        agriculture_variables    = _detach_and_clone(batch.agriculture_variables),
-        forest_variables         = _detach_and_clone(batch.forest_variables),
+        land_variables = _detach_and_clone(batch.land_variables),
+        agriculture_variables = _detach_and_clone(batch.agriculture_variables),
+        forest_variables = _detach_and_clone(batch.forest_variables),
     )
 
 def detach_preds(preds: dict) -> dict:
     """
-    Detach, clone, cpu‐move every tensor in the prediction dict.
+    Detach, clone, cpu move every tensor in the prediction dict.
     """
     out = {}
     for g, vars_ in preds.items():
@@ -518,26 +518,24 @@ def detach_graph_batch(batch: Batch) -> Batch:
 
     return Batch(
         batch_metadata=new_md,
-        surface_variables        = det_grp(batch.surface_variables),
-        single_variables         = det_grp(batch.single_variables),
-        species_variables        = det_grp(batch.species_variables),
-        atmospheric_variables    = det_grp(batch.atmospheric_variables),
+        surface_variables = det_grp(batch.surface_variables),
+        single_variables= det_grp(batch.single_variables),
+        species_variables= det_grp(batch.species_variables),
+        atmospheric_variables = det_grp(batch.atmospheric_variables),
         species_extinction_variables = det_grp(batch.species_extinction_variables),
-        land_variables           = det_grp(batch.land_variables),
-        agriculture_variables    = det_grp(batch.agriculture_variables),
-        forest_variables         = det_grp(batch.forest_variables),
+        land_variables = det_grp(batch.land_variables),
+        agriculture_variables = det_grp(batch.agriculture_variables),
+        forest_variables= det_grp(batch.forest_variables),
     )
 
 def batch_to_device(batch: Batch, device: torch.device) -> Batch:
     """
     Recursively move every tensor in the Batch to `device`.
-    Non‐tensor fields (timestamps, lists, floats) are left unchanged.
+    Nontensor fields (timestamps, lists, floats) are left unchanged.
     """
     md = batch.batch_metadata
-    # move metadata tensors
     lat = md.latitudes.to(device)
     lon = md.longitudes.to(device)
-    # leave timestamp (list of strings) alone, and lead_time (float/list)
     new_md = Metadata(
         latitudes=lat,
         longitudes=lon,
@@ -553,15 +551,15 @@ def batch_to_device(batch: Batch, device: torch.device) -> Batch:
         return {k: v.to(device) for k, v in grp.items()}
 
     return Batch(
-        batch_metadata           = new_md,
-        surface_variables        = move_group(batch.surface_variables),
-        single_variables         = move_group(batch.single_variables),
-        species_variables        = move_group(batch.species_variables),
-        atmospheric_variables    = move_group(batch.atmospheric_variables),
+        batch_metadata = new_md,
+        surface_variables = move_group(batch.surface_variables),
+        single_variables = move_group(batch.single_variables),
+        species_variables = move_group(batch.species_variables),
+        atmospheric_variables = move_group(batch.atmospheric_variables),
         species_extinction_variables = move_group(batch.species_extinction_variables),
-        land_variables           = move_group(batch.land_variables),
-        agriculture_variables    = move_group(batch.agriculture_variables),
-        forest_variables         = move_group(batch.forest_variables),
+        land_variables = move_group(batch.land_variables),
+        agriculture_variables = move_group(batch.agriculture_variables),
+        forest_variables = move_group(batch.forest_variables),
     )
 
 
@@ -600,3 +598,34 @@ def debug_batch_devices(batch: Batch, prefix: str = ""):
     for k, dev in sorted(devices):
         print(f"  {k:40s} → {dev}")
     print("======================================")
+
+def detach_output_dict(d):
+    """
+    Recursively detach & clone any torch.Tensor or Batch found in a dict.
+    Leaves other values (ints, floats, lists, etc.) untouched.
+    Returns a new dict.
+    """
+    out = {}
+    for k, v in d.items():
+        if isinstance(v, torch.Tensor):
+            out[k] = v.detach().clone().cpu()
+        elif isinstance(v, Batch):
+            out[k] = detach_batch(v)
+        elif isinstance(v, dict):
+            out[k] = detach_output_dict(v)
+        elif isinstance(v, (list, tuple)):
+            proc = []
+            for elem in v:
+                if isinstance(elem, torch.Tensor):
+                    proc.append(elem.detach().clone().cpu())
+                elif isinstance(elem, Batch):
+                    proc.append(detach_batch(elem))
+                elif isinstance(elem, dict):
+                    proc.append(detach_output_dict(elem))
+                else:
+                    proc.append(deepcopy(elem))
+            out[k] = type(v)(proc)
+        else:
+            # leave alone
+            out[k] = deepcopy(v)
+    return out

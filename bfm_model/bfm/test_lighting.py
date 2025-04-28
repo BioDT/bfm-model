@@ -1,19 +1,192 @@
 """
 Copyright (C) 2025 TNO, The Netherlands. All rights reserved.
 """
-from datetime import datetime
+from datetime import datetime, timedelta
+from typing import Literal
+from pathlib import Path
+from collections import defaultdict
 
 import hydra
 import lightning as L
 import torch
 from hydra.core.hydra_config import HydraConfig
-from lightning.pytorch import seed_everything
+from lightning.pytorch import LightningModule, seed_everything
 from lightning.pytorch.loggers import MLFlowLogger
 from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader
 
-from bfm_model.bfm.dataloder import LargeClimateDataset, custom_collate
+from bfm_model.bfm.dataloder import LargeClimateDataset, custom_collate, detach_batch, detach_output_dict
 from bfm_model.bfm.train_lighting import BFM_lighting
+from bfm_model.bfm.decoder import BFMDecoder
+from bfm_model.bfm.encoder import BFMEncoder
+from bfm_model.mvit.mvit_model import MViT
+from bfm_model.swin_transformer.core.swim_core_v2 import Swin3DTransformer
+
+class BFM_lighting(LightningModule):
+    def __init__(
+        self,
+        surface_vars: tuple[str, ...],
+        single_vars: tuple[str, ...],
+        atmos_vars: tuple[str, ...],
+        species_vars: tuple[str, ...],
+        species_distr_vars: tuple[str, ...],
+        land_vars: tuple[str, ...],
+        agriculture_vars: tuple[str, ...],
+        forest_vars: tuple[str, ...],
+        atmos_levels: list[int],
+        species_num: int,
+        H: int = 32,
+        W: int = 64,
+        num_latent_tokens: int = 8,
+        backbone_type: Literal["swin", "mvit"] = "mvit",
+        patch_size: int = 4,
+        embed_dim: int = 1024,
+        num_heads: int = 16,
+        head_dim: int = 2,
+        depth: int = 2,
+        learning_rate: float = 5e-4,
+        weight_decay: float = 5e-6,
+        batch_size: int = 1,
+        warmup_steps: int = 1000,
+        total_steps: int = 20000,
+        td_learning: bool = True,
+        lead_time: float = 6.0,
+        **kwargs,
+    ):
+        super().__init__()
+        self.H = H
+        self.W = W
+
+        self.learning_rate = learning_rate
+        self.weight_decay = weight_decay
+        self.batch_size = batch_size
+        self.warmup_steps = warmup_steps
+        self.total_steps = total_steps
+        self.td_learning = td_learning
+        self.lead_time = timedelta(hours = lead_time)
+
+        self.encoder = BFMEncoder(
+            surface_vars=surface_vars,
+            single_vars=single_vars,
+            atmos_vars=atmos_vars,
+            species_vars=species_vars,
+            species_distr_vars=species_distr_vars,
+            land_vars=land_vars,
+            agriculture_vars=agriculture_vars,
+            forest_vars=forest_vars,
+            atmos_levels=atmos_levels,
+            species_num=species_num,
+            H=H,
+            W=W,
+            patch_size=patch_size,
+            embed_dim=embed_dim,
+            num_heads=num_heads,
+            head_dim=head_dim,
+            depth=depth,
+            **kwargs,
+        )
+
+        patch_shape = (num_latent_tokens, H // self.encoder.patch_size, W // self.encoder.patch_size)
+
+        if backbone_type == "swin":
+            self.backbone = Swin3DTransformer(
+                embed_dim=embed_dim,
+                encoder_depths=(2, 2),
+                encoder_num_heads=(8, 16),
+                decoder_depths=(2, 2),
+                decoder_num_heads=(32, 16),
+                window_size=(1, 1, 2),
+                mlp_ratio=4.0,
+                qkv_bias=True,
+                drop_rate=0.0,
+                attn_drop_rate=0.0,
+                drop_path_rate=0.1,
+            )
+        elif backbone_type == "mvit":
+            self.backbone = MViT(
+                patch_shape=patch_shape,
+                embed_dim=embed_dim,
+                depth=4,
+                num_heads=1,
+                mlp_ratio=4.0,
+                qkv_bias=True,
+                path_drop_rate=0.1,
+                attn_mode="conv",
+                pool_first=False,
+                rel_pos=False,
+                zero_init_rel=True,
+                res_pool=True,
+                dim_mul_attn=False,
+                dim_scales=[(i, 1.0) for i in range(4)],  # No dimension change
+                head_scales=[(1, 2.0), (2, 2.0)],  # Keep head scaling for attention
+                pool_kernel=[1, 1, 1],
+                kv_stride=[1, 1, 1],
+                q_stride=[(0, [1, 1, 1]), (1, [1, 1, 1]), (2, [1, 1, 1])],
+            )
+        else:
+            raise ValueError(f"Unknown backbone type: {backbone_type}")
+
+        self.backbone_type = backbone_type
+        self.decoder = BFMDecoder(
+            surface_vars=surface_vars,
+            single_vars=single_vars,
+            atmos_vars=atmos_vars,
+            species_vars=species_vars,
+            species_distr_vars=species_distr_vars,
+            land_vars=land_vars,
+            agriculture_vars=agriculture_vars,
+            forest_vars=forest_vars,
+            atmos_levels=atmos_levels,
+            species_num=species_num,
+            H=H,
+            W=W,
+            patch_size=patch_size,
+            embed_dim=embed_dim,
+            num_heads=num_heads,
+            head_dim=head_dim,
+            depth=depth,
+            **kwargs,
+        )
+
+        # Freeze pretrained parts.
+        for param in self.encoder.parameters():
+            param.requires_grad = True
+        for param in self.backbone.parameters():
+            param.requires_grad = True
+        for param in self.decoder.parameters():
+            param.requires_grad = True
+
+    def forward(self, batch, lead_time=timedelta(hours=6.0), batch_size: int = 1):
+        encoded = self.encoder(batch, lead_time, batch_size)
+        num_patches_h = self.H // self.encoder.patch_size
+        num_patches_w = self.W // self.encoder.patch_size
+        total_patches = num_patches_h * num_patches_w  # noqa
+        depth = encoded.shape[1] // (num_patches_h * num_patches_w)
+        patch_shape = (
+            depth,  # depth dimension matches sequence length / (H*W)
+            num_patches_h,  # height in patches
+            num_patches_w,  # width in patches
+        )
+
+        if self.backbone_type == "mvit":
+            encoded = encoded.view(encoded.size(0), -1, self.encoder.embed_dim)
+            print(f"Reshaped encoded for MViT: {encoded.shape}")
+        backbone_output = self.backbone(encoded, lead_time=lead_time, rollout_step=0, patch_shape=patch_shape)
+        output = self.decoder(backbone_output, batch, lead_time)
+        return output
+
+    def predict_step(self, batch, batch_idx):
+        records = []
+        x, y = batch
+        output = self(x, self.lead_time, batch_size=self.batch_size)
+        pred_cpu = detach_output_dict(output) # helper does detach.clone().cpu()
+        gt_cpu   = detach_batch(y) # The first timestep is the ground truth
+        records.append({
+            "idx":   batch_idx,
+            "pred":  pred_cpu,
+            "gt":    gt_cpu,
+        })
+        return records
 
 
 @hydra.main(version_base=None, config_path="configs", config_name="train_config")
@@ -45,9 +218,9 @@ def main(cfg: DictConfig):
     # Load the Test Dataset
     print("Setting up Dataloader ...")
     test_dataset = LargeClimateDataset(
-        data_dir=cfg.data.test_data_path, scaling_settings=cfg.data.scaling, num_species=cfg.data.species_number
+        data_dir=cfg.evaluation.test_data, scaling_settings=cfg.data.scaling, num_species=cfg.data.species_number
     )  # Adapt
-    print("Reading test data from :", cfg.data.test_data_path)
+    print("Reading test data from :", cfg.evaluation.test_data)
     test_dataloader = DataLoader(
         test_dataset,
         batch_size=cfg.evaluation.batch_size,
@@ -74,8 +247,8 @@ def main(cfg: DictConfig):
         devices=cfg.training.devices,
         precision=cfg.training.precision,
         log_every_n_steps=cfg.training.log_steps,
-        limit_test_batches=2,
-        limit_predict_batches=2,
+        limit_test_batches=1,
+        limit_predict_batches=1,
         logger=[mlf_logger_in_hydra_folder, mlf_logger_in_current_folder],
         enable_checkpointing=False,
         enable_progress_bar=True,
@@ -107,14 +280,35 @@ def main(cfg: DictConfig):
     checkpoint_path = cfg.evaluation.checkpoint_path
     # Load Model from Checkpoint
     print(f"Loading model from checkpoint: {checkpoint_path}")
-    # V1 Do the inference
-    test_results = trainer.test(model=bfm_model, ckpt_path=checkpoint_path, dataloaders=test_dataloader)
+    # Do the inference
+    # test_results = trainer.test(model=bfm_model, ckpt_path=checkpoint_path, dataloaders=test_dataloader)
     predictions = trainer.predict(model=bfm_model, ckpt_path=checkpoint_path, dataloaders=test_dataloader)
     print("=== Test Results ===")
-    print(test_results)
-    print(predictions)
-    predictions_unscaled = test_dataset.scale_batch(predictions, direction="original")
-    print(predictions_unscaled)
+    # print(test_results)
+    # print(predictions)
+    # predictions_unscaled = test_dataset.scale_batch(predictions, direction="original")
+    # print(predictions_unscaled)
+
+
+    SAVE_DIR = Path("pre-train_test_exports")
+    SAVE_DIR.mkdir(exist_ok=True, parents=True)
+
+    flat_records = [r for batch_list in predictions for r in batch_list]
+
+    for rec in flat_records:
+        rec["pred"] = test_dataset.scale_batch(rec["pred"], direction="original")
+        rec["gt"]   = test_dataset.scale_batch(rec["gt"], direction="original")
+
+    by_window = {}
+    for rec in flat_records:
+        idx = rec["idx"]
+        by_window.setdefault(idx, []).append(rec)
+
+    for idx, recs in by_window.items():
+        recs = sorted(recs, key=lambda r: r["idx"])
+        path = SAVE_DIR / f"window_{idx:05d}.pt"
+        torch.save(recs, path)
+        print(f"Saved {path} ({len(recs)} records)")
 
 
 if __name__ == "__main__":
