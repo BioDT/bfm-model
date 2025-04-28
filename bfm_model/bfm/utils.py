@@ -3,6 +3,8 @@ Copyright (C) 2025 TNO, The Netherlands. All rights reserved.
 """
 import glob
 import os
+from pathlib import Path
+from omegaconf import OmegaConf
 
 import cartopy.crs as ccrs
 import matplotlib.pyplot as plt
@@ -716,3 +718,8 @@ def plot_species_stats_from_single_lists(stats_list: list, group_size: int = 5):
     )
     fig.update_xaxes(type='date')
     fig.show()
+
+def load_config(output_dir: str | Path, config_file_name: str = "config.yaml"):
+    config_path = Path(output_dir) / ".hydra"
+    cfg = OmegaConf.load(str(config_path / config_file_name))
+    return cfg

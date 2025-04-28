@@ -1,20 +1,18 @@
 """
 Copyright (C) 2025 TNO, The Netherlands. All rights reserved.
 """
-import copy
 import os
 from typing import Literal
 from functools import partial
 from datetime import datetime, timedelta
-import random
-from collections import deque, namedtuple
+
 
 import torch
 import torch.distributed as dist
 from torch.utils.data import DataLoader, Dataset
 from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import checkpoint_wrapper, apply_activation_checkpointing
 from torch.distributed.fsdp.wrap import size_based_auto_wrap_policy
-
+from pathlib import Path
 import hydra
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
@@ -23,46 +21,19 @@ import lightning as L
 from lightning.pytorch import seed_everything, LightningModule
 from lightning.pytorch.loggers import MLFlowLogger
 from lightning.pytorch.utilities.model_summary import ModelSummary
-from lightning.pytorch.callbacks import ModelCheckpoint
+from lightning.pytorch.callbacks import ModelCheckpoint, Callback
 from lightning.pytorch.strategies import DDPStrategy, FSDPStrategy
 
-
-from bfm_model.bfm.dataloder import LargeClimateDataset, custom_collate, detach_batch, detach_preds
+from bfm_model.bfm.dataloder import LargeClimateDataset, custom_collate, detach_graph_batch, detach_batch, detach_preds, batch_to_device, debug_batch_devices
 from bfm_model.bfm.rollouts import build_new_batch_with_prediction
 from bfm_model.bfm.decoder import BFMDecoder
 from bfm_model.bfm.encoder import BFMEncoder
 from bfm_model.mvit.mvit_model import MViT
 from bfm_model.swin_transformer.core.swim_core_v2 import Swin3DTransformer
+from bfm_model.bfm.utils import load_config
 
 def activation_ckpt_policy(module):
     return isinstance(module, (Swin3DTransformer, MViT))
-
-# class SequentialWindowDataset(Dataset):
-#     """
-#     Wrap a *pair‑yielding* base dataset.
-
-#     base_ds[idx]               -> (x_t      , y_{t+1})
-#     this[idx] (steps = N)      -> ([x_t … x_{t+N}] ,
-#                                    [y_{t+1} … y_{t+N+1}])
-
-#     The two returned lists have length `steps+1`.
-#     """
-#     def __init__(self, base_ds: Dataset, steps: int):
-#         assert steps >= 1, "`steps` must be at least 1"
-#         self.base  = base_ds
-#         self.steps = steps
-
-#     def __len__(self):
-#         # need idx .. idx+steps, plus one extra y => idx+steps must be < len(base)-1
-#         return len(self.base) - (self.steps + 1)
-
-#     def __getitem__(self, idx):
-#         xs, ys = [], []
-#         for k in range(self.steps + 1):
-#             x_k, y_k = self.base[idx + k]          # base returns a tuple
-#             xs.append(x_k)
-#             ys.append(y_k)
-#         return xs, ys
 
 class SequentialWindowDataset(Dataset):
     """
@@ -144,7 +115,7 @@ class BFM_Forecastinglighting(LightningModule):
         warmup_steps: int = 1000,
         total_steps: int = 20000,
         td_learning: bool = False,
-        use_lora: bool = True,
+        use_lora: bool = False,
         lora_steps: int = 30,
         lora_mode: str = "all",
         ground_truth_dataset=None, 
@@ -175,6 +146,8 @@ class BFM_Forecastinglighting(LightningModule):
         # Initialize replay buffer and populate with ground truth samples.
         # self.replay_buffer = ReplayBuffer(max_size=buffer_max_size)
         # self.populate_replay_buffer(initial_buffer_size)
+        # SAVE_DIR = pathlib.Path("rollout_exports")
+        # SAVE_DIR.mkdir(exist_ok=True, parents=True)
 
 
         self.variable_weights = {
@@ -357,19 +330,20 @@ class BFM_Forecastinglighting(LightningModule):
             "timestamps": [],
             "lead_times": [],
         }
-        curr = initial_batch
+        device = next(self.parameters()).device
+        curr = batch_to_device(initial_batch, device)
         for k in range(steps):
             keep_grad = (mode == "finetune" and k == steps - 1)
             with torch.set_grad_enabled(keep_grad):
                 preds = self(curr, self.lead_time, batch_size=batch_size)
-                # print("In rollout curre_bnatc metadata lead time", curr.batch_metadata.lead_time, type(curr.batch_metadata.lead_time))
             if keep_grad:
                 next_batch = build_new_batch_with_prediction(curr, preds)
             else:
-                next_batch = build_new_batch_with_prediction(
-                    detach_batch(curr),
-                    detach_preds(preds),
-                )
+                # break graph but keep on GPU
+                curr_det = detach_graph_batch(curr)
+                preds_det = {g:{v:t.detach() for v,t in grp.items()}
+                            for g,grp in preds.items()}
+                next_batch = build_new_batch_with_prediction(curr_det, preds_det)
             rollout_dict["batches"].append(next_batch)
             rollout_dict["timestamps"].append(next_batch.batch_metadata.timestamp)
             rollout_dict["lead_times"].append(next_batch.batch_metadata.lead_time)
@@ -461,11 +435,30 @@ class BFM_Forecastinglighting(LightningModule):
         print(f"Test Loss: {loss} | {self.rollout_steps}-Step Trajectory Loss {trajectory_loss}")
         return loss
     
-    #TODO ADD IT
     def predict_step(self, batch, batch_idx):
-        lead_time = timedelta(hours=6)  # fixed lead time for pre-training
-        output = self(batch, lead_time, batch_size=self.batch_size)
-        return output
+        # batch lives on GPU in fp16/bf16
+        init = batch[0]
+        init = batch_to_device(init, next(self.parameters()).device)
+
+        rollout = self.rollout_forecast(
+                init,
+                steps=self.rollout_steps,
+                batch_size=self.batch_size,
+                mode="test"
+            )["batches"]  # list of Batches on GPU
+
+        records = []
+        for k, (pred, gt) in enumerate(zip(rollout, batch[1:]), start=1):
+            # detach + clone + move to CPU
+            pred_cpu = detach_batch(pred)   # helper does detach.clone().cpu()
+            gt_cpu   = detach_batch(gt)
+            records.append({
+                "idx":   batch_idx,
+                "step":  k,
+                "pred":  pred_cpu,
+                "gt":    gt_cpu,
+            })
+        return records
 
     def compute_loss(self, output, batch):
         # batch = target:      t1, t2
@@ -484,7 +477,6 @@ class BFM_Forecastinglighting(LightningModule):
             "species_variables",
         ]
         # print(f"IN LOSS: PREDICTION {output.batch_metadata.timestamp} \n TARGET {batch.batch_metadata.timestamp}")
-
         # print(f"OUTPUT {output} \n BATCH {batch}")
         for group_name in groups:
             # If group doesn't exist in output or batch, skip
@@ -566,6 +558,26 @@ def freeze_except_lora(model):
     print(f"[LoRA]  trainable params = {len(trainable)} layers")
     return trainable
 
+class RolloutSaveCallback(Callback):
+    SAVE_DIR = Path("rollout_exports")
+    SAVE_DIR.mkdir(exist_ok=True, parents=True)
+
+    def on_predict_epoch_end(self, trainer, pl_module, outputs):
+        """
+        `outputs` is a list of lists of dicts as returned by predict_step.
+        """
+        flat = [rec for batch_list in outputs for rec in batch_list]
+        by_window = {}
+        for rec in flat:
+            idx = rec["idx"]
+            by_window.setdefault(idx, []).append(rec)
+
+        for idx, recs in by_window.items():
+            recs = sorted(recs, key=lambda r: r["step"])
+            path = self.SAVE_DIR / f"window_{idx:05d}.pt"
+            torch.save(recs, path)
+            pl_module.print(f"Saved {path} ({len(recs)} steps)")
+
 
 @hydra.main(version_base=None, config_path="configs", config_name="train_config")
 def main(cfg: DictConfig):
@@ -584,6 +596,13 @@ def main(cfg: DictConfig):
     Returns:
         test_results (dict or list): Test metrics returned by trainer.test().
     """
+    # Load config with the settings used during the weights save time, else use the current config
+    # TODO Enable when have final configs
+    # if cfg_m.master.path:
+    #     cfg = load_config(cfg_m.master.path)
+    #     print(f"Will be loading config & weights from MASTER PATH: {cfg_m.master.path}")
+    # else:
+    #     cfg = cfg_m
 
     MODE = cfg.finetune.mode
     # Setup config
@@ -671,8 +690,8 @@ def main(cfg: DictConfig):
         batch_size=cfg.finetune.batch_size,
         td_learning=cfg.finetune.td_learning,
         ground_truth_dataset=test_dataset,
-        strict=False,
-        use_lora=True,
+        strict=True,
+        use_lora=False,
         lora_steps=cfg.finetune.rollout_steps, # 1 month
         lora_mode=cfg.finetune.lora_mode, # every step + layers #single
         rollout_steps=cfg.finetune.rollout_steps,
@@ -715,31 +734,54 @@ def main(cfg: DictConfig):
         accelerator=cfg.training.accelerator,
         devices=cfg.training.devices,
         precision=cfg.training.precision,
-        strategy=distr_strategy,
+        # strategy=distr_strategy,
         num_nodes=cfg.training.num_nodes,
         log_every_n_steps=cfg.training.log_steps,
         # logger=mlf_logger,  # Only the rank 0 process will have a logger
-        # limit_train_batches=21,      # Process 10 batches per epoch.
-        # limit_val_batches=2,
-        # limit_test_batches=10,
+        # limit_train_batches=10,      # Process 10 batches per epoch.
+        # limit_val_batches=10,
+        limit_test_batches=1,
+        limit_predict_batches=1,
         val_check_interval=cfg.finetune.eval_every,  # Run validation every n training batches.
         check_val_every_n_epoch=None,
         # limit_train_batches=1, # For debugging to see what happens at the end of epoch
         # check_val_every_n_epoch=None,  # Do eval every n epochs
         # val_check_interval=3, # Does not work in Distributed settings | Do eval every 10 training steps => 10 steps x 8 batch_size = Every 80 Batches
-        callbacks=[checkpoint_callback],
+        # callbacks=[checkpoint_callback],
+        # callbacks=[RolloutSaveCallback()],
         # plugins=[MyClusterEnvironment()],
     )
 
-    #TODO Add functionality to continue finetuning from a checkpoint
-    print(f"Starting {MODE} Finetune training from scratch for a horizon of {cfg.finetune.rollout_steps} ")
-    trainer.fit(BFM, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader)
+    if cfg.finetune.prediction:
+        print(f"Will be doing {cfg.finetune.rollout_steps} - steps prediction and storing the results")
+        all_outputs = trainer.predict(BFM, dataloaders=val_dataloader)
 
+        # Flatten the nested lists:
+        flat = [rec for batch_list in all_outputs for rec in batch_list]
 
+        # Group by window index and save:
+        SAVE_DIR = Path("rollout_exports")
+        SAVE_DIR.mkdir(exist_ok=True, parents=True)
+
+        by_window = {}
+        for rec in flat:
+            idx = rec["idx"]
+            by_window.setdefault(idx, []).append(rec)
+
+        for idx, recs in by_window.items():
+            recs = sorted(recs, key=lambda r: r["step"])
+            path = SAVE_DIR / f"window_{idx:05d}.pt"
+            # each rec already has pred/gt = detached CPU Batches
+            torch.save(recs, path)
+            print(f"Saved {path} ({len(recs)} steps)")
+    else:
+        print(f"Starting {MODE} Finetune training from scratch for a horizon of {cfg.finetune.rollout_steps} ")
+        # trainer.fit(BFM, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader)
+        
     if dist.is_initialized():
         dist.barrier()
 
-    selected_ckpt = checkpoint_callback.best_model_path or f"{output_dir}/checkpoints/last.ckpt"
+    selected_ckpt = checkpoint_callback.best_model_path or cfg.finetune.checkpoint_path
     if not os.path.exists(selected_ckpt):
         raise FileNotFoundError(f"Checkpoint not found at {selected_ckpt}")
 

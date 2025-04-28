@@ -3,7 +3,7 @@ Copyright (C) 2025 TNO, The Netherlands. All rights reserved.
 """
 import os
 from collections import namedtuple
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Literal
 
 import torch
@@ -455,43 +455,148 @@ if __name__ == "__main__":
 
 def detach_batch(batch: Batch) -> Batch:
     """
-    Return a copy of `batch` where every torch.Tensor is detached.
-    Metadata fields remain (timestamps, etc.).
+    Return a copy of `batch` where every torch.Tensor is
+    detached, cloned, and moved to CPU, so it can be torch.save().
     """
     md = batch.batch_metadata
-    # Copy metadata as is (no tensors to detach there except lead_time if tensor)
-    new_md = Metadata(
-        latitudes=md.latitudes.detach() if hasattr(md.latitudes, "detach") else md.latitudes,
-        longitudes=md.longitudes.detach() if hasattr(md.longitudes, "detach") else md.longitudes,
-        timestamp=md.timestamp,
-        lead_time=md.lead_time.detach() if hasattr(md.lead_time, "detach") else md.lead_time,
-        pressure_levels=md.pressure_levels,
-        species_list=md.species_list,
-    )
+    # lead_time logic unchanged from before...
+    lt = md.lead_time
+    if isinstance(lt, torch.Tensor):
+        arr = lt.detach().cpu().numpy()
+        if arr.ndim == 0:
+            new_lt = float(arr)
+        else:
+            new_lt = arr.tolist()
+    elif isinstance(lt, list):
+        new_lt = [float(x) for x in lt]
+    elif isinstance(lt, timedelta):
+        new_lt = arr.total_seconds() / 3600.0
+    else:
+        new_lt = float(lt)
 
-    def _detach_group(group):
-        if group is None:
+    new_md = md._replace(lead_time=new_lt)
+
+    def _detach_and_clone(grp):
+        if grp is None:
             return None
-        return {k: v.detach() for k, v in group.items()}
+        out = {}
+        for k, v in grp.items():
+            # detach from graph, clone, move to CPU
+            t = v.detach().clone().cpu()
+            out[k] = t
+        return out
 
     return Batch(
         batch_metadata=new_md,
-        surface_variables=_detach_group(batch.surface_variables),
-        single_variables =_detach_group(batch.single_variables),
-        species_variables=_detach_group(batch.species_variables),
-        atmospheric_variables=_detach_group(batch.atmospheric_variables),
-        species_extinction_variables=_detach_group(batch.species_extinction_variables),
-        land_variables=_detach_group(batch.land_variables),
-        agriculture_variables=_detach_group(batch.agriculture_variables),
-        forest_variables=_detach_group(batch.forest_variables),
+        surface_variables        = _detach_and_clone(batch.surface_variables),
+        single_variables         = _detach_and_clone(batch.single_variables),
+        species_variables        = _detach_and_clone(batch.species_variables),
+        atmospheric_variables    = _detach_and_clone(batch.atmospheric_variables),
+        species_extinction_variables = _detach_and_clone(batch.species_extinction_variables),
+        land_variables           = _detach_and_clone(batch.land_variables),
+        agriculture_variables    = _detach_and_clone(batch.agriculture_variables),
+        forest_variables         = _detach_and_clone(batch.forest_variables),
     )
 
 def detach_preds(preds: dict) -> dict:
     """
-    preds: {group_name: {var_name: tensor, …}, …}
-    return a deep‐detached copy.
+    Detach, clone, cpu‐move every tensor in the prediction dict.
     """
-    return {
-        g: {v: t.detach() for v, t in vars_.items()}
-        for g, vars_ in preds.items()
-    }
+    out = {}
+    for g, vars_ in preds.items():
+        out[g] = {v: t.detach().clone().cpu() for v, t in vars_.items()}
+    return out
+
+def detach_graph_batch(batch: Batch) -> Batch:
+    """Detach every tensor in the Batch (break graph), but keep device."""
+    md = batch.batch_metadata
+    new_md = md  # timestamps/lead_time floats are unchanged
+
+    def det_grp(grp):
+        if grp is None: return None
+        return {k: v.detach() for k, v in grp.items()}
+
+    return Batch(
+        batch_metadata=new_md,
+        surface_variables        = det_grp(batch.surface_variables),
+        single_variables         = det_grp(batch.single_variables),
+        species_variables        = det_grp(batch.species_variables),
+        atmospheric_variables    = det_grp(batch.atmospheric_variables),
+        species_extinction_variables = det_grp(batch.species_extinction_variables),
+        land_variables           = det_grp(batch.land_variables),
+        agriculture_variables    = det_grp(batch.agriculture_variables),
+        forest_variables         = det_grp(batch.forest_variables),
+    )
+
+def batch_to_device(batch: Batch, device: torch.device) -> Batch:
+    """
+    Recursively move every tensor in the Batch to `device`.
+    Non‐tensor fields (timestamps, lists, floats) are left unchanged.
+    """
+    md = batch.batch_metadata
+    # move metadata tensors
+    lat = md.latitudes.to(device)
+    lon = md.longitudes.to(device)
+    # leave timestamp (list of strings) alone, and lead_time (float/list)
+    new_md = Metadata(
+        latitudes=lat,
+        longitudes=lon,
+        timestamp=md.timestamp,
+        lead_time=md.lead_time,
+        pressure_levels=md.pressure_levels,  # if tensor, also .to(device)
+        species_list=md.species_list         # list of ints, leave as is
+    )
+
+    def move_group(grp):
+        if grp is None:
+            return None
+        return {k: v.to(device) for k, v in grp.items()}
+
+    return Batch(
+        batch_metadata           = new_md,
+        surface_variables        = move_group(batch.surface_variables),
+        single_variables         = move_group(batch.single_variables),
+        species_variables        = move_group(batch.species_variables),
+        atmospheric_variables    = move_group(batch.atmospheric_variables),
+        species_extinction_variables = move_group(batch.species_extinction_variables),
+        land_variables           = move_group(batch.land_variables),
+        agriculture_variables    = move_group(batch.agriculture_variables),
+        forest_variables         = move_group(batch.forest_variables),
+    )
+
+
+def debug_batch_devices(batch: Batch, prefix: str = ""):
+    """
+    Print out the set of devices present in this Batch.
+    """
+    devices = set()
+
+    # metadata
+    md = batch.batch_metadata
+    for name in ("latitudes", "longitudes", "pressure_levels"):
+        t = getattr(md, name)
+        if isinstance(t, torch.Tensor):
+            devices.add((f"{prefix}.batch_metadata.{name}", t.device))
+
+    # variable groups
+    for group_name in [
+        "surface_variables", "single_variables", "atmospheric_variables",
+        "species_extinction_variables", "land_variables", "agriculture_variables",
+        "forest_variables", "species_variables"
+    ]:
+        grp = getattr(batch, group_name)
+        if grp is None: 
+            continue
+        for var_name, tensor in grp.items():
+            devices.add((f"{prefix}.{group_name}.{var_name}", tensor.device))
+
+    # lead_time (if it's still a tensor)
+    lt = md.lead_time
+    if isinstance(lt, torch.Tensor):
+        devices.add((f"{prefix}.batch_metadata.lead_time", lt.device))
+
+    # print a sorted list
+    print("==== Device check:", prefix, "====")
+    for k, dev in sorted(devices):
+        print(f"  {k:40s} → {dev}")
+    print("======================================")
