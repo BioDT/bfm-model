@@ -46,10 +46,16 @@ class Swin3DTransformer(nn.Module):
         drop_rate: float = 0.0,
         attn_drop_rate: float = 0.1,
         drop_path_rate: float = 0.1,
-        lora_steps: int = 40,
-        lora_mode: LoRAMode = "single",
-        use_lora: bool = False,
         skip_connections: bool = True,
+        peft_r: int = 8,
+        lora_alpha: int = 8,
+        d_initial: float = 0.1,
+        peft_dropout: float = 0.0,
+        peft_steps: int = 40,
+        peft_mode: LoRAMode = "single",
+        use_lora: bool = False,
+        use_vera: bool = False,
+
     ) -> None:
         """
         Args:
@@ -105,9 +111,14 @@ class Swin3DTransformer(nn.Module):
                 attention_dropout_rate=attn_drop_rate,
                 drop_path=dpr[sum(encoder_depths[:i_layer]) : sum(encoder_depths[: i_layer + 1])],
                 downsample=(PatchMerging3D if (i_layer < self.num_encoder_layers - 1) else None),
+                peft_r=peft_r,
+                lora_alpha=lora_alpha,
+                d_initial=d_initial,
+                peft_dropout=peft_dropout,
+                peft_steps=peft_steps,
+                peft_mode=peft_mode,
                 use_lora=use_lora,
-                lora_steps=lora_steps,
-                lora_mode=lora_mode,
+                use_vera=use_vera,
             )
             self.encoder_layers.append(layer)
 
@@ -127,9 +138,14 @@ class Swin3DTransformer(nn.Module):
                 attention_dropout_rate=attn_drop_rate,
                 drop_path=dpr[sum(decoder_depths[:i_layer]) : sum(decoder_depths[: i_layer + 1])],
                 upsample=(PatchSplitting3D if (i_layer < self.num_decoder_layers - 1) else None),
+                peft_r=peft_r,
+                lora_alpha=lora_alpha,
+                d_initial=d_initial,
+                peft_dropout=peft_dropout,
+                peft_steps=peft_steps,
+                peft_mode=peft_mode,
                 use_lora=use_lora,
-                lora_steps=lora_steps,
-                lora_mode=lora_mode,
+                use_vera=use_vera,
             )
             self.decoder_layers.append(layer)
 

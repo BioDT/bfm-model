@@ -10,6 +10,8 @@ from timm.models.layers import DropPath, to_3tuple
 from bfm_model.swin_transformer.helpers.adaptive_layer_norm import AdaptiveLayerNorm
 from bfm_model.swin_transformer.helpers.fourier_expansion import lead_time_expansion
 from bfm_model.swin_transformer.helpers.low_rank_adaptation import LoRAMode, LoRARollout
+from bfm_model.swin_transformer.helpers.vera import VeRA, VeRAMode, VeRARollout
+
 from bfm_model.swin_transformer.helpers.utilities import adjust_windows, init_weights
 from bfm_model.swin_transformer.helpers.window_operations import (
     apply_or_remove_3d_padding,
@@ -74,12 +76,14 @@ class WindowMultiHeadSelfAttention(nn.Module):
         qk_scale: Optional[float] = None,
         attention_dropout_rate: float = 0.0,
         proj_dropout: float = 0.0,
-        lora_r: int = 8,
+        peft_r: int = 8,
         lora_alpha: int = 8,
-        lora_dropout: float = 0.0,
-        lora_steps: int = 40,
-        lora_mode: LoRAMode = "single",
+        d_initial: float = 0.1,
+        peft_dropout: float = 0.0,
+        peft_steps: int = 40,
+        peft_mode: LoRAMode = "single",
         use_lora: bool = False,
+        use_vera: bool = False,
     ) -> None:
         """
         Initialize the WindowMultiHeadSelfAttention module.
@@ -92,12 +96,16 @@ class WindowMultiHeadSelfAttention(nn.Module):
             qk_scale (float, optional): Override default qk scale of head_dim ** -0.5 if set. Default: None
             attention_dropout_rate (float): Dropout rate for attention weights. Default: 0.0
             proj_dropout (float): Dropout rate for projection output. Default: 0.0
-            lora_r (int): Rank for Low-Rank Adaptation (LoRA). Default: 8
+            peft_r (int): Rank for Parameter Efficient Fine Tuning: 
+                a) Low-Rank Adaptation (LoRA). Default: 8 | 
+                b) Vector-based Random-matrix Adaptation. Default: 256
             lora_alpha (int): Scaling factor for LoRA. Default: 8
-            lora_dropout (float): Dropout rate for LoRA. Default: 0.0
-            lora_steps (int): Maximum number of LoRA roll-out steps. Default: 40
-            lora_mode (LoRAMode): Mode for LoRA application. Default: "single"
+            d_initial (float): Initialization factor for lamda vector. Default: 0.1
+            peft_dropout (float): Dropout rate for PEFTs. Default: 0.0
+            peft_steps (int): Maximum number of PEFTs roll-out steps. Default: 40
+            lora_mode (LoRAMode): Mode for LoRA application. Default: "single" => Same with VeRA
             use_lora (bool): Whether to use LoRA. Default: False
+            use_vera (bool): whether to use VeRA. Default: False
         """
         super().__init__()
 
@@ -118,12 +126,21 @@ class WindowMultiHeadSelfAttention(nn.Module):
 
         # Initialize LoRA if enabled
         if use_lora:
-            self.lora_proj = LoRARollout(dim, dim, lora_r, lora_alpha, lora_dropout, lora_steps, lora_mode)
-            self.lora_qkv = LoRARollout(dim, dim * 3, lora_r, lora_alpha, lora_dropout, lora_steps, lora_mode)
+            self.peft_proj = LoRARollout(dim, dim, peft_r, lora_alpha, peft_dropout, peft_steps, peft_mode)
+            self.peft_qkv = LoRARollout(dim, dim * 3, peft_r, lora_alpha, peft_dropout, peft_steps, peft_mode)
+        elif use_vera:
+            self.peft_qkv = VeRARollout(
+                dim, dim * 3, r=peft_r, dropout=peft_dropout,
+                d_initial=d_initial, max_steps=peft_steps, mode=peft_mode
+            )
+            self.peft_proj = VeRARollout(
+                dim, dim, r=peft_r, dropout=peft_dropout,
+                d_initial=d_initial, max_steps=peft_steps, mode=peft_mode
+            )
         else:
             # Use lambda functions returning 0 for efficiency when LoRA is disabled
-            self.lora_proj = lambda *args, **kwargs: 0
-            self.lora_qkv = lambda *args, **kwargs: 0
+            self.peft_proj = lambda *args, **kwargs: 0
+            self.peft_qkv = lambda *args, **kwargs: 0
 
     def forward(
         self,
@@ -148,7 +165,7 @@ class WindowMultiHeadSelfAttention(nn.Module):
         B_, N, C = x.shape  # shape: [num_windows*B, N, C]
 
         # Compute QKV matrices + lora values if enabled
-        qkv = self.qkv(x) + self.lora_qkv(x, rollout_step)  # shape: [num_windows*B, N, 3*C]
+        qkv = self.qkv(x) + self.peft_qkv(x, rollout_step)  # shape: [num_windows*B, N, 3*C]
 
         # Get ready for splitting into q, k, v
         qkv = qkv.reshape(B_, N, 3, self.num_heads, C // self.num_heads).permute(
@@ -179,7 +196,7 @@ class WindowMultiHeadSelfAttention(nn.Module):
         x = (attention_weights @ v).transpose(1, 2).reshape(B_, N, C)  # shape: [num_windows*B, N, C]
 
         # Final linear projection and LoRA addition
-        x = self.proj(x) + self.lora_proj(x, rollout_step)  # shape: [num_windows*B, N, C]
+        x = self.proj(x) + self.peft_proj(x, rollout_step)  # shape: [num_windows*B, N, C]
 
         # Apply projection dropout
         x = self.proj_drop(x)
@@ -207,9 +224,14 @@ class Swin3DTransformerBlock(nn.Module):
         drop_path_rate: float = 0.0,
         activation_fn: type = nn.GELU,
         scale_bias: float = 0.0,
-        lora_steps: int = 40,
-        lora_mode: LoRAMode = "single",
+        peft_r: int = 8,
+        lora_alpha: int = 8,
+        d_initial: float = 0.1,
+        peft_dropout: float = 0.0,
+        peft_steps: int = 40,
+        peft_mode: LoRAMode = "single",
         use_lora: bool = False,
+        use_vera: bool = False,
     ) -> None:
         """
         Args:
@@ -225,9 +247,16 @@ class Swin3DTransformerBlock(nn.Module):
             drop_path_rate (float): Stochastic depth rate. Default: 0.0
             activation_fn (type): Activation layer type. Default: nn.GELU
             scale_bias (float): Scale bias for AdaptiveLayerNorm. Default: 0.0
-            lora_steps (int): Maximum number of LoRA roll-out steps. Default: 40
-            lora_mode (LoRAMode): Mode for LoRA. Default: "single"
+            peft_r (int): Rank for Parameter Efficient Fine Tuning: 
+                a) Low-Rank Adaptation (LoRA). Default: 8 | 
+                b) Vector-based Random-matrix Adaptation. Default: 256
+            lora_alpha (int): Scaling factor for LoRA. Default: 8
+            d_initial (float): Initialization factor for lamda vector. Default: 0.1
+            peft_dropout (float): Dropout rate for PEFTs. Default: 0.0
+            peft_steps (int): Maximum number of PEFTs roll-out steps. Default: 40
+            lora_mode (LoRAMode): Mode for LoRA application. Default: "single" => Same with VeRA
             use_lora (bool): Whether to use LoRA. Default: False
+            use_vera (bool): whether to use VeRA. Default: False
         """
         super().__init__()
 
@@ -248,10 +277,16 @@ class Swin3DTransformerBlock(nn.Module):
             qkv_bias=qkv_bias,
             attention_dropout_rate=attention_dropout_rate,
             proj_dropout=dropout_rate,
-            lora_steps=lora_steps,
+            peft_r=peft_r,
+            lora_alpha=lora_alpha,
+            d_initial=d_initial,
+            peft_dropout=peft_dropout,
+            peft_steps=peft_steps,
+            peft_mode=peft_mode,
             use_lora=use_lora,
-            lora_mode=lora_mode,
+            use_vera=use_vera,
         )
+
 
         # Stochastic Depth
         self.drop_path = DropPath(drop_path_rate) if drop_path_rate > 0.0 else nn.Identity()
@@ -537,9 +572,14 @@ class SwinTransformer3DLayer(nn.Module):
         downsample: type[PatchMerging3D] | None = None,
         upsample: type[PatchSplitting3D] | None = None,
         scale_bias: float = 0.0,
-        lora_steps: int = 40,
-        lora_mode: LoRAMode = "single",
+        peft_r: int = 8,
+        lora_alpha: int = 8,
+        d_initial: float = 0.1,
+        peft_dropout: float = 0.0,
+        peft_steps: int = 40,
+        peft_mode: LoRAMode = "single",
         use_lora: bool = False,
+        use_vera: bool = False,
     ) -> None:
         """
         Args:
@@ -583,9 +623,14 @@ class SwinTransformer3DLayer(nn.Module):
                     attention_dropout_rate=attention_dropout_rate,
                     drop_path_rate=self._get_drop_path(i, drop_path),
                     scale_bias=scale_bias,
+                    peft_r=peft_r,
+                    lora_alpha=lora_alpha,
+                    d_initial=d_initial,
+                    peft_dropout=peft_dropout,
+                    peft_steps=peft_steps,
+                    peft_mode=peft_mode,
                     use_lora=use_lora,
-                    lora_steps=lora_steps,
-                    lora_mode=lora_mode,
+                    use_vera=use_vera,
                 )
                 for i in range(depth)
             ]

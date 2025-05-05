@@ -115,15 +115,21 @@ class BFM_Forecastinglighting(LightningModule):
         warmup_steps: int = 1000,
         total_steps: int = 20000,
         td_learning: bool = False,
-        use_lora: bool = False,
-        lora_steps: int = 30,
-        lora_mode: str = "all",
         ground_truth_dataset=None, 
-        rollout_steps: int = 2,
         lead_time: float = 6.0, # hours
         refresh_interval=30,
         buffer_max_size=10, 
         initial_buffer_size=5,
+        peft_r: int = 8,
+        lora_alpha: int = 8,
+        d_initial: float = 0.1,
+        peft_dropout: float = 0.0,
+        peft_steps: int = 1,
+        peft_mode: str = "single",
+        use_lora: bool = False,
+        use_vera: bool = False,
+        rollout_steps: int = 1,
+
         **kwargs,
     ):
         super().__init__()
@@ -148,7 +154,6 @@ class BFM_Forecastinglighting(LightningModule):
         # self.populate_replay_buffer(initial_buffer_size)
         # SAVE_DIR = pathlib.Path("rollout_exports")
         # SAVE_DIR.mkdir(exist_ok=True, parents=True)
-
 
         self.variable_weights = {
             "surface_variables": {
@@ -206,9 +211,14 @@ class BFM_Forecastinglighting(LightningModule):
                 drop_rate=0.0,
                 attn_drop_rate=0.0,
                 drop_path_rate=0.1,
+                peft_r=peft_r,
+                lora_alpha=lora_alpha,
+                d_initial=d_initial,
+                peft_dropout=peft_dropout,
+                peft_steps=peft_steps,
+                peft_mode=peft_mode,
                 use_lora=use_lora,
-                lora_steps=lora_steps,
-                lora_mode=lora_mode,
+                use_vera=use_vera,
             )
         elif backbone_type == "mvit":
             self.backbone = MViT(
@@ -264,7 +274,7 @@ class BFM_Forecastinglighting(LightningModule):
         for param in self.decoder.parameters():
             param.requires_grad = False
 
-        freeze_except_lora(self)
+        freeze_except(self)
 
         total = sum(p.numel() for p in self.parameters())
         trainable = sum(p.numel() for p in self.parameters() if p.requires_grad)
@@ -319,11 +329,11 @@ class BFM_Forecastinglighting(LightningModule):
             batch_size: int = 1,
             mode: str = "finetune"):
         """
-        If mode == 'finetune' → push‑forward:
-        steps 0 … K‑2 run under no_grad (detached)
-        step  K‑1 keeps grad (memory = single step).
+        If mode == 'finetune' -> pus-forward:
+        steps 0 … K-2 run under no_grad (detached)
+        step  K-1 keeps grad (memory = single step).
 
-        If mode == 'eval'    → all steps under no_grad.
+        If mode == 'eval' -> all steps under no_grad.
         """
         rollout_dict = {
             "batches": [],
@@ -542,20 +552,21 @@ class BFM_Forecastinglighting(LightningModule):
 
         return [optimizer]
 
-def freeze_except_lora(model):
+def freeze_except(model):
     """
-    • sets requires_grad=True  only for tensors whose name contains 'lora_'
-    • everything else is frozen
-    • returns list of trainable parameter names for sanity‑check
+    - sets requires_grad=True  only for tensors whose name contains PEFT variant
+    e.g. 'lora_' or 'vera_'
+    - everything else is frozen
+    - returns list of trainable parameter names for sanity-check
     """
     trainable = []
     for name, param in model.named_parameters():
-        if "lora_" in name:                 # catches lora_matrix_A / B, alpha, etc.
+        if 'peft_' in name:
             param.requires_grad = True
             trainable.append(name)
         else:
             param.requires_grad = False
-    print(f"[LoRA]  trainable params = {len(trainable)} layers")
+    print(f"PEFT trainable params = {len(trainable)} layers")
     return trainable
 
 class RolloutSaveCallback(Callback):
@@ -690,11 +701,18 @@ def main(cfg: DictConfig):
         batch_size=cfg.finetune.batch_size,
         td_learning=cfg.finetune.td_learning,
         ground_truth_dataset=test_dataset,
-        strict=True,
-        use_lora=False,
-        lora_steps=cfg.finetune.rollout_steps, # 1 month
-        lora_mode=cfg.finetune.lora_mode, # every step + layers #single
+        strict=False, # False if loading from a pre-trained with PEFT checkpoint
+        peft_r=cfg.finetune.rank,
+        lora_alpha=cfg.finetune.lora_alpha,
+        d_initial=cfg.finetune.d_initial,
+        peft_dropout=cfg.finetune.peft_dropout,
+        peft_steps=cfg.finetune.rollout_steps,
+        peft_mode=cfg.finetune.peft_mode,
+        use_lora=cfg.finetune.use_lora,
+        use_vera=cfg.finetune.use_vera,
         rollout_steps=cfg.finetune.rollout_steps,
+        # lora_steps=cfg.finetune.rollout_steps, # 1 month
+        # lora_mode=cfg.finetune.lora_mode, # every step + layers #single
     )
 
     apply_activation_checkpointing(
@@ -776,7 +794,7 @@ def main(cfg: DictConfig):
             print(f"Saved {path} ({len(recs)} steps)")
     else:
         print(f"Starting {MODE} Finetune training from scratch for a horizon of {cfg.finetune.rollout_steps} ")
-        # trainer.fit(BFM, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader)
+        trainer.fit(BFM, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader)
         
     if dist.is_initialized():
         dist.barrier()

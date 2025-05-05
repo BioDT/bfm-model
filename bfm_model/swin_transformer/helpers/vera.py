@@ -13,12 +13,12 @@ VeRAMode = Literal["single", "all"]
 
 class VeRA(nn.Module):
     """
-    Vector‑based Random‑matrix Adaptation (VeRA) for nn.Linear
+    Vector-based Random-matrix Adaptation (VeRA) for nn.Linear
     https://arxiv.org/abs/2310.11454
     ΔW = diag(λ_d) · (Aᵀ ⊙ λ_b) · Bᵀ
-    where  A∈ℝ^{r×in}, B∈ℝ^{out×r} are frozen random matrices,
-           λ_b∈ℝ^{r}, λ_d∈ℝ^{out} are trainable vectors,
-           ⊙ is element‑wise multiplication applied with broadcasting
+    where  A∈R^{r x in}, B∈R^{out x r} are frozen random matrices,
+           λ_b∈R^{r}, λ_d∈R^{out} are trainable vectors,
+           ⊙ is element-wise multiplication applied with broadcasting
     """
 
     def __init__(
@@ -54,10 +54,10 @@ class VeRA(nn.Module):
         self.lambda_b = nn.Parameter(torch.ones(r)) # length‑r
         self.lambda_d = nn.Parameter(torch.full((out_features,), d_initial)) # length‑out
 
-    @torch.autocast("cuda", enabled=False)
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # (B, *, in) · (in, r)  ->  (B, *, r)
-        h = self.dropout(x) @ self.vera_A.T # random projection
+        x_dropped = self.dropout(x)
+        h = x_dropped @ self.vera_A.T # random projection
         h = h * self.lambda_b # scale inside the sub‑space
         # (B, *, r) · (r, out) ->  (B, *, out)
         delta = h @ self.vera_B.T
@@ -67,7 +67,7 @@ class VeRA(nn.Module):
 
 class VeRARollout(nn.Module):
     """
-    Per‑roll‑out‑step VeRA
+    Per-roll-out-step VeRA
     """
 
     def __init__(

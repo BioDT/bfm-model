@@ -62,6 +62,8 @@ python bfm_model/bfm/rollouts.py
 
 ### Rollout Finetuning
 
+We offer 2 Parameter Efficient Finetuning Techniques, namely LoRA and VeRA. They can be configured by enabling and disabling interchangable each of them on the `train_config.yaml` on the `finetune` section.
+
 ```bash
 python bfm_model/bfm/rollout_finetuning.py
 ```
@@ -147,11 +149,11 @@ Issue PyTorch 2.1.2 vs 2.2.0
 + Interesting addition for CLI args generation: https://github.com/google/python-fire
 
 ## TODODs
--[x] Finetune routine implementation with LoRA and optinally VeRA (TODO)
+-[x] Finetune routine implementation with LoRA and optinally VeRA DONE
 
 -[x] Finetune dataset setup
 
--[x] Rollout Finetune modes: Daily (4x6h) 
+-[x] Rollout Finetune modes: Daily (4x6h)
 
 -[ ] Weekly & Monthly
 
@@ -162,6 +164,8 @@ Issue PyTorch 2.1.2 vs 2.2.0
 -[ ] Safe tensors storage
 
 -[ ] Hugging Face weights upload, loading and tutorial notebook.
+
+- [ ] Make clear the data structure throughout the whole codebase. Currently we have interchanged dicts & Batch Tuples
 
 a) Presence and absence of species: [Geolifeclef](https://www.kaggle.com/competitions/geolifeclef-2023-lifeclef-2023-x-fgvc10/data
 )
