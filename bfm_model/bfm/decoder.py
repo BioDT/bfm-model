@@ -97,13 +97,15 @@ class BFMDecoder(nn.Module):
     def __init__(
         self,
         surface_vars: tuple[str, ...],
-        single_vars: tuple[str, ...],
+        edaphic_vars: tuple[str, ...],
         atmos_vars: tuple[str, ...],
+        climate_vars: tuple[str, ...],
         species_vars: tuple[str, ...],
-        species_distr_vars: tuple[str, ...],
+        vegetation_vars: tuple[str, ...],
         land_vars: tuple[str, ...],
         agriculture_vars: tuple[str, ...],
         forest_vars: tuple[str, ...],
+        misc_vars: tuple[str, ...],
         atmos_levels: list[int],
         species_num: int,
         patch_size: int = 4,
@@ -125,13 +127,15 @@ class BFMDecoder(nn.Module):
         super().__init__()
         # Store variable names
         self.surface_vars = surface_vars
-        self.single_vars = single_vars
+        self.edaphic_vars = edaphic_vars
         self.atmos_vars = atmos_vars
+        self.climate_vars = climate_vars
         self.species_vars = species_vars
-        self.species_distr_vars = species_distr_vars
+        self.vegetation_vars = vegetation_vars
         self.land_vars = land_vars
         self.agriculture_vars = agriculture_vars
         self.forest_vars = forest_vars
+        self.misc_vars = misc_vars
         self.atmos_levels = atmos_levels
         self.species_num = species_num
 
@@ -149,13 +153,15 @@ class BFMDecoder(nn.Module):
         # Create variable mappings for each category
         self.var_maps = {
             "surface": {v: i for i, v in enumerate(surface_vars)},
-            "single": {v: i for i, v in enumerate(single_vars)},
+            "edaphic": {v: i for i, v in enumerate(edaphic_vars)},
             "atmos": {v: i for i, v in enumerate(atmos_vars)},
+            "climate": {v: i for i, v in enumerate(climate_vars)},
             "species": {v: i for i, v in enumerate(species_vars)},
-            "species_distr": {v: i for i, v in enumerate(species_distr_vars)},
+            "species_distr": {v: i for i, v in enumerate(vegetation_vars)},
             "land": {v: i for i, v in enumerate(land_vars)},
             "agriculture": {v: i for i, v in enumerate(agriculture_vars)},
             "forest": {v: i for i, v in enumerate(forest_vars)},
+            "misc": {v: i for i, v in enumerate(misc_vars)},
         }
 
         pos_encoding_dim = self._calculate_pos_encoding_dim()
@@ -167,24 +173,28 @@ class BFMDecoder(nn.Module):
 
         # token projections for each variable type
         self.surface_token_proj = nn.Linear(embed_dim, H * W)
-        self.single_token_proj = nn.Linear(embed_dim, H * W)
+        self.edaphic_token_proj = nn.Linear(embed_dim, H * W)
         self.atmos_token_proj = nn.Linear(embed_dim, H * W)
+        self.climate_token_proj = nn.Linear(embed_dim, H * W)
         self.species_token_proj = nn.Linear(embed_dim, H * W)
-        self.species_distr_token_proj = nn.Linear(embed_dim, H * W)
+        self.vegetation_token_proj = nn.Linear(embed_dim, H * W)
         self.land_token_proj = nn.Linear(embed_dim, H * W)
         self.agriculture_token_proj = nn.Linear(embed_dim, H * W)
         self.forest_token_proj = nn.Linear(embed_dim, H * W)
+        self.misc_token_proj = nn.Linear(embed_dim, H * W)
 
         # total number of tokens needed for all variables
         total_tokens = (
             len(surface_vars)
-            + len(single_vars)
+            + len(edaphic_vars)
             + len(atmos_vars) * len(atmos_levels)
+            + len(climate_vars)
             + len(species_vars)
-            + len(species_distr_vars) * self.species_num
+            + len(vegetation_vars) 
             + len(land_vars)
             + len(agriculture_vars)
             + len(forest_vars)
+            + len(misc_vars)
         )
         print("Total latent tokens for Decoder: ", total_tokens)
 
@@ -321,13 +331,15 @@ class BFMDecoder(nn.Module):
         # counting the number of queries for Perceiver IO
         total_queries = (
             len(self.surface_vars)
-            + len(self.single_vars)
+            + len(self.edaphic_vars)
             + len(self.atmos_vars) * len(self.atmos_levels)
+            + len(self.climate_vars)
             + len(self.species_vars)
-            + len(self.species_distr_vars) * self.species_num
+            + len(self.vegetation_vars)
             + len(self.land_vars)
             + len(self.agriculture_vars)
             + len(self.forest_vars)
+            + len(self.misc_vars)
         )
         # the queries used to ask Perceiver IO for values of all variables (the main reason of the decoder flexibility in processing the embeddings lies in these)
         queries = torch.zeros(B, total_queries, D, device=x.device)
@@ -369,13 +381,13 @@ class BFMDecoder(nn.Module):
             output["surface_vars"] = {var: surf_output[:, i] for i, var in enumerate(self.surface_vars)}
             current_idx = next_idx
 
-        # single variables
-        if len(self.single_vars) > 0:
-            next_idx = current_idx + len(self.single_vars)
-            single_decoded = decoded[:, current_idx:next_idx]
-            single_output = self.single_token_proj(single_decoded)
-            single_output = single_output.view(B, len(self.single_vars), H, W)
-            output["single_vars"] = {var: single_output[:, i] for i, var in enumerate(self.single_vars)}
+        # edaphic variables
+        if len(self.edaphic_vars) > 0:
+            next_idx = current_idx + len(self.edaphic_vars)
+            edaphic_decoded = decoded[:, current_idx:next_idx]
+            edaphic_output = self.edaphic_token_proj(edaphic_decoded)
+            edaphic_output = edaphic_output.view(B, len(self.edaphic_vars), H, W)
+            output["edaphic_vars"] = {var: edaphic_output[:, i] for i, var in enumerate(self.edaphic_vars)}
             current_idx = next_idx
 
         # atmospheric variables
@@ -385,6 +397,15 @@ class BFMDecoder(nn.Module):
             atmos_output = self.atmos_token_proj(atmos_decoded)
             atmos_output = atmos_output.view(B, len(self.atmos_vars), len(self.atmos_levels), H, W)
             output["atmos_vars"] = {var: atmos_output[:, i] for i, var in enumerate(self.atmos_vars)}
+            current_idx = next_idx
+        
+        # climate variables
+        if len(self.climate_vars) > 0:
+            next_idx = current_idx + len(self.climate_vars)
+            climate_decoded = decoded[:, current_idx:next_idx]
+            climate_output = self.climate_token_proj(climate_decoded)
+            climate_output = climate_output.view(B, len(self.climate_vars), H, W)
+            output["climate_vars"] = {var: climate_output[:, i] for i, var in enumerate(self.climate_vars)}
             current_idx = next_idx
 
         # species variables
@@ -396,13 +417,13 @@ class BFMDecoder(nn.Module):
             output["species_vars"] = {var: species_output[:, i] for i, var in enumerate(self.species_vars)}
             current_idx = next_idx
 
-        # species distribution variables
-        if len(self.species_distr_vars) > 0:
-            next_idx = current_idx + len(self.species_distr_vars) * self.species_num
-            species_distr_decoded = decoded[:, current_idx:next_idx]
-            species_distr_output = self.species_distr_token_proj(species_distr_decoded)
-            species_distr_output = species_distr_output.view(B, len(self.species_distr_vars), self.species_num, H, W)
-            output["species_distr_vars"] = {var: species_distr_output[:, i] for i, var in enumerate(self.species_distr_vars)}
+        # vegetation variables
+        if len(self.vegetation_vars) > 0:
+            next_idx = current_idx + len(self.vegetation_vars)
+            vegetation_decoded = decoded[:, current_idx:next_idx]
+            vegetation_output = self.vegetation_token_proj(vegetation_decoded)
+            vegetation_output = vegetation_output.view(B, len(self.vegetation_vars), H, W)
+            output["vegetation_vars"] = {var: vegetation_output[:, i] for i, var in enumerate(self.vegetation_vars)}
             current_idx = next_idx
 
         # land variables
@@ -431,15 +452,25 @@ class BFMDecoder(nn.Module):
             forest_output = forest_output.view(B, len(self.forest_vars), H, W)
             output["forest_vars"] = {var: forest_output[:, i] for i, var in enumerate(self.forest_vars)}
 
+        # misc variables
+        if len(self.misc_vars) > 0:
+            next_idx = current_idx + len(self.misc_vars)
+            misc_decoded = decoded[:, current_idx:next_idx]
+            misc_output = self.misc_token_proj(misc_decoded)
+            misc_output = misc_output.view(B, len(self.misc_vars), H, W)
+            output["misc_vars"] = {var: misc_output[:, i] for i, var in enumerate(self.misc_vars)}
+
         output = {
             "surface_variables": output.pop("surface_vars"),
-            "single_variables": output.pop("single_vars"),
+            "edaphic_variables": output.pop("edaphic_vars"),
             "atmospheric_variables": output.pop("atmos_vars"),
-            "species_extinction_variables": output.pop("species_vars"),
+            "climate_variables": output.pop("climate_vars"),
+            "species_variables": output.pop("species_vars"),
+            "vegetation_variables": output.pop("vegetation_vars"),
             "land_variables": output.pop("land_vars"),
             "agriculture_variables": output.pop("agriculture_vars"),
             "forest_variables": output.pop("forest_vars"),
-            "species_variables": output.pop("species_distr_vars"),
+            "misc_variables": output.pop("misc_vars"),
         }
         return output
 

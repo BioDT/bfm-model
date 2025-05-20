@@ -7,8 +7,8 @@ model:
   V_land: 2 # Number of land variables
   V_agri: 4 # Number of agriculture variables
   V_forest: 1 # Number of forest variables
-  H: 152  # Height
-  W: 320  # Width
+  H: 160 #152  # Height
+  W: 280 #320  # Width
   num_latent_tokens: 8 #TODO Check consistensy in name and value
   backbone: "swin" # mvit
   patch_size: 4 # Size of spatial patches.
@@ -19,37 +19,40 @@ model:
 
 data:
   atmos_levels: [50, 500, 1000]
-  species_number: 22 # [0-22] available species
+  species_number: 1 # [0-22] available species
   # data_path: /projects/prjs1134/data/projects/biodt/storage/final_dataset/train
-  data_path: /home/thanasis.trantas/git_projects/bfm-model/data_small/2009_batches # hinton
+  data_path: /home/atrantas/bfm-model/data
+  # data_path: /home/thanasis.trantas/git_projects/bfm-model/data_small/2009_batches # hinton
   # test_data_path: /projects/prjs1134/data/projects/biodt/storage/final_dataset/test
-  test_data_path: /home/thanasis.trantas/git_projects/bfm-model/data_small/2009_batches # hinton
+  # test_data_path: /home/thanasis.trantas/git_projects/bfm-model/data_small/2009_batches # hinton
+  test_data_path: /home/atrantas/bfm-model/data
+  
   scaling:
-    enabled: True
-    stats_path: batch_statistics/statistics.json # #/projects/prjs1134/data/projects/biodt/storage/batches_2025_02_17/statistics.json # snellius
+    enabled: False
+    stats_path: /home/atrantas/bfm-model/batch_statistics/statistics.json #/projects/prjs1134/data/projects/biodt/storage/batches_2025_02_17/statistics.json # snellius
     # stats_path: /data/projects/biodt/storage/batches/statistics.json # hinton
     mode: normalize # normalize (mean and std), standardize (min-max)
 #TODO Checkpointing path: /scratch-shared/<username>
 
 training:
-  batch_size: 4
+  batch_size: 11
   workers: 15
-  epochs: 50
+  epochs: 10
   accelerator: cuda
   precision: bf16-mixed
   precision_in: "high" # ["medium", "high", "highest"] https://pytorch.org/docs/stable/generated/torch.set_float32_matmul_precision.html#torch.set_float32_matmul_precision
-  devices: [1]
+  devices: [0]
   strategy: fsdp #fsdp #ddp
   num_nodes: 1
   gradient_clip: 1.0
   log_steps: 1
-  lr: 0.00001  #5e-4
-  wd: 0.00001 #5e-6
-  checkpoint_path: /home/atrantas/bfm-model/outputs/2025-04-16/21-14-59/checkpoints/epoch=23-train_loss=0.02.ckpt #"/gpfs/home2/damian/projects/bfm-model/outputs"
+  lr: 0.01  #5e-4
+  wd: 0.0001 #5e-6
+  checkpoint_path: #/home/atrantas/bfm-model/outputs/2025-04-16/21-14-59/checkpoints/epoch=23-train_loss=0.02.ckpt #"/gpfs/home2/damian/projects/bfm-model/outputs"
   # resume_from_checkpoint: False
   checkpoint_every: 200
-  eval_every: 200
-  td_learning: True
+  eval_every: 20
+  td_learning: False
 
 general:
   do_eval: True

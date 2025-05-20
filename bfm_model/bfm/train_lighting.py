@@ -25,7 +25,7 @@ import hydra
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import OmegaConf
 
-from bfm_model.bfm.dataloder import LargeClimateDataset, custom_collate
+from bfm_model.bfm.dataloader_monthly import LargeClimateDataset, custom_collate
 from bfm_model.bfm.decoder import BFMDecoder
 from bfm_model.bfm.encoder import BFMEncoder
 from bfm_model.mvit.mvit_model import MViT
@@ -93,17 +93,19 @@ class BFM_lighting(LightningModule):
         decoder (BFMDecoder): Decoder component
         backbone_type (str): Type of backbone being used
     """
-
+    
     def __init__(
         self,
         surface_vars: tuple[str, ...],
-        single_vars: tuple[str, ...],
+        edaphic_vars: tuple[str, ...],
         atmos_vars: tuple[str, ...],
+        climate_vars: tuple[str, ...],
         species_vars: tuple[str, ...],
-        species_distr_vars: tuple[str, ...],
+        vegetation_vars: tuple[str, ...],
         land_vars: tuple[str, ...],
         agriculture_vars: tuple[str, ...],
         forest_vars: tuple[str, ...],
+        misc_vars: tuple[str, ...],
         atmos_levels: list[int],
         species_num: int,
         H: int = 32,
@@ -134,6 +136,18 @@ class BFM_lighting(LightningModule):
         self.total_steps = total_steps
         self.td_learning = td_learning
 
+        # TODO ADD MORE: 
+        # "surface_variables",
+        # "edaphic_variables",
+        # "atmospheric_variables",
+        # "climate_variables",
+        # "species_variables",
+        # "vegetation_variables",
+        # "land_variables",
+        # "agriculture_variables",
+        # "forest_variables",
+        # "misc_variables" 
+
         self.variable_weights = {
             "surface_variables": {
                 "t2m": 1.7,
@@ -156,13 +170,15 @@ class BFM_lighting(LightningModule):
 
         self.encoder = BFMEncoder(
             surface_vars=surface_vars,
-            single_vars=single_vars,
+            edaphic_vars=edaphic_vars,
             atmos_vars=atmos_vars,
+            climate_vars=climate_vars,
             species_vars=species_vars,
-            species_distr_vars=species_distr_vars,
+            vegetation_vars=vegetation_vars,
             land_vars=land_vars,
             agriculture_vars=agriculture_vars,
             forest_vars=forest_vars,
+            misc_vars=misc_vars,
             atmos_levels=atmos_levels,
             species_num=species_num,
             H=H,
@@ -184,7 +200,7 @@ class BFM_lighting(LightningModule):
                 encoder_num_heads=(8, 16),
                 decoder_depths=(2, 2),
                 decoder_num_heads=(32, 16),
-                window_size=(1, 1, 2),
+                window_size=(1, 1, 1),
                 mlp_ratio=4.0,
                 qkv_bias=True,
                 drop_rate=0.0,
@@ -217,15 +233,18 @@ class BFM_lighting(LightningModule):
             raise ValueError(f"Unknown backbone type: {backbone_type}")
 
         self.backbone_type = backbone_type
+
         self.decoder = BFMDecoder(
             surface_vars=surface_vars,
-            single_vars=single_vars,
+            edaphic_vars=edaphic_vars,
             atmos_vars=atmos_vars,
+            climate_vars=climate_vars,
             species_vars=species_vars,
-            species_distr_vars=species_distr_vars,
+            vegetation_vars=vegetation_vars,
             land_vars=land_vars,
             agriculture_vars=agriculture_vars,
             forest_vars=forest_vars,
+            misc_vars=misc_vars,
             atmos_levels=atmos_levels,
             species_num=species_num,
             H=H,
@@ -318,23 +337,27 @@ class BFM_lighting(LightningModule):
 
         groups = [
             "surface_variables",
-            "single_variables",
+            "edaphic_variables",
             "atmospheric_variables",
-            "species_extinction_variables",
+            "climate_variables",
+            "species_variables",
+            "vegetation_variables",
             "land_variables",
             "agriculture_variables",
             "forest_variables",
-            "species_variables",
+            "misc_variables",
+            
         ]
 
         for group_name in groups:
+            # print(f"Loss calc for {group_name}")
             # If group doesn't exist in output or batch, skip
             if group_name not in output or group_name not in batch._asdict():
                 continue
 
             pred_dict = output[group_name]
             true_dict = getattr(batch, group_name)
-
+            # print("true dict", true_dict)
             group_loss = 0.0
             var_count = 0
             # x = 1, 2
@@ -346,6 +369,7 @@ class BFM_lighting(LightningModule):
                     continue
                 gt_tensor = true_dict[var_name]
 
+                # print(f"Var loss compute {var_name} and shape {gt_tensor.shape}")
                 if self.td_learning:
                     time0 = gt_tensor[:, 0]
                     time1 = gt_tensor[:, 1]
@@ -355,7 +379,7 @@ class BFM_lighting(LightningModule):
 
                     loss_var = torch.mean(torch.abs(pred_diff - true_diff))
                 else:
-                    time1 = gt_tensor[:, 1]
+                    time1 = gt_tensor[:, 0]
                     loss_var = torch.mean(torch.abs(pred_tensor - time1))
 
                 # Determine the weight for this variable.
@@ -451,11 +475,11 @@ def main(cfg):
     output_dir = HydraConfig.get().runtime.output_dir
     print(f"Output directory: {output_dir}")
     dataset = LargeClimateDataset(
-        data_dir=cfg.data.data_path, scaling_settings=cfg.data.scaling, num_species=cfg.data.species_number
-    )
+        data_dir=cfg.data.data_path, scaling_settings=cfg.data.scaling, \
+            num_species=cfg.data.species_number, atmos_levels=cfg.data.atmos_levels)
     test_dataset = LargeClimateDataset(
-        data_dir=cfg.data.test_data_path, scaling_settings=cfg.data.scaling, num_species=cfg.data.species_number
-    )
+        data_dir=cfg.data.test_data_path, scaling_settings=cfg.data.scaling, \
+            num_species=cfg.data.species_number, atmos_levels=cfg.data.atmos_levels)
 
     val_dataloader = DataLoader(
         test_dataset,
@@ -497,14 +521,21 @@ def main(cfg):
 
     print("Done \n Setting up the BFM")
     BFM = BFM_lighting(
-        surface_vars=(["t2m", "msl"]),
-        single_vars=(["lsm"]),
-        atmos_vars=(["z", "t"]),
-        species_vars=(["ExtinctionValue"]),
-        species_distr_vars=(["Distribution"]),
-        land_vars=(["Land", "NDVI"]),
-        agriculture_vars=(["AgricultureLand", "AgricultureIrrLand", "ArableLand", "Cropland"]),
+        surface_vars=(["t2m", "msl", "slt", "z", "u10", "v10", "lsm"]),
+        edaphic_vars=(["swvl1", "swvl2", "stl1", "stl2"]),
+        atmos_vars=(["z", "t", "u", "v", "q"]),
+        climate_vars=(["sml", "tp", "csfr", "avg_sdswrf", "avg_snswrf",
+                       "avg_snlwrf", "avg_tprate", "avg_sdswrfcs", "sd", "t2m", "d2m"]),
+        species_vars=(["1340361", "1340503", "1536449", "1898286", "1920506", "2430567",
+                       "2431885", "2433433", "2434779", "2435240", "2435261", "2437394",
+                       "2441454", "2473958", "2491534", "2891770", "3034825", "4408498",
+                        "5218786", "5219073", "5219173", "5219219", "5844449", "8002952",
+                        "8077224", "8894817", "8909809", "9809229"]),
+        vegetation_vars=(["NDVI"]),
+        land_vars=(["Land"]),
+        agriculture_vars=(["Agriculture", "Arable", "Cropland"]),
         forest_vars=(["Forest"]),
+        misc_vars=(["avg_slhtf", "avg_pevr"]),
         atmos_levels=cfg.data.atmos_levels,
         species_num=cfg.data.species_number,
         H=cfg.model.H,
@@ -561,7 +592,7 @@ def main(cfg):
         accelerator=cfg.training.accelerator,
         devices=cfg.training.devices,
         precision=cfg.training.precision,
-        strategy=distr_strategy,
+        # strategy=distr_strategy,
         num_nodes=cfg.training.num_nodes,
         log_every_n_steps=cfg.training.log_steps,
         logger=mlf_logger,  # Only the rank 0 process will have a logger
