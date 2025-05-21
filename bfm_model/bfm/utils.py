@@ -161,7 +161,7 @@ def compute_next_timestamp(old_time_str, hours=6):
     """
     from datetime import datetime, timedelta
     #           "%Y-%m-%dT%H:%M:%S"
-    dt_format = "%Y-%m-%dT%H:%M:%S"
+    dt_format = "%Y-%m-%d %H:%M:%S"
     # print("old_dt", old_time_str)
     if isinstance(old_time_str, (tuple, list)):
         old_time_str = old_time_str[0]
@@ -176,13 +176,15 @@ def inspect_batch_shapes_namedtuple(
     batch_obj,
     group_names=[
         "surface_variables",
-        "single_variables",
+        "edaphic_variables",
         "atmospheric_variables",
-        "species_extinction_variables",
+        "climate_variables",
+        "species_variables",
+        "vegetation_variables",
         "land_variables",
         "agriculture_variables",
         "forest_variables",
-        "species_variables",
+        "misc_variables"
     ],
 ):
     """

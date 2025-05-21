@@ -240,7 +240,10 @@ class LargeClimateDataset(Dataset):
         print(f"We scale the dataset {scaling_settings.enabled} with {scaling_settings.mode}")
 
     def __len__(self):
-        return max(0, len(self.files) - 1)
+        if self.mode == "pretrain":
+            return max(0, len(self.files) - 1)
+        else:
+            return len(self.files)
 
     def load_and_process_files(self, fpath: str):
         data = torch.load(fpath, map_location="cpu", weights_only=False)
@@ -322,8 +325,8 @@ class LargeClimateDataset(Dataset):
 
     def __getitem__(self, idx):
         fpath_x = self.files[idx]
-        fpath_y = self.files[idx + 1]
         if self.mode == "pretrain":
+            fpath_y = self.files[idx + 1]
             x = self.load_and_process_files(fpath_x)
             y = self.load_and_process_files(fpath_y)
             return x, y
@@ -560,13 +563,15 @@ def detach_batch(batch: Batch) -> Batch:
     return Batch(
         batch_metadata=new_md,
         surface_variables=_detach_and_clone(batch.surface_variables),
-        single_variables=_detach_and_clone(batch.single_variables),
-        species_variables=_detach_and_clone(batch.species_variables),
+        edaphic_variables=_detach_and_clone(batch.edaphic_variables),
         atmospheric_variables=_detach_and_clone(batch.atmospheric_variables),
-        species_extinction_variables=_detach_and_clone(batch.species_extinction_variables),
+        climate_variables=_detach_and_clone(batch.climate_variables),
+        species_variables=_detach_and_clone(batch.species_variables),
+        vegetation_variables=_detach_and_clone(batch.vegetation_variables),
         land_variables=_detach_and_clone(batch.land_variables),
         agriculture_variables=_detach_and_clone(batch.agriculture_variables),
         forest_variables=_detach_and_clone(batch.forest_variables),
+        misc_variables=_detach_and_clone(batch.misc_variables)
     )
 
 
@@ -592,14 +597,16 @@ def detach_graph_batch(batch: Batch) -> Batch:
 
     return Batch(
         batch_metadata=new_md,
-        surface_variables=det_grp(batch.surface_variables),
-        single_variables=det_grp(batch.single_variables),
-        species_variables=det_grp(batch.species_variables),
-        atmospheric_variables=det_grp(batch.atmospheric_variables),
-        species_extinction_variables=det_grp(batch.species_extinction_variables),
-        land_variables=det_grp(batch.land_variables),
-        agriculture_variables=det_grp(batch.agriculture_variables),
-        forest_variables=det_grp(batch.forest_variables),
+        surface_variables=_detach_and_clone(batch.surface_variables),
+        edaphic_variables=_detach_and_clone(batch.edaphic_variables),
+        atmospheric_variables=_detach_and_clone(batch.atmospheric_variables),
+        climate_variables=_detach_and_clone(data.climate_variables),
+        species_variables=_detach_and_clone(batch.species_variables),
+        vegetation_variables=_detach_and_clone(batch.vegetation_variables),
+        land_variables=_detach_and_clone(batch.land_variables),
+        agriculture_variables=_detach_and_clone(batch.agriculture_variables),
+        forest_variables=_detach_and_clone(batch.forest_variables),
+        misc_variables=_detach_and_clone(data.misc_variables)
     )
 
 

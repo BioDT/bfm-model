@@ -15,7 +15,7 @@ from lightning.pytorch.loggers import MLFlowLogger
 from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader
 
-from bfm_model.bfm.dataloder import LargeClimateDataset, custom_collate, detach_batch, detach_output_dict
+from bfm_model.bfm.dataloader_monthly import LargeClimateDataset, custom_collate, detach_batch, detach_output_dict
 from bfm_model.bfm.train_lighting import BFM_lighting
 from bfm_model.bfm.decoder import BFMDecoder
 from bfm_model.bfm.encoder import BFMEncoder
@@ -26,13 +26,15 @@ class BFM_lighting(LightningModule):
     def __init__(
         self,
         surface_vars: tuple[str, ...],
-        single_vars: tuple[str, ...],
+        edaphic_vars: tuple[str, ...],
         atmos_vars: tuple[str, ...],
+        climate_vars: tuple[str, ...],
         species_vars: tuple[str, ...],
-        species_distr_vars: tuple[str, ...],
+        vegetation_vars: tuple[str, ...],
         land_vars: tuple[str, ...],
         agriculture_vars: tuple[str, ...],
         forest_vars: tuple[str, ...],
+        misc_vars: tuple[str, ...],
         atmos_levels: list[int],
         species_num: int,
         H: int = 32,
@@ -50,7 +52,7 @@ class BFM_lighting(LightningModule):
         warmup_steps: int = 1000,
         total_steps: int = 20000,
         td_learning: bool = True,
-        lead_time: float = 6.0,
+        lead_time: int = 30,
         **kwargs,
     ):
         super().__init__()
@@ -67,13 +69,15 @@ class BFM_lighting(LightningModule):
 
         self.encoder = BFMEncoder(
             surface_vars=surface_vars,
-            single_vars=single_vars,
+            edaphic_vars=edaphic_vars,
             atmos_vars=atmos_vars,
+            climate_vars=climate_vars,
             species_vars=species_vars,
-            species_distr_vars=species_distr_vars,
+            vegetation_vars=vegetation_vars,
             land_vars=land_vars,
             agriculture_vars=agriculture_vars,
             forest_vars=forest_vars,
+            misc_vars=misc_vars,
             atmos_levels=atmos_levels,
             species_num=species_num,
             H=H,
@@ -95,7 +99,7 @@ class BFM_lighting(LightningModule):
                 encoder_num_heads=(8, 16),
                 decoder_depths=(2, 2),
                 decoder_num_heads=(32, 16),
-                window_size=(1, 1, 2),
+                window_size=(1, 1, 1),
                 mlp_ratio=4.0,
                 qkv_bias=True,
                 drop_rate=0.0,
@@ -129,13 +133,15 @@ class BFM_lighting(LightningModule):
         self.backbone_type = backbone_type
         self.decoder = BFMDecoder(
             surface_vars=surface_vars,
-            single_vars=single_vars,
+            edaphic_vars=edaphic_vars,
             atmos_vars=atmos_vars,
+            climate_vars=climate_vars,
             species_vars=species_vars,
-            species_distr_vars=species_distr_vars,
+            vegetation_vars=vegetation_vars,
             land_vars=land_vars,
             agriculture_vars=agriculture_vars,
             forest_vars=forest_vars,
+            misc_vars=misc_vars,
             atmos_levels=atmos_levels,
             species_num=species_num,
             H=H,
@@ -147,14 +153,6 @@ class BFM_lighting(LightningModule):
             depth=depth,
             **kwargs,
         )
-
-        # Freeze pretrained parts.
-        for param in self.encoder.parameters():
-            param.requires_grad = True
-        for param in self.backbone.parameters():
-            param.requires_grad = True
-        for param in self.decoder.parameters():
-            param.requires_grad = True
 
     def forward(self, batch, lead_time=timedelta(hours=6.0), batch_size: int = 1):
         encoded = self.encoder(batch, lead_time, batch_size)
@@ -218,8 +216,8 @@ def main(cfg: DictConfig):
     # Load the Test Dataset
     print("Setting up Dataloader ...")
     test_dataset = LargeClimateDataset(
-        data_dir=cfg.evaluation.test_data, scaling_settings=cfg.data.scaling, num_species=cfg.data.species_number
-    )  # Adapt
+        data_dir=cfg.evaluation.test_data, scaling_settings=cfg.data.scaling, 
+        num_species=cfg.data.species_number, atmos_levels=cfg.data.atmos_levels)  # Adapt
     print("Reading test data from :", cfg.evaluation.test_data)
     test_dataloader = DataLoader(
         test_dataset,
@@ -255,14 +253,21 @@ def main(cfg: DictConfig):
     )
 
     bfm_model = BFM_lighting(
-        surface_vars=(["t2m", "msl"]),
-        single_vars=(["lsm"]),
-        atmos_vars=(["z", "t"]),
-        species_vars=(["ExtinctionValue"]),
-        species_distr_vars=(["Distribution"]),
-        land_vars=(["Land", "NDVI"]),
-        agriculture_vars=(["AgricultureLand", "AgricultureIrrLand", "ArableLand", "Cropland"]),
+        surface_vars=(["t2m", "msl", "slt", "z", "u10", "v10", "lsm"]),
+        edaphic_vars=(["swvl1", "swvl2", "stl1", "stl2"]),
+        atmos_vars=(["z", "t", "u", "v", "q"]),
+        climate_vars=(["smlt", "tp", "csfr", "avg_sdswrf", "avg_snswrf",
+                       "avg_snlwrf", "avg_tprate", "avg_sdswrfcs", "sd", "t2m", "d2m"]),
+        species_vars=(["1340361", "1340503", "1536449", "1898286", "1920506", "2430567",
+                       "2431885", "2433433", "2434779", "2435240", "2435261", "2437394",
+                       "2441454", "2473958", "2491534", "2891770", "3034825", "4408498",
+                        "5218786", "5219073", "5219173", "5219219", "5844449", "8002952",
+                        "8077224", "8894817", "8909809", "9809229"]),
+        vegetation_vars=(["NDVI"]),
+        land_vars=(["Land"]),
+        agriculture_vars=(["Agriculture", "Arable", "Cropland"]),
         forest_vars=(["Forest"]),
+        misc_vars=(["avg_slhtf", "avg_pevr"]),
         atmos_levels=cfg.data.atmos_levels,
         species_num=cfg.data.species_number,
         H=cfg.model.H,
@@ -285,7 +290,7 @@ def main(cfg: DictConfig):
     predictions = trainer.predict(model=bfm_model, ckpt_path=checkpoint_path, dataloaders=test_dataloader)
     print("=== Test Results ===")
     # print(test_results)
-    # print(predictions)
+    print(predictions)
     # predictions_unscaled = test_dataset.scale_batch(predictions, direction="original")
     # print(predictions_unscaled)
 

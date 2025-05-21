@@ -34,7 +34,7 @@ Example usage:
 """
 
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Literal
 
 import torch
@@ -85,43 +85,97 @@ class BFM(nn.Module):
     def __init__(
         self,
         surface_vars: tuple[str, ...],
-        single_vars: tuple[str, ...],
+        edaphic_vars: tuple[str, ...],
         atmos_vars: tuple[str, ...],
+        climate_vars: tuple[str, ...],
         species_vars: tuple[str, ...],
-        species_distr_vars: tuple[str, ...],
+        vegetation_vars: tuple[str, ...],
         land_vars: tuple[str, ...],
         agriculture_vars: tuple[str, ...],
         forest_vars: tuple[str, ...],
+        misc_vars: tuple[str, ...],
         atmos_levels: list[int],
         species_num: int,
         H: int = 32,
         W: int = 64,
-        embed_dim: int = 1024,
         num_latent_tokens: int = 8,
         backbone_type: Literal["swin", "mvit"] = "mvit",
         patch_size: int = 4,
+        embed_dim: int = 1024,
+        num_heads: int = 16,
+        head_dim: int = 2,
+        depth: int = 2,
+        learning_rate: float = 5e-4,
+        weight_decay: float = 5e-6,
+        batch_size: int = 1,
+        warmup_steps: int = 1000,
+        total_steps: int = 20000,
+        td_learning: bool = True,
         **kwargs,
     ):
         super().__init__()
         self.H = H
         self.W = W
 
+        self.learning_rate = learning_rate
+        self.weight_decay = weight_decay
+        self.batch_size = batch_size
+        self.warmup_steps = warmup_steps
+        self.total_steps = total_steps
+        self.td_learning = td_learning
+
+        # TODO ADD MORE:
+        # "surface_variables",
+        # "edaphic_variables",
+        # "atmospheric_variables",
+        # "climate_variables",
+        # "species_variables",
+        # "vegetation_variables",
+        # "land_variables",
+        # "agriculture_variables",
+        # "forest_variables",
+        # "misc_variables"
+
+        self.variable_weights = {
+            "surface_variables": {
+                "t2m": 1.7,
+                "msl": 1.5,
+                # ... add more if surface has more
+            },
+            "single_variables": {"lsm": 1.32},
+            "atmospheric_variables": {"z": 0.46, "t": 1.2},
+            "species_extinction_variables": {"ExtinctionValue": 1.43},
+            "land_variables": {"Land": 0.8, "NDVI": 1.48},
+            "agriculture_variables": {
+                "AgricultureLand": 1.4,
+                "AgricultureIrrLand": 1.22,
+                "ArableLand": 1.38,
+                "Cropland": 1.51,
+            },
+            "forest_variables": {"Forest": 1.38},
+            "species_variables": {"Distribution": 1.0},
+        }
+
         self.encoder = BFMEncoder(
             surface_vars=surface_vars,
-            single_vars=single_vars,
+            edaphic_vars=edaphic_vars,
             atmos_vars=atmos_vars,
+            climate_vars=climate_vars,
             species_vars=species_vars,
-            species_distr_vars=species_distr_vars,
+            vegetation_vars=vegetation_vars,
             land_vars=land_vars,
             agriculture_vars=agriculture_vars,
             forest_vars=forest_vars,
+            misc_vars=misc_vars,
             atmos_levels=atmos_levels,
             species_num=species_num,
-            # patch_size=kwargs.get("patch_size", 4),
-            patch_size=patch_size,
-            embed_dim=embed_dim,
             H=H,
             W=W,
+            patch_size=patch_size,
+            embed_dim=embed_dim,
+            num_heads=num_heads,
+            head_dim=head_dim,
+            depth=depth,
             **kwargs,
         )
 
@@ -134,7 +188,7 @@ class BFM(nn.Module):
                 encoder_num_heads=(8, 16),
                 decoder_depths=(2, 2),
                 decoder_num_heads=(32, 16),
-                window_size=(1, 1, 2),
+                window_size=(1, 1, 1),
                 mlp_ratio=4.0,
                 qkv_bias=True,
                 drop_rate=0.0,
@@ -167,24 +221,31 @@ class BFM(nn.Module):
             raise ValueError(f"Unknown backbone type: {backbone_type}")
 
         self.backbone_type = backbone_type
+
         self.decoder = BFMDecoder(
             surface_vars=surface_vars,
-            single_vars=single_vars,
+            edaphic_vars=edaphic_vars,
             atmos_vars=atmos_vars,
+            climate_vars=climate_vars,
             species_vars=species_vars,
-            species_distr_vars=species_distr_vars,
+            vegetation_vars=vegetation_vars,
             land_vars=land_vars,
             agriculture_vars=agriculture_vars,
             forest_vars=forest_vars,
+            misc_vars=misc_vars,
             atmos_levels=atmos_levels,
             species_num=species_num,
             H=H,
             W=W,
+            patch_size=patch_size,
             embed_dim=embed_dim,
+            num_heads=num_heads,
+            head_dim=head_dim,
+            depth=depth,
             **kwargs,
         )
 
-    def forward(self, batch, lead_time, batch_size):
+    def forward(self, batch, lead_time=timedelta(hours=6), batch_size: int = 1):
         """
         Forward pass of the model.
 
@@ -197,7 +258,6 @@ class BFM(nn.Module):
 
         """
         # print(f"BFM batch size: {batch_size}")
-        ### V1
         encoded = self.encoder(batch, lead_time, batch_size)
         # print("Encoded shape", encoded.shape)
 
@@ -225,131 +285,6 @@ class BFM(nn.Module):
         output = self.decoder(backbone_output, batch, lead_time)
         # print("Decoded output:", output)
         return output
-
-        # 1) Encode input: shape [B_local, L_total, E]
-
-        ### V2
-        # encoded = self.encoder(batch, lead_time)
-        # B_local, L_total, E = encoded.shape
-
-        # # 2) Calculate number of patches in 2D
-        # num_patches_h = self.H // self.encoder.patch_size
-        # num_patches_w = self.W // self.encoder.patch_size
-        # patches_per_sample = num_patches_h * num_patches_w
-
-        # # ----------------------------------------------------------------
-        # # 3) Fix: Derive "depth" from tokens-per-sample
-        # #    We assume each sample is split into depth * patches_per_sample tokens.
-        # # ----------------------------------------------------------------
-        # if L_total % B_local != 0:
-        #     raise ValueError(
-        #         f"Encoded tokens ({L_total}) not divisible by local batch size ({B_local}). "
-        #         "Check your encoder or batch size setup."
-        #     )
-
-        # tokens_per_sample = L_total // B_local
-        # if tokens_per_sample % patches_per_sample != 0:
-        #     raise ValueError(
-        #         f"tokens_per_sample ({tokens_per_sample}) not divisible by patch count ({patches_per_sample}). "
-        #         "Check your patch size or encoder output."
-        #     )
-
-        # depth = tokens_per_sample // patches_per_sample
-
-        # print(
-        #     f"BFM depth: {depth} | patch_size {self.encoder.patch_shape} | "
-        #     f"encoder shape {encoded.shape}"
-        # )
-        # patch_shape = (depth, num_patches_h, num_patches_w)
-
-        #########################################
-        ####### V3
-        # ---------------------------------------------------
-        # Step 1: local encoding
-        # ---------------------------------------------------
-        # encoded_local = self.encoder(batch, lead_time)  # [B_local, L_local, E]
-        # B_local, L_local, E = encoded_local.shape
-        # rank = dist.get_rank() if dist.is_initialized() else 0
-
-        # # ---------------------------------------------------
-        # # Step 2: gather all local encodings => global
-        # # ---------------------------------------------------
-        # global_encoded = self._all_gather_encoded_simple(encoded_local)
-        # B_global, L_global, E = global_encoded.shape
-        # print(f"[Rank {rank}] global_encoded shape={global_encoded.shape}")
-
-        # # ---------------------------------------------------
-        # # Step 3: compute patch shape from the global dims
-        # # ---------------------------------------------------
-        # # Suppose each sample has an image of shape (H, W).
-        # # We do a 2D patching: h = H//patch_size, w = W//patch_size
-        # num_patches_h = self.H // self.encoder.patch_size
-        # num_patches_w = self.W // self.encoder.patch_size
-        # patches_per_sample = num_patches_h * num_patches_w
-
-        # # tokens_per_sample = L_global // B_global
-        # # If we assume each sample is identical in size, do:
-        # if (L_global % B_global) != 0:
-        #     raise ValueError(
-        #         f"L_global={L_global} not divisible by B_global={B_global}. "
-        #         "Check if your data is truly one-sample or multiple-sample."
-        #     )
-        # tokens_per_sample = L_global // B_global
-
-        # # Now, depth is how many tokens remain after accounting for (num_patches_h * num_patches_w)
-        # if (tokens_per_sample % patches_per_sample) != 0:
-        #     raise ValueError(
-        #         f"tokens_per_sample={tokens_per_sample} not divisible by "
-        #         f"patches_per_sample={patches_per_sample}. Adjust patch size or data."
-        #     )
-        # depth = tokens_per_sample // patches_per_sample
-
-        # patch_shape = (depth, num_patches_h, num_patches_w)
-        # print(f"[Rank {rank}] Computed patch_shape={patch_shape}, depth={depth}")
-
-        # #TODO Test this
-        # if self.backbone_type == "mvit":
-        #     encoded = encoded.view(encoded.size(0), -1, self.encoder.embed_dim)
-        #     print(f"Reshaped encoded for MViT: {encoded.shape}")
-
-        # backbone_output = self.backbone(global_encoded, lead_time=lead_time, rollout_step=0, patch_shape=patch_shape)
-
-        # # decode
-        # output = self.decoder(backbone_output, batch, lead_time)
-
-        # ### V4
-        #     # 1) Locally encode: shape [B_local, L_local, E]
-        # encoded_local = self.encoder(batch, lead_time)
-
-        # # 2) If you have a single sample split by tokens, gather along dim=1
-        # global_encoded = self._all_gather_tokens(encoded_local)
-        # B_local, L_global, E = global_encoded.shape
-        # # => B_local is the same as before, L_global = world_size * L_local
-
-        # # 3) If you truly have only 1 local sample per rank => B_local=1
-        # #    Then total "batch" is still 1.
-        # #    So you can do: B_global = B_local (which might be 1)
-        # #    tokens_per_sample = L_global // B_global = L_global
-        # B_global = B_local  # e.g. 1
-        # tokens_per_sample = L_global // B_global  # e.g. L_global
-
-        # # 4) Now tokens_per_sample should be 27360 if 2 ranks each had 13680 tokens
-        # #    Then patches_per_sample = (H//patch_size) * (W//patch_size) = 3040
-        # #    depth = tokens_per_sample // patches_per_sample = 27360 // 3040 = 9
-        # patches_per_sample = (self.H // self.encoder.patch_size) * (self.W // self.encoder.patch_size)
-        # if tokens_per_sample % patches_per_sample != 0:
-        #     raise ValueError(
-        #         f"tokens_per_sample={tokens_per_sample} not divisible by patches_per_sample={patches_per_sample}"
-        #     )
-        # depth = tokens_per_sample // patches_per_sample
-
-        # # 5) Patch shape
-        # patch_shape = (depth, self.H // self.encoder.patch_size, self.W // self.encoder.patch_size)
-
-        # # 6) Pass to backbone
-        # backbone_output = self.backbone(global_encoded, lead_time=lead_time, rollout_step=0, patch_shape=patch_shape)
-        # output = self.decoder(backbone_output, batch, lead_time)
-        # return output
 
     def _all_gather_tokens(self, encoded_local: torch.Tensor) -> torch.Tensor:
         """
