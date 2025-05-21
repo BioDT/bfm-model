@@ -7,9 +7,8 @@ if [[ $HOSTNAME =~ "snellius" ]]; then
 fi
 
 # default venv name is venv
-venv_path="${1:-venv}"
+VENV_PATH="${1:-venv}"
 
-VENV_PATH=.venv
 if test -d $VENV_PATH; then
     echo "venv: $VENV_PATH already exists, using it"
 else
@@ -18,11 +17,10 @@ else
     python3 -m venv $VENV_PATH
 fi
 
-source $venv_path/bin/activate
+source $VENV_PATH/bin/activate
 
 pip install -U pip setuptools wheel poetry
 
-# pip install -e .
 poetry install
 
 # OPTIONAL: For CUDA capable machines
