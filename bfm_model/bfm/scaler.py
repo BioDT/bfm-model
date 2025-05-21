@@ -1,6 +1,7 @@
 """
 Copyright (C) 2025 TNO, The Netherlands. All rights reserved.
 """
+
 import json
 from typing import List, Literal
 
@@ -24,13 +25,13 @@ dimensions_to_keep_by_key = {
 def _rescale_recursive(
     obj: dict,
     stats: dict,
-    dimensions_to_keep_by_key: dict | list,
+    dimensions_to_keep_by_key: dict | list = {},
     prefix: List[str] = [],
     mode: Literal["standardize", "normalize"] = "normalize",
     direction: Literal["original", "scaled"] = "scaled",
 ):
     if isinstance(obj, torch.Tensor):
-        # print("current_key", current_key)
+        # print("prefix", prefix)
         if stats:
             # print(f"stats: {format_prefix(prefix)}", stats, dimensions_to_keep_by_key)
             mean_val = stats["mean"]
@@ -81,13 +82,18 @@ def _rescale_recursive(
                         res = torch.add(obj / (max_val - min_val), min_val)
             return res
         else:
-            # print(f"RESCALE cfg not found: current_key: {format_prefix(prefix)}")
+            print(f"RESCALE cfg not found: current_key: {format_prefix(prefix)}")
             pass
     elif isinstance(obj, dict):
         for k, v in obj.items():
             if k not in ["batch_metadata", "metadata"]:
                 obj[k] = _rescale_recursive(
-                    v, stats.get(k, {}), dimensions_to_keep_by_key.get(k, {}), prefix=prefix + [k], mode=mode, direction=direction
+                    v,
+                    stats.get(str(k), {}),
+                    dimensions_to_keep_by_key.get(str(k), {}),
+                    prefix=prefix + [k],
+                    mode=mode,
+                    direction=direction,
                 )
         return obj
     else:
@@ -96,7 +102,7 @@ def _rescale_recursive(
 
 
 def format_prefix(prefix: List[str]) -> str:
-    return ".".join(prefix)
+    return ".".join([str(el) for el in prefix])
 
 
 def visit_obj(obj, prefix: List[str] = []):
@@ -188,3 +194,13 @@ def load_stats(path: str):
 # splitted = torch.chunk(tensor, chunks=shape_on_splitted_dimension, dim=dimension_to_keep)
 # splitted_changed = [splitted[i] * standardization_cfg["std"][i] + standardization_cfg["mean"][i] for i in range(shape_on_splitted_dimension)]
 # res = torch.cat(splitted_changed, dim=dimension_to_keep)
+
+# monthly batches
+# batches_path = "/projects/prjs1134/data/projects/biodt/storage/monthly_batches"
+# fpath = f"{batches_path}/batches/batch_2000-01-01_to_2000-02-01.pt"
+# standardization_path = f"{batches_path}/statistics/monthly_batches_stats.json"
+# standardization_stats = load_stats(standardization_path)
+# batch_data = torch.load(fpath, map_location="cpu", weights_only=True)
+# visit_obj(batch_data["species_variables"])
+# _ = _rescale_recursive(batch_data, standardization_stats, dimensions_to_keep_by_key={}, mode="standardize", direction="original")
+# visit_obj(batch_data["species_variables"])

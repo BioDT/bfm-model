@@ -1,35 +1,38 @@
 """
 Copyright (C) 2025 TNO, The Netherlands. All rights reserved.
 """
-import os 
+
 import math
+import os
 from datetime import datetime, timedelta
-from typing import Literal
 from functools import partial
+from typing import Literal
 
-import torch
-from torch.distributed.fsdp.wrap import size_based_auto_wrap_policy
-from torch.utils.data import DataLoader
-import torch.distributed as dist
-from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import checkpoint_wrapper, apply_activation_checkpointing
-
+import hydra
 import lightning as L
+import torch
+import torch.distributed as dist
+from hydra.core.hydra_config import HydraConfig
 from lightning.pytorch import LightningModule, seed_everything
 from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import MLFlowLogger
+from lightning.pytorch.plugins.environments import ClusterEnvironment
 from lightning.pytorch.strategies import DDPStrategy, FSDPStrategy
 from lightning.pytorch.utilities.model_summary import ModelSummary
-from lightning.pytorch.plugins.environments import ClusterEnvironment
-
-import hydra
-from hydra.core.hydra_config import HydraConfig
 from omegaconf import OmegaConf
+from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
+    apply_activation_checkpointing,
+    checkpoint_wrapper,
+)
+from torch.distributed.fsdp.wrap import size_based_auto_wrap_policy
+from torch.utils.data import DataLoader
 
 from bfm_model.bfm.dataloader_monthly import LargeClimateDataset, custom_collate
 from bfm_model.bfm.decoder import BFMDecoder
 from bfm_model.bfm.encoder import BFMEncoder
 from bfm_model.mvit.mvit_model import MViT
 from bfm_model.swin_transformer.core.swim_core_v2 import Swin3DTransformer
+
 
 def activation_ckpt_policy(module):
     return isinstance(module, (Swin3DTransformer, MViT))
@@ -58,7 +61,8 @@ class MyClusterEnvironment(ClusterEnvironment):
 
     def main_port(self) -> int:
         return int(os.environ["MASTER_PORT"])
-    
+
+
 class BFM_lighting(LightningModule):
     """
     Biodiversity Foundation Model.
@@ -93,7 +97,7 @@ class BFM_lighting(LightningModule):
         decoder (BFMDecoder): Decoder component
         backbone_type (str): Type of backbone being used
     """
-    
+
     def __init__(
         self,
         surface_vars: tuple[str, ...],
@@ -136,7 +140,7 @@ class BFM_lighting(LightningModule):
         self.total_steps = total_steps
         self.td_learning = td_learning
 
-        # TODO ADD MORE: 
+        # TODO ADD MORE:
         # "surface_variables",
         # "edaphic_variables",
         # "atmospheric_variables",
@@ -146,7 +150,7 @@ class BFM_lighting(LightningModule):
         # "land_variables",
         # "agriculture_variables",
         # "forest_variables",
-        # "misc_variables" 
+        # "misc_variables"
 
         self.variable_weights = {
             "surface_variables": {
@@ -304,7 +308,9 @@ class BFM_lighting(LightningModule):
         output = self(x, lead_time, batch_size=self.batch_size)
         print("Validation time!")
         loss = self.compute_loss(output, y)
-        self.log("val_loss", loss, batch_size=self.batch_size, sync_dist=True)  # on_step=False, on_epoch=True, prog_bar=True, sync_dist=True
+        self.log(
+            "val_loss", loss, batch_size=self.batch_size, sync_dist=True
+        )  # on_step=False, on_epoch=True, prog_bar=True, sync_dist=True
         return loss
 
     def training_step(self, batch, batch_idx):
@@ -346,7 +352,6 @@ class BFM_lighting(LightningModule):
             "agriculture_variables",
             "forest_variables",
             "misc_variables",
-            
         ]
 
         for group_name in groups:
@@ -475,11 +480,17 @@ def main(cfg):
     output_dir = HydraConfig.get().runtime.output_dir
     print(f"Output directory: {output_dir}")
     dataset = LargeClimateDataset(
-        data_dir=cfg.data.data_path, scaling_settings=cfg.data.scaling, \
-            num_species=cfg.data.species_number, atmos_levels=cfg.data.atmos_levels)
+        data_dir=cfg.data.data_path,
+        scaling_settings=cfg.data.scaling,
+        num_species=cfg.data.species_number,
+        atmos_levels=cfg.data.atmos_levels,
+    )
     test_dataset = LargeClimateDataset(
-        data_dir=cfg.data.test_data_path, scaling_settings=cfg.data.scaling, \
-            num_species=cfg.data.species_number, atmos_levels=cfg.data.atmos_levels)
+        data_dir=cfg.data.test_data_path,
+        scaling_settings=cfg.data.scaling,
+        num_species=cfg.data.species_number,
+        atmos_levels=cfg.data.atmos_levels,
+    )
 
     val_dataloader = DataLoader(
         test_dataset,
@@ -514,9 +525,7 @@ def main(cfg):
     if rank == 0 or rank == "0":
         # Use rank in experiment name to avoid conflicts
         mlf_logger = MLFlowLogger(
-            experiment_name=f"BFM_logs_r{rank}", 
-            run_name=f"BFM_{current_time}", 
-            save_dir=f"{output_dir}/logs/rank{rank}"
+            experiment_name=f"BFM_logs_r{rank}", run_name=f"BFM_{current_time}", save_dir=f"{output_dir}/logs/rank{rank}"
         )
 
     print("Done \n Setting up the BFM")
@@ -524,13 +533,41 @@ def main(cfg):
         surface_vars=(["t2m", "msl", "slt", "z", "u10", "v10", "lsm"]),
         edaphic_vars=(["swvl1", "swvl2", "stl1", "stl2"]),
         atmos_vars=(["z", "t", "u", "v", "q"]),
-        climate_vars=(["sml", "tp", "csfr", "avg_sdswrf", "avg_snswrf",
-                       "avg_snlwrf", "avg_tprate", "avg_sdswrfcs", "sd", "t2m", "d2m"]),
-        species_vars=(["1340361", "1340503", "1536449", "1898286", "1920506", "2430567",
-                       "2431885", "2433433", "2434779", "2435240", "2435261", "2437394",
-                       "2441454", "2473958", "2491534", "2891770", "3034825", "4408498",
-                        "5218786", "5219073", "5219173", "5219219", "5844449", "8002952",
-                        "8077224", "8894817", "8909809", "9809229"]),
+        climate_vars=(
+            ["sml", "tp", "csfr", "avg_sdswrf", "avg_snswrf", "avg_snlwrf", "avg_tprate", "avg_sdswrfcs", "sd", "t2m", "d2m"]
+        ),
+        species_vars=(
+            [
+                "1340361",
+                "1340503",
+                "1536449",
+                "1898286",
+                "1920506",
+                "2430567",
+                "2431885",
+                "2433433",
+                "2434779",
+                "2435240",
+                "2435261",
+                "2437394",
+                "2441454",
+                "2473958",
+                "2491534",
+                "2891770",
+                "3034825",
+                "4408498",
+                "5218786",
+                "5219073",
+                "5219173",
+                "5219219",
+                "5844449",
+                "8002952",
+                "8077224",
+                "8894817",
+                "8909809",
+                "9809229",
+            ]
+        ),
         vegetation_vars=(["NDVI"]),
         land_vars=(["Land"]),
         agriculture_vars=(["Agriculture", "Arable", "Cropland"]),
@@ -553,11 +590,7 @@ def main(cfg):
         td_learning=cfg.training.td_learning,
     )
 
-    apply_activation_checkpointing(
-        BFM, 
-        checkpoint_wrapper_fn=checkpoint_wrapper,
-        check_fn=activation_ckpt_policy
-    )
+    apply_activation_checkpointing(BFM, checkpoint_wrapper_fn=checkpoint_wrapper, check_fn=activation_ckpt_policy)
 
     model_summary = ModelSummary(BFM, max_depth=2)
     print(model_summary)
@@ -565,11 +598,11 @@ def main(cfg):
     checkpoint_callback = ModelCheckpoint(
         dirpath=f"{output_dir}/checkpoints",
         save_top_k=3,
-        monitor="train_loss", #`log('val_loss', value)` in the `LightningModule`
+        monitor="train_loss",  # `log('val_loss', value)` in the `LightningModule`
         mode="min",
         every_n_train_steps=cfg.training.checkpoint_every,
         filename="{epoch:02d}-{train_loss:.2f}",
-        save_last=True
+        save_last=True,
     )
 
     print(f"Will be saving checkpoints at: {output_dir}/checkpoints")
@@ -583,7 +616,6 @@ def main(cfg):
 
     elif cfg.training.strategy == "ddp":
         distr_strategy = DDPStrategy()
-    
 
     print(f"Using {cfg.training.strategy} strategy: {distr_strategy}")
 
@@ -596,7 +628,7 @@ def main(cfg):
         num_nodes=cfg.training.num_nodes,
         log_every_n_steps=cfg.training.log_steps,
         logger=mlf_logger,  # Only the rank 0 process will have a logger
-        # limit_train_batches=101,      # Process 10 batches per epoch.
+        limit_train_batches=2,  # Process 10 batches per epoch.
         # limit_val_batches=2,
         # limit_test_batches=10,
         val_check_interval=cfg.training.eval_every,  # Run validation every n training batches.
@@ -613,24 +645,21 @@ def main(cfg):
     # mlflow.pytorch.autolog()
 
     # with mlflow.start_run() as run:
-    if hasattr(cfg.training, 'checkpoint_path') and cfg.training.checkpoint_path:
+    if hasattr(cfg.training, "checkpoint_path") and cfg.training.checkpoint_path:
         # Check if the path is a directory
         if os.path.isdir(cfg.training.checkpoint_path):
             # Look for checkpoint files in the directory
             possible_checkpoints = []
             for root, _, files in os.walk(cfg.training.checkpoint_path):
                 for file in files:
-                    if file.endswith('.ckpt') and os.path.isfile(os.path.join(root, file)):
+                    if file.endswith(".ckpt") and os.path.isfile(os.path.join(root, file)):
                         possible_checkpoints.append(os.path.join(root, file))
-            
+
             if possible_checkpoints:
                 # Sort by modification time (newest first)
                 checkpoint_to_load = sorted(possible_checkpoints, key=os.path.getmtime, reverse=True)[0]
                 print(f"Found checkpoint: {checkpoint_to_load}")
-                trainer.fit(
-                    BFM, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader, 
-                    ckpt_path=checkpoint_to_load
-                )
+                trainer.fit(BFM, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader, ckpt_path=checkpoint_to_load)
             else:
                 print(f"No checkpoint files found in {cfg.training.checkpoint_path}. Starting training from scratch.")
                 trainer.fit(BFM, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader)
@@ -638,13 +667,11 @@ def main(cfg):
             # Path is a specific file
             print(f"Loading and resuming training from {cfg.training.checkpoint_path}")
             trainer.fit(
-                BFM, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader, 
-                ckpt_path=cfg.training.checkpoint_path
+                BFM, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader, ckpt_path=cfg.training.checkpoint_path
             )
     else:
         print("Start training from scratch")
         trainer.fit(BFM, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader)
-
 
     if dist.is_initialized():
         dist.barrier()

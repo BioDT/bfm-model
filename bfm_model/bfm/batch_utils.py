@@ -1,6 +1,7 @@
 """
 Copyright (C) 2025 TNO, The Netherlands. All rights reserved.
 """
+
 from typing import List
 
 import torch
@@ -68,7 +69,7 @@ def save_batch(batch, batch_path: str):
 
 
 def format_prefix(prefix: List[str]) -> str:
-    return ".".join(prefix)
+    return ".".join([str(el) for el in prefix])
 
 
 def visit_debug_tensors(obj, prefix: List[str] = []):
