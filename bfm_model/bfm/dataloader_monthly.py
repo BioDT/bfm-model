@@ -6,9 +6,8 @@ import os
 from collections import namedtuple
 from copy import deepcopy
 from datetime import datetime, timedelta
-from typing import Dict, List, Literal
-
-import hydra
+from typing import Literal, Dict, List, Union
+from copy import deepcopy
 import torch
 from omegaconf.dictconfig import DictConfig
 from torch.utils.data import DataLoader, Dataset, default_collate
@@ -41,6 +40,12 @@ Batch = namedtuple(
 
 Metadata = namedtuple("Metadata", ["latitudes", "longitudes", "timestamp", "lead_time", "pressure_levels", "species_list"])
 
+def normalize_keys(d: Dict[Union[int,str], torch.Tensor]) -> Dict[str, torch.Tensor]:
+    """
+    Turn any int or mixed keys into strings.
+    """
+    return {str(k): v for k, v in d.items()}
+
 
 def custom_collate(batch_list):
     """
@@ -52,22 +57,25 @@ def custom_collate(batch_list):
     if not batch_list:
         return batch_list
 
-    # If we got a list of Batches:
+    # If we're collating our Batch objects:
     if isinstance(batch_list[0], Batch):
-        # We need to collate them into a single Batch of stacked tensors where appropriate.
 
-        def collate_dicts(dict_list):
-            # dict_list: list of dicts, one per sample
-            # keys should be identical for all samples
-            out = {}
-            keys = dict_list[0].keys()
+        def collate_dicts(
+            dicts: List[Dict[Union[int,str], torch.Tensor]]) -> Dict[Union[int,str], torch.Tensor]:
+            out: Dict[Union[int,str], torch.Tensor] = {}
+            keys = dicts[0].keys()
             for key in keys:
-                values = [d[key] for d in dict_list]
-                # If these are tensors, stack them
+                values = [d[key] for d in dicts]
                 if isinstance(values[0], torch.Tensor):
-                    out[key] = default_collate(values)
+                    shapes = [tuple(v.shape) for v in values]
+                    if len(set(shapes)) != 1:
+                        # fail loud & clear
+                        raise RuntimeError(
+                            f"[collate] key={key!r} has mismatched shapes: {shapes}"
+                        )
+                    out[key] = torch.stack(values, dim=0)
                 else:
-                    # If these are lists (like timestamps), just keep as a list of lists
+                    # keep lists (e.g. timestamps) as-is
                     out[key] = values
             return out
 
@@ -296,17 +304,7 @@ class LargeClimateDataset(Dataset):
             species_list=species_list,
         )
 
-        "batch_metadata",
-        "surface_variables",
-        "edaphic_variables",
-        "atmospheric_variables",
-        "climate_variables",
-        "species_variables",
-        "vegetation_variables",
-        "land_variables",
-        "agriculture_variables",
-        "forest_variables",
-        "misc_variables"
+        species_vars = normalize_keys(species_vars)
 
         return Batch(
             batch_metadata=metadata,

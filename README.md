@@ -99,7 +99,7 @@ On snellius, you need to forward the ports to your machine (TODO document comman
 
 ```bash
 # start an interactive job
-salloc -p gpu_h100 --gpus-per-node=1 -t 01:00:00
+salloc -p gpu_h100 --gpus-per-node=1 -t 00:30:00
 # ssh to the node with port forwarding
 # ssh gcn140
 
