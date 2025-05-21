@@ -19,14 +19,15 @@ model:
 
 data:
   atmos_levels: [50, 500, 1000]
-  species_number: 1 # [0-22] available species
+  species_number: 28 # [0-22] available species
   # data_path: /projects/prjs1134/data/projects/biodt/storage/final_dataset/train
   # data_path: /home/atrantas/bfm-model/data
-  data_path: /projects/prjs1134/data/projects/biodt/storage/monthly_batches/batches
+  data_path: /projects/prjs1134/data/projects/biodt/storage/final_dataset_monthly/train
   # data_path: /home/thanasis.trantas/git_projects/bfm-model/data_small/2009_batches # hinton
   # test_data_path: /projects/prjs1134/data/projects/biodt/storage/final_dataset/test
   # test_data_path: /home/thanasis.trantas/git_projects/bfm-model/data_small/2009_batches # hinton
-  test_data_path: /projects/prjs1134/data/projects/biodt/storage/monthly_batches/batches
+  # test_data_path: /home/atrantas/bfm-model/data
+  test_data_path: /projects/prjs1134/data/projects/biodt/storage/final_dataset_monthly/test
   
   scaling:
     enabled: True
@@ -39,7 +40,7 @@ data:
 training:
   batch_size: 11
   workers: 15
-  epochs: 10
+  epochs: 20
   accelerator: cuda
   precision: bf16-mixed
   precision_in: "high" # ["medium", "high", "highest"] https://pytorch.org/docs/stable/generated/torch.set_float32_matmul_precision.html#torch.set_float32_matmul_precision
@@ -48,11 +49,11 @@ training:
   num_nodes: 1
   gradient_clip: 1.0
   log_steps: 1
-  lr: 0.01  #5e-4
+  lr: 0.001  #5e-4
   wd: 0.0001 #5e-6
   checkpoint_path: #/home/atrantas/bfm-model/outputs/2025-04-16/21-14-59/checkpoints/epoch=23-train_loss=0.02.ckpt #"/gpfs/home2/damian/projects/bfm-model/outputs"
   # resume_from_checkpoint: False
-  checkpoint_every: 200
+  checkpoint_every: 20
   eval_every: 20
   td_learning: False
 

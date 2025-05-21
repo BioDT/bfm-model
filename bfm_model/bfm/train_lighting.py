@@ -62,7 +62,6 @@ class MyClusterEnvironment(ClusterEnvironment):
     def main_port(self) -> int:
         return int(os.environ["MASTER_PORT"])
 
-
 class BFM_lighting(LightningModule):
     """
     Biodiversity Foundation Model.
@@ -362,7 +361,22 @@ class BFM_lighting(LightningModule):
 
             pred_dict = output[group_name]
             true_dict = getattr(batch, group_name)
+            # print(inspect_batch(batch))
+            # print(true_dict["species_variables"])
             # print("true dict", true_dict)
+
+            # pred_keys = set(pred_dict.keys())
+            # true_keys = set(true_dict.keys())
+            # print(f"\n=== Group: {group_name} ===")
+            # print(f"  pred keys ({len(pred_keys)}): {sorted(pred_keys)}")
+            # print(f"  true keys ({len(true_keys)}): {sorted(true_keys)}")
+            # missing = pred_keys - true_keys
+            # if missing:
+            #     print(f"  🔴 these keys in pred but not in true: {sorted(missing)}")
+            # extra = true_keys - pred_keys
+            # if extra:
+            #     print(f"  🟢 these keys in true but not in pred: {sorted(extra)}")
+                
             group_loss = 0.0
             var_count = 0
             # x = 1, 2
@@ -533,41 +547,13 @@ def main(cfg):
         surface_vars=(["t2m", "msl", "slt", "z", "u10", "v10", "lsm"]),
         edaphic_vars=(["swvl1", "swvl2", "stl1", "stl2"]),
         atmos_vars=(["z", "t", "u", "v", "q"]),
-        climate_vars=(
-            ["sml", "tp", "csfr", "avg_sdswrf", "avg_snswrf", "avg_snlwrf", "avg_tprate", "avg_sdswrfcs", "sd", "t2m", "d2m"]
-        ),
-        species_vars=(
-            [
-                "1340361",
-                "1340503",
-                "1536449",
-                "1898286",
-                "1920506",
-                "2430567",
-                "2431885",
-                "2433433",
-                "2434779",
-                "2435240",
-                "2435261",
-                "2437394",
-                "2441454",
-                "2473958",
-                "2491534",
-                "2891770",
-                "3034825",
-                "4408498",
-                "5218786",
-                "5219073",
-                "5219173",
-                "5219219",
-                "5844449",
-                "8002952",
-                "8077224",
-                "8894817",
-                "8909809",
-                "9809229",
-            ]
-        ),
+        climate_vars=(["smlt", "tp", "csfr", "avg_sdswrf", "avg_snswrf",
+                       "avg_snlwrf", "avg_tprate", "avg_sdswrfcs", "sd", "t2m", "d2m"]),
+        species_vars=(["1340361", "1340503", "1536449", "1898286", "1920506", "2430567",
+                       "2431885", "2433433", "2434779", "2435240", "2435261", "2437394",
+                       "2441454", "2473958", "2491534", "2891770", "3034825", "4408498",
+                        "5218786", "5219073", "5219173", "5219219", "5844449", "8002952",
+                        "8077224", "8894817", "8909809", "9809229"]),
         vegetation_vars=(["NDVI"]),
         land_vars=(["Land"]),
         agriculture_vars=(["Agriculture", "Arable", "Cropland"]),

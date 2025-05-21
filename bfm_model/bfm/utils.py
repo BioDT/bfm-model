@@ -723,3 +723,39 @@ def load_config(output_dir: str | Path, config_file_name: str = "config.yaml"):
     config_path = Path(output_dir) / ".hydra"
     cfg = OmegaConf.load(str(config_path / config_file_name))
     return cfg
+
+def inspect_batch(batch, indent: int = 0) -> None:
+    """
+    Recursively print out the contents of a Batch-like object:
+    - namedtuple or obj with __dict__
+    - dicts
+    - torch.Tensors (shape & dtype)
+    - lists (length & first element type)
+    """
+    prefix = "  " * indent
+    # Namedtuple or object with attributes
+    if hasattr(batch, "_fields"):  # likely a namedtuple
+        print(f"{prefix}{batch.__class__.__name__}:")
+        for field in batch._fields:
+            value = getattr(batch, field)
+            print(f"{prefix}  {field}:")
+            inspect_batch(value, indent + 2)
+
+    # plain dict
+    elif isinstance(batch, dict):
+        for k, v in batch.items():
+            print(f"{prefix}  {k}:")
+            inspect_batch(v, indent + 2)
+
+    # torch tensor
+    elif isinstance(batch, torch.Tensor):
+        print(f"{prefix}  Tensor(shape={tuple(batch.shape)}, dtype={batch.dtype})")
+
+    # list or tuple
+    elif isinstance(batch, (list, tuple)):
+        print(f"{prefix}  {type(batch).__name__}[len={len(batch)}]")
+        if batch:
+            print(f"{prefix}    example elem type: {type(batch[0]).__name__}")
+
+    else:
+        print(f"{prefix}  {type(batch).__name__}: {batch!r}")
