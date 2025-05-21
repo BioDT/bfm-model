@@ -2,11 +2,10 @@
 #SBATCH --job-name=bfm_model
 #SBATCH --partition=gpu_h100
 #SBATCH --time=3:00:00
-#SBATCH --nodes=16
+#SBATCH --nodes=1
 #SBATCH --ntasks-per-node=4
 #SBATCH --cpus-per-task=15
 #SBATCH --gpus-per-node=4
-#SBATCH --reservation=gpt-nl
 
 module purge
 
