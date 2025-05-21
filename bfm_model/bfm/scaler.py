@@ -19,6 +19,15 @@ dimensions_to_keep_by_key = {
         "t": [1],  # [time, t, lat, lon]
     },
 }
+dimensions_to_keep_monthly = {
+    "atmospheric_variables": {
+        "z": [1],  # [time, z, lat, lon]
+        "t": [1],  # [time, t, lat, lon]
+        "u": [1],  # [time, t, lat, lon]
+        "v": [1],  # [time, t, lat, lon]
+        "q": [1],  # [time, t, lat, lon]
+    }
+}
 # TODO: this should be saved in the standardization config!!!
 
 

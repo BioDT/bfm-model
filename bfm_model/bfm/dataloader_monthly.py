@@ -16,7 +16,7 @@ from torch.utils.data import DataLoader, Dataset, default_collate
 from bfm_model.bfm.dataset_basics import *
 from bfm_model.bfm.scaler import (
     _rescale_recursive,
-    dimensions_to_keep_by_key,
+    dimensions_to_keep_monthly,
     load_stats,
 )
 from bfm_model.bfm.utils import DictObj
@@ -348,7 +348,7 @@ class LargeClimateDataset(Dataset):
         _rescale_recursive(
             batch,
             self.scaling_statistics,
-            dimensions_to_keep_by_key={},
+            dimensions_to_keep_by_key=dimensions_to_keep_monthly,
             mode=self.scaling_settings.mode,
             direction=direction,
         )

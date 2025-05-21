@@ -31,7 +31,7 @@ data:
   scaling:
     enabled: True
     # stats_path: /home/atrantas/bfm-model/batch_statistics/statistics.json #/projects/prjs1134/data/projects/biodt/storage/batches_2025_02_17/statistics.json # snellius
-    stats_path: /projects/prjs1134/data/projects/biodt/storage/monthly_batches/statistics/monthly_batches_stats.json
+    stats_path: /projects/prjs1134/data/projects/biodt/storage/monthly_batches/statistics/monthly_batches_stats_splitted_channels.json
     # stats_path: /data/projects/biodt/storage/batches/statistics.json # hinton
     mode: normalize # normalize (mean and std), standardize (min-max)
 #TODO Checkpointing path: /scratch-shared/<username>
