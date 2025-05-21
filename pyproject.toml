@@ -8,7 +8,7 @@ readme = "README.md"
 license = "LICENSE.txt"
 
 [tool.poetry.dependencies]
-python = ">=3.10,<3.13"
+python = ">=3.10,<3.14"
 numpy = "^1.26.4"
 torch = "2.5.1"
 torchvision = "0.20.1"
