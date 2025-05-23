@@ -105,6 +105,7 @@ class BFMDecoder(nn.Module):
         land_vars: tuple[str, ...],
         agriculture_vars: tuple[str, ...],
         forest_vars: tuple[str, ...],
+        redlist_vars: tuple[str, ...],
         misc_vars: tuple[str, ...],
         atmos_levels: list[int],
         species_num: int,
@@ -135,6 +136,7 @@ class BFMDecoder(nn.Module):
         self.land_vars = land_vars
         self.agriculture_vars = agriculture_vars
         self.forest_vars = forest_vars
+        self.redlist_vars = redlist_vars
         self.misc_vars = misc_vars
         self.atmos_levels = atmos_levels
         self.species_num = species_num
@@ -161,6 +163,7 @@ class BFMDecoder(nn.Module):
             "land": {v: i for i, v in enumerate(land_vars)},
             "agriculture": {v: i for i, v in enumerate(agriculture_vars)},
             "forest": {v: i for i, v in enumerate(forest_vars)},
+            "redlist": {v: i for i, v in enumerate(redlist_vars)},
             "misc": {v: i for i, v in enumerate(misc_vars)},
         }
 
@@ -181,6 +184,7 @@ class BFMDecoder(nn.Module):
         self.land_token_proj = nn.Linear(embed_dim, H * W)
         self.agriculture_token_proj = nn.Linear(embed_dim, H * W)
         self.forest_token_proj = nn.Linear(embed_dim, H * W)
+        self.redlist_toke_proj = nn.Linear(embed_dim, H * W)
         self.misc_token_proj = nn.Linear(embed_dim, H * W)
 
         # total number of tokens needed for all variables
@@ -194,9 +198,10 @@ class BFMDecoder(nn.Module):
             + len(land_vars)
             + len(agriculture_vars)
             + len(forest_vars)
+            + len(redlist_vars)
             + len(misc_vars)
         )
-        print("Total latent tokens for Decoder: ", total_tokens)
+        print("Total query tokens for Decoder: ", total_tokens)
 
         self.perceiver_io = PerceiverIO(
             num_layers=depth,
@@ -339,6 +344,7 @@ class BFMDecoder(nn.Module):
             + len(self.land_vars)
             + len(self.agriculture_vars)
             + len(self.forest_vars)
+            + len(self.redlist_vars)
             + len(self.misc_vars)
         )
         # the queries used to ask Perceiver IO for values of all variables (the main reason of the decoder flexibility in processing the embeddings lies in these)
@@ -359,8 +365,8 @@ class BFMDecoder(nn.Module):
         queries = queries + pos_encode
 
         # Add lead time embedding
-        lead_hours = lead_time.total_seconds() / 3600
-        lead_times = lead_hours * torch.ones(B, dtype=x.dtype, device=x.device)
+        # lead_hours = lead_time.total_seconds() / 3600 # for hourly
+        lead_times = lead_time * torch.ones(B, dtype=x.dtype, device=x.device)
         lead_time_encode = self._time_encoding(lead_times)
         lead_time_emb = self.lead_time_embed(lead_time_encode)
         queries = queries + lead_time_emb.unsqueeze(1)
@@ -452,6 +458,14 @@ class BFMDecoder(nn.Module):
             forest_output = forest_output.view(B, len(self.forest_vars), H, W)
             output["forest_vars"] = {var: forest_output[:, i] for i, var in enumerate(self.forest_vars)}
 
+        # redlist variables
+        if len(self.redlist_vars) > 0:
+            next_idx = current_idx + len(self.redlist_vars)
+            redlist_decoded = decoded[:, current_idx:next_idx]
+            redlist_output = self.redlist_toke_proj(redlist_decoded)
+            redlist_output = redlist_output.view(B, len(self.redlist_vars), H, W)
+            output["redlist_vars"] = {var: redlist_output[:, i] for i, var in enumerate(self.redlist_vars)}
+
         # misc variables
         if len(self.misc_vars) > 0:
             next_idx = current_idx + len(self.misc_vars)
@@ -470,6 +484,7 @@ class BFMDecoder(nn.Module):
             "land_variables": output.pop("land_vars"),
             "agriculture_variables": output.pop("agriculture_vars"),
             "forest_variables": output.pop("forest_vars"),
+            "redlist_variables": output.pop("redlist_vars"),
             "misc_variables": output.pop("misc_vars"),
         }
         return output

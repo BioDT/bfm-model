@@ -219,8 +219,8 @@ class Swin3DTransformer(nn.Module):
         all_enc_res, padded_outs = self.get_encoder_specs(patch_shape)
 
         # Process lead time information
-        lead_hours = lead_time.total_seconds() / 3600
-        lead_times = torch.full((B,), lead_hours, dtype=torch.float32, device=x.device)
+        # lead_hours = lead_time.total_seconds() / 3600 # for hourly
+        lead_times = torch.full((B,), lead_time, dtype=torch.float32, device=x.device)
         c = self.time_mlp(lead_time_expansion(lead_times, self.embed_dim).to(dtype=x.dtype))
 
         # Encoder forward pass

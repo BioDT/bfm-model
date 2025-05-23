@@ -102,6 +102,7 @@ class BFMEncoder(nn.Module):
         land_vars: tuple[str, ...],
         agriculture_vars: tuple[str, ...],
         forest_vars: tuple[str, ...],
+        redlist_vars: tuple[str, ...],
         misc_vars: tuple[str, ...],
         atmos_levels: tuple[int, ...],
         species_num: int,
@@ -150,6 +151,7 @@ class BFMEncoder(nn.Module):
         self.land_vars = land_vars
         self.agriculture_vars = agriculture_vars
         self.forest_vars = forest_vars
+        self.redlist_vars = redlist_vars
         self.misc_vars = misc_vars
         self.atmos_levels = atmos_levels
         self.species_num = species_num
@@ -165,6 +167,7 @@ class BFMEncoder(nn.Module):
             "land": {v: i for i, v in enumerate(land_vars)},
             "agriculture": {v: i for i, v in enumerate(agriculture_vars)},
             "forest": {v: i for i, v in enumerate(forest_vars)},
+            "redlist": {v: i for i, v in enumerate(redlist_vars)},
             "misc": {v: i for i, v in enumerate(misc_vars)},
         }
 
@@ -191,6 +194,7 @@ class BFMEncoder(nn.Module):
         self.land_token_embeds = self._create_patch_embed(len(land_vars), patch_size, embed_dim, max_history_size)
         self.agriculture_token_embeds = self._create_patch_embed(len(agriculture_vars), patch_size, embed_dim, max_history_size)
         self.forest_token_embeds = self._create_patch_embed(len(forest_vars), patch_size, embed_dim, max_history_size)
+        self.redlist_token_embeds = self._create_patch_embed(len(redlist_vars), patch_size, embed_dim, max_history_size)
         self.misc_token_embeds = self._create_patch_embed(len(misc_vars), patch_size, embed_dim, max_history_size)
 
         # init latent queries
@@ -292,6 +296,7 @@ class BFMEncoder(nn.Module):
         land_latents = num_patches if self.land_vars else 0
         agri_latents = num_patches if self.agriculture_vars else 0
         forest_latents = num_patches if self.forest_vars else 0
+        redlist_latents = num_patches if self.redlist_vars else 0
         misc_latents = num_patches if self.misc_vars else 0
 
         # store latent sizes for forward pass
@@ -305,6 +310,7 @@ class BFMEncoder(nn.Module):
             "land": land_latents,
             "agriculture": agri_latents,
             "forest": forest_latents,
+            "redlist": redlist_latents,
             "misc": misc_latents,
         }
 
@@ -337,6 +343,9 @@ class BFMEncoder(nn.Module):
         if forest_latents > 0:
             self.forest_latents = nn.Parameter(torch.randn(forest_latents, self.embed_dim, device=device))
             latent_list.append(self.forest_latents)
+        if redlist_latents > 0:
+            self.redlist_latents = nn.Parameter(torch.randn(redlist_latents, self.embed_dim, device=device))
+            latent_list.append(self.redlist_latents)
         if misc_latents > 0:
             self.misc_latents = nn.Parameter(torch.randn(misc_latents, self.embed_dim, device=device))
             latent_list.append(self.misc_latents)  
@@ -444,14 +453,12 @@ class BFMEncoder(nn.Module):
         # Stack variables => shape [var_count, B, [T,] H, W].
         # e.g. if 2 variables, each [2, 152, 320], then stacking => [2, 2, 152, 320].
         # or if each is [2, 3, 152, 320], => [2, 2, 3, 152, 320].
-        values = list(variables.values())  # list of Tensors
+        values = list(variables.values())
         x = torch.stack(values, dim=0)
         # print(f"{group_name}: after stacking => {x.shape}")
 
         # Move the 'var_count' dimension after batch dim => [B, var_count, ...].
         # e.g. [2, 2, 152, 320] => [2, 2, 152, 320] if var_count=2 is dimension 0, B=2 dimension 1 => we do a transpose:
-        # dims = list(x.shape)
-        # dims[0] = var_count, dims[1] = B, ...
         # We want => [B, var_count, ...].
         # so do: x = x.permute(1, 0, 2, 3, ...) if 4D
         if x.dim() == 4:
@@ -465,12 +472,12 @@ class BFMEncoder(nn.Module):
 
         # print(f"{group_name}: after permute => {x.shape}")
 
-        # Merge    into a single channel dimension => shape [B, C, H, W].
+        # Merge into a single channel dimension => shape [B, C, H, W].
         # if x.dim()==4, => [B, V, H, W]. then C = V
         # if x.dim()==5, => [B, V, T, H, W]. then C = V * T
         if x.dim() == 4:
             B, V, H, W = x.shape
-            x = x.reshape(B, V, H, W)  # trivial, no time
+            x = x.reshape(B, V, H, W) # trivial, no time
             channel_dim = V
         else:
             # x.dim()==5 => [B, V, T, H, W]
@@ -603,7 +610,6 @@ class BFMEncoder(nn.Module):
             embeddings.append(species_embed)
             embedding_groups["species"] = species_embed
 
-        # TODO this is for RLI
         # # print("process species extinction")
         vegetation_embed = self.process_variable_group(
             batch.vegetation_variables, self.vegetation_token_embeds, "Vegetation Variables"
@@ -632,6 +638,13 @@ class BFMEncoder(nn.Module):
         if forest_embed is not None:
             embeddings.append(forest_embed)
             embedding_groups["forest"] = forest_embed
+
+        redlist_embed = self.process_variable_group(
+            batch.forest_variables, self.redlist_token_embeds, "Redlist Variables"
+        )  # shape: [num_patches, embed_dim]
+        if redlist_embed is not None:
+            embeddings.append(redlist_embed)
+            embedding_groups["forest"] = redlist_embed
 
         misc_embed = self.process_variable_group(
             batch.misc_variables, self.misc_token_embeds, "Misc Variables"
@@ -699,8 +712,8 @@ class BFMEncoder(nn.Module):
         )  # shape: [batch_size, num_patches * num_variable_groups, embed_dim]
 
         # add time embeddings
-        lead_hours = lead_time.total_seconds() / 3600
-        lead_times = lead_hours * torch.ones(B, dtype=x.dtype, device=x.device)
+        # lead_hours = lead_time.total_seconds() / 3600 # for hourly
+        lead_times = lead_time * torch.ones(B, dtype=x.dtype, device=x.device)
         lead_time_encode = self._time_encoding(lead_times)  # shape: [batch_size, embed_dim]
         lead_time_encode = self._check_tensor(lead_time_encode, "Lead time encoding")
         lead_time_emb = self.lead_time_embed(lead_time_encode)  # shape: [batch_size, embed_dim]

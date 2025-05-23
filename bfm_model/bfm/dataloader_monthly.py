@@ -6,7 +6,7 @@ import os
 from collections import namedtuple
 from copy import deepcopy
 from datetime import datetime, timedelta
-from typing import Literal, Dict, List, Union
+from typing import Literal, Dict, List, Union, Any
 from copy import deepcopy
 import torch
 from omegaconf.dictconfig import DictConfig
@@ -34,6 +34,7 @@ Batch = namedtuple(
         "land_variables",
         "agriculture_variables",
         "forest_variables",
+        "redlist_variables",
         "misc_variables",
     ],
 )
@@ -113,6 +114,7 @@ def custom_collate(batch_list):
         land_vars = collate_dicts([b.land_variables for b in batch_list])
         agriculture_vars = collate_dicts([b.agriculture_variables for b in batch_list])
         forest_vars = collate_dicts([b.forest_variables for b in batch_list])
+        redlist_vars = collate_dicts([b.redlist_variables for b in batch_list])
         misc_vars = collate_dicts([b.misc_variables for b in batch_list])
 
         return Batch(
@@ -126,6 +128,7 @@ def custom_collate(batch_list):
             land_variables=land_vars,
             agriculture_variables=agriculture_vars,
             forest_variables=forest_vars,
+            redlist_variables=redlist_vars,
             misc_variables=misc_vars,
         )
 
@@ -221,6 +224,7 @@ class LargeClimateDataset(Dataset):
         "land_variables" {...},
         "agriculture_variables" {...},
         "forest_variables" {...},
+        "redlist_variables" {...}
         "misc_variables" {...},
     }
     """
@@ -277,6 +281,7 @@ class LargeClimateDataset(Dataset):
         forest_vars = crop_variables(data["forest_variables"], new_H, new_W)
         # For NDVI Nans due to snow/clouds => putting 0 = Values close to zero (-0.1 to 0.1) generally correspond to barren areas of rock, sand, or snow
         vegetation_vars = crop_variables(data["vegetation_variables"], new_H, new_W, handle_nans=True, nan_mode="zero")
+        redlist_vars = crop_variables(data["redlist_variables"], new_H, new_W)
         misc_vars = crop_variables(data["misc_variables"], new_H, new_W)
         # crop metadata dimensions
         latitude_var = torch.tensor(latitudes[:new_H])
@@ -295,14 +300,16 @@ class LargeClimateDataset(Dataset):
         # print("Dataset species vars", species_vars)
         # Compute lead time in hours
         # lead_time_hours = (end - start).total_seconds() / 86400.0 # Its days now
-        lead_time_hours = 30
+        # lead_time_hours = 30
+        lead_months = (end.year - start.year) * 12 + (end.month - start.month) + 1
+
         # Fix the species distribution shapes
-        # print(f"lead time in hours", lead_time_hours)
+        # print(f"lead time in months", lead_months, type(lead_months))
         metadata = Metadata(
             latitudes=latitude_var,
             longitudes=longitude_var,
             timestamp=timestamps,
-            lead_time=lead_time_hours,
+            lead_time=lead_months,
             pressure_levels=pressure_levels,
             species_list=species_list,
         )
@@ -320,6 +327,7 @@ class LargeClimateDataset(Dataset):
             land_variables=land_vars,
             agriculture_variables=agriculture_vars,
             forest_variables=forest_vars,
+            redlist_variables=redlist_vars,
             misc_variables=misc_vars,
         )
 
@@ -516,13 +524,13 @@ def test_dataset_and_dataloader(data_dir):
         for var_name, var_stats in group_dict.items():
             if "min" in var_stats:
                 print(
-                    f"  {var_name} => Min: {var_stats['min']}, Max: {var_stats['max']}, Mean: {var_stats['mean']}, Std: {var_stats['std']}"
+                    f"{var_name} => Min: {var_stats['min']}, Max: {var_stats['max']}, Mean: {var_stats['mean']}, Std: {var_stats['std']}"
                 )
                 print(
-                    f"     NaN: {var_stats['nan_count']}, Inf: {var_stats['inf_count']}, shape: {var_stats['shape']}, dtype: {var_stats['dtype']}"
+                    f"NaN: {var_stats['nan_count']}, Inf: {var_stats['inf_count']}, shape: {var_stats['shape']}, dtype: {var_stats['dtype']}"
                 )
             else:
-                print(f"  {var_name} => {var_stats}")
+                print(f"{var_name} => {var_stats}")
 
     print("\nTest completed successfully.")
 
@@ -571,6 +579,7 @@ def detach_batch(batch: Batch) -> Batch:
         land_variables=_detach_and_clone(batch.land_variables),
         agriculture_variables=_detach_and_clone(batch.agriculture_variables),
         forest_variables=_detach_and_clone(batch.forest_variables),
+        redlist_variables=_detach_and_clone(batch.redlist_variables),
         misc_variables=_detach_and_clone(batch.misc_variables)
     )
 
@@ -593,20 +602,21 @@ def detach_graph_batch(batch: Batch) -> Batch:
     def det_grp(grp):
         if grp is None:
             return None
-        return {k: v.detach() for k, v in grp.items()}
+        return {k: v.detach().cpu() for k, v in grp.items()}
 
     return Batch(
         batch_metadata=new_md,
-        surface_variables=_detach_and_clone(batch.surface_variables),
-        edaphic_variables=_detach_and_clone(batch.edaphic_variables),
-        atmospheric_variables=_detach_and_clone(batch.atmospheric_variables),
-        climate_variables=_detach_and_clone(data.climate_variables),
-        species_variables=_detach_and_clone(batch.species_variables),
-        vegetation_variables=_detach_and_clone(batch.vegetation_variables),
-        land_variables=_detach_and_clone(batch.land_variables),
-        agriculture_variables=_detach_and_clone(batch.agriculture_variables),
-        forest_variables=_detach_and_clone(batch.forest_variables),
-        misc_variables=_detach_and_clone(data.misc_variables)
+        surface_variables=det_grp(batch.surface_variables),
+        edaphic_variables=det_grp(batch.edaphic_variables),
+        atmospheric_variables=det_grp(batch.atmospheric_variables),
+        climate_variables=det_grp(batch.climate_variables),
+        species_variables=det_grp(batch.species_variables),
+        vegetation_variables=det_grp(batch.vegetation_variables),
+        land_variables=det_grp(batch.land_variables),
+        agriculture_variables=det_grp(batch.agriculture_variables),
+        forest_variables=det_grp(batch.forest_variables),
+        redlist_variables=det_grp(batch.redlist_variables),
+        misc_variables=det_grp(batch.misc_variables)
     )
 
 
@@ -717,6 +727,29 @@ def detach_output_dict(d):
             # leave alone
             out[k] = deepcopy(v)
     return out
+
+#V1> Works
+def _convert(obj: Any, move_cpu: bool = True, target_dtype: torch.dtype = torch.float32) -> Any:
+    """Recursively convert to plain-Python containers; move tensors to CPU."""
+    if isinstance(obj, torch.Tensor):
+        t = obj.detach()
+        if move_cpu:
+            t = t.cpu()
+        if t.dtype != target_dtype:
+            t = t.to(dtype=target_dtype)
+        return t
+
+    if hasattr(obj, "_fields") or hasattr(obj, "__dict__"):
+        attrs = obj._asdict() if hasattr(obj, "_asdict") else vars(obj)
+        return {k: _convert(v, move_cpu) for k, v in attrs.items()}
+
+    if isinstance(obj, dict):
+        return {k: _convert(v, move_cpu) for k, v in obj.items()}
+
+    if isinstance(obj, (list, tuple)):
+        return type(obj)(_convert(v, move_cpu) for v in obj)
+
+    return obj
 
 
 # @hydra.main(version_base=None, config_path="configs", config_name="train_config")

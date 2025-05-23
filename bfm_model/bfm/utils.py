@@ -157,7 +157,6 @@ def inspect_batch_shapes_dict(
 def compute_next_timestamp(old_time_str, hours=6):
     """
     Example function to parse an ISO date, add specified number of hours, return new iso string.
-    Adjust to your date/time logic.
     """
     from datetime import datetime, timedelta
     #           "%Y-%m-%dT%H:%M:%S"
@@ -761,3 +760,5 @@ def inspect_batch(batch, indent: int = 0) -> None:
 
     else:
         print(f"{prefix}  {type(batch).__name__}: {batch!r}")
+
+
