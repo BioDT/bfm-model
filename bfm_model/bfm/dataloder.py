@@ -205,7 +205,7 @@ class LargeClimateDataset(Dataset):
     }
     """
 
-    def __init__(self, data_dir: str, scaling_settings: DictConfig, num_species: int = 2, mode: str = "pretrain"):
+    def __init__(self, data_dir: str, scaling_settings: DictConfig, num_species: int = 2, mode: str = "pretrain", model_patch_size: int = 4):
         self.data_dir = data_dir
         self.num_species = num_species
         self.mode = mode
@@ -214,6 +214,7 @@ class LargeClimateDataset(Dataset):
         # print("Files sorted", self.files)
         self.scaling_settings = scaling_settings
         self.scaling_statistics = load_stats(scaling_settings.stats_path)
+        self.model_patch_size = model_patch_size
         print(f"We scale the dataset {scaling_settings.enabled} with {scaling_settings.mode}")
 
     def __len__(self):
@@ -417,7 +418,8 @@ def test_dataset_and_dataloader(data_dir):
     Test function to inspect correctness.
     Print distinctive info from a single batch.
     """
-    dataset = LargeClimateDataset(data_dir, num_species=10, scaling_settings=scaling_object)
+    example_model_patch_size = 4 
+    dataset = LargeClimateDataset(data_dir, num_species=10, scaling_settings=scaling_object, model_patch_size=example_model_patch_size)
     dataloader = DataLoader(
         dataset,
         batch_size=1,  # Fetch two samples for testing

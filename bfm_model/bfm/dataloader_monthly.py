@@ -230,7 +230,7 @@ class LargeClimateDataset(Dataset):
     """
 
     def __init__(
-        self, data_dir: str, scaling_settings: DictConfig, num_species: int = 2, atmos_levels: list = [50], mode: str = "pretrain"
+        self, data_dir: str, scaling_settings: DictConfig, num_species: int = 2, atmos_levels: list = [50], mode: str = "pretrain", model_patch_size: int = 4
     ):
         self.data_dir = data_dir
         self.num_species = num_species
@@ -241,6 +241,7 @@ class LargeClimateDataset(Dataset):
         # print("Files sorted", self.files)
         self.scaling_settings = scaling_settings
         self.scaling_statistics = load_stats(scaling_settings.stats_path)
+        self.model_patch_size = model_patch_size
         print(f"We scale the dataset {scaling_settings.enabled} with {scaling_settings.mode}")
 
     def __len__(self):
@@ -263,9 +264,9 @@ class LargeClimateDataset(Dataset):
         W = len(data["batch_metadata"]["longitudes"])
 
         # crop dimensions to be divisible by patch size
-        patch_size = 4  # TODO make this configurable
-        new_H = (H // patch_size) * patch_size
-        new_W = (W // patch_size) * patch_size
+        # patch_size = 4  # TODO make this configurable
+        new_H = (H // self.model_patch_size) * self.model_patch_size
+        new_W = (W // self.model_patch_size) * self.model_patch_size
         # print(f"Grid size: H x W {new_H}x{new_W}")
         # normalize or standardize variables
         data = self.scale_batch(data, direction="scaled")
@@ -504,7 +505,8 @@ def test_dataset_and_dataloader(data_dir):
     Test function to inspect correctness.
     Print distinctive info from a single batch.
     """
-    dataset = LargeClimateDataset(data_dir, num_species=10, scaling_settings=scaling_object)
+    example_model_patch_size = 4 
+    dataset = LargeClimateDataset(data_dir, num_species=10, scaling_settings=scaling_object, example_model_patch_size = 4)
     dataloader = DataLoader(
         dataset,
         batch_size=1,  # Fetch two samples for testing

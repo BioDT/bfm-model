@@ -42,6 +42,7 @@ import torch.nn.functional as F
 from bfm_model.bfm.dataset_basics import load_batches
 from bfm_model.perceiver_components.pos_encoder import build_position_encoding
 from bfm_model.perceiver_core.perceiver_io import PerceiverIO
+from datetime import datetime
 
 
 class BFMDecoder(nn.Module):
@@ -184,7 +185,7 @@ class BFMDecoder(nn.Module):
         self.land_token_proj = nn.Linear(embed_dim, H * W)
         self.agriculture_token_proj = nn.Linear(embed_dim, H * W)
         self.forest_token_proj = nn.Linear(embed_dim, H * W)
-        self.redlist_toke_proj = nn.Linear(embed_dim, H * W)
+        self.redlist_token_proj = nn.Linear(embed_dim, H * W)
         self.misc_token_proj = nn.Linear(embed_dim, H * W)
 
         # total number of tokens needed for all variables
@@ -371,6 +372,23 @@ class BFMDecoder(nn.Module):
         lead_time_emb = self.lead_time_embed(lead_time_encode)
         queries = queries + lead_time_emb.unsqueeze(1)
 
+        # Add absolute time embedding
+        if hasattr(self, 'absolute_time_embed') and self.absolute_time_embed is not None:
+            start_timestamp_str = batch.batch_metadata.timestamp[0][0]
+            dt_format = "%Y-%m-%d %H:%M:%S"
+            start_dt = datetime.strptime(start_timestamp_str, dt_format)
+
+            abs_time_numerical_values = []
+            for _ in range(B):
+                abs_time_numerical_values.append(start_dt.hour) 
+
+            abs_times_tensor = torch.tensor(abs_time_numerical_values, dtype=x.dtype, device=x.device)
+
+            absolute_time_encode = self._time_encoding(abs_times_tensor)
+            absolute_time_emb_vec = self.absolute_time_embed(absolute_time_encode)
+            queries = queries + absolute_time_emb_vec.unsqueeze(1)
+
+
         # Apply Perceiver IO
         decoded = self.perceiver_io(x, queries=queries)
 
@@ -462,7 +480,7 @@ class BFMDecoder(nn.Module):
         if len(self.redlist_vars) > 0:
             next_idx = current_idx + len(self.redlist_vars)
             redlist_decoded = decoded[:, current_idx:next_idx]
-            redlist_output = self.redlist_toke_proj(redlist_decoded)
+            redlist_output = self.redlist_token_proj(redlist_decoded)
             redlist_output = redlist_output.view(B, len(self.redlist_vars), H, W)
             output["redlist_vars"] = {var: redlist_output[:, i] for i, var in enumerate(self.redlist_vars)}
 

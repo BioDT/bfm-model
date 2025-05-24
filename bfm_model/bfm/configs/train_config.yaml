@@ -31,6 +31,7 @@ data:
   species_number: 28 # available species
   data_path: /projects/prjs1134/data/projects/biodt/storage/final_dataset_monthly/train
   test_data_path: /projects/prjs1134/data/projects/biodt/storage/final_dataset_monthly/test
+  land_mask_path: batch_statistics/europe_Land_2020_grid.pkl
   
   scaling:
     enabled: True
@@ -55,6 +56,7 @@ training:
   checkpoint_every: 21
   eval_every: 20
   td_learning: False
+  use_mask: False
 
 general:
   do_eval: True

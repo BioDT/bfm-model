@@ -47,6 +47,7 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from datetime import datetime
 from einops import rearrange, repeat
 
 from bfm_model.bfm.dataset_basics import load_batches
@@ -180,7 +181,8 @@ class BFMEncoder(nn.Module):
         self.absolute_time_embed = nn.Linear(embed_dim, embed_dim)
 
         # embedding for atmospheric pressure levels
-        self.atmos_levels_embed = nn.Linear(pos_encoding_dim, embed_dim)
+        self.num_atmos_levels = len(self.atmos_levels)
+        self.atmos_levels_embed = nn.Embedding(self.num_atmos_levels, embed_dim)
 
         # embedding for species distributions
         # self.vegetationibution_embed = nn.Linear(pos_encoding_dim, embed_dim)
@@ -196,9 +198,6 @@ class BFMEncoder(nn.Module):
         self.forest_token_embeds = self._create_patch_embed(len(forest_vars), patch_size, embed_dim, max_history_size)
         self.redlist_token_embeds = self._create_patch_embed(len(redlist_vars), patch_size, embed_dim, max_history_size)
         self.misc_token_embeds = self._create_patch_embed(len(misc_vars), patch_size, embed_dim, max_history_size)
-
-        # init latent queries
-        self.latents = nn.Parameter(torch.randn(perceiver_latents, embed_dim))
 
         # dropout
         self.pos_drop = nn.Dropout(p=drop_rate)
@@ -355,10 +354,11 @@ class BFMEncoder(nn.Module):
         print(f"total latens {total_latents}")
 
         # combine all latents for backward compatibility
-        self.latents = nn.Parameter(
-            torch.cat(latent_list, dim=0) if latent_list else torch.randn(total_latents, self.embed_dim, device=device)
-        )
-        print(f"latens shape: {self.latents.shape}")
+        # self.latents = nn.Parameter(
+        #     torch.cat(latent_list, dim=0) if latent_list else torch.randn(total_latents, self.embed_dim, device=device)
+        # )
+        self._latent_parameter_list = latent_list
+
         # Initialize Perceiver IO
         self.perceiver_io = PerceiverIO(
             num_layers=self.depth,
@@ -556,6 +556,12 @@ class BFMEncoder(nn.Module):
                 )
 
                 if level_embed is not None:
+                    # Add atmospheric level embedding
+                    # level_idx is the index for self.atmos_levels
+                    # self.atmos_levels_embed expects a LongTensor as input
+                    level_idx_tensor = torch.tensor([level_idx], dtype=torch.long, device=level_embed.device)
+                    specific_level_embedding = self.atmos_levels_embed(level_idx_tensor) # Shape [1, embed_dim]
+                    level_embed = level_embed + specific_level_embedding # Broadcast across patches
                     embeddings.append(level_embed)
                     embedding_groups["atmos"] = level_embed
                     # atmos.append(level_embed)
@@ -678,9 +684,10 @@ class BFMEncoder(nn.Module):
         pos_input_flat = pos_input.reshape(-1, 2)  # shape: [num_patches, 2]
 
         # build position encoder and move to correct device
+        num_patches_pos_enc = (self.H // self.patch_size) * (self.W // self.patch_size)
         pos_encoder = build_position_encoding(
             position_encoding_type=self.position_encoding_type,
-            index_dims=(2800,), #3040 with the old grid # TODO get the maths in
+            index_dims=(num_patches_pos_enc,), # 3040 with the old grid
             fourier_position_encoding_kwargs={
                 "num_bands": self.num_fourier_bands,
                 "max_freq": self.max_frequency,
@@ -701,7 +708,13 @@ class BFMEncoder(nn.Module):
 
         # apply linear embedding
         pos_encode = self.pos_embed(pos_encode)  # shape: [num_patches, embed_dim]
-        num_var_groups = x.shape[1] // (H // self.patch_size * W // self.patch_size)
+        # num_var_groups = x.shape[1] // (H // self.patch_size * W // self.patch_size)
+        num_patches_data = (self.H // self.patch_size) * (self.W // self.patch_size)
+        if x.shape[1] % num_patches_data != 0:
+            print(f"########## BFMEncoder forward: x.shape[1] ({x.shape[1]}) is not divisible by num_patches_data ({num_patches_data}) ##########")
+            num_var_groups = x.shape[1] // num_patches_data if num_patches_data > 0 else 1 
+        else:
+            num_var_groups = x.shape[1] // num_patches_data
         pos_encode = pos_encode.repeat_interleave(
             num_var_groups, dim=1
         )  # shape: [batch_size, num_patches * num_variable_groups, embed_dim]  (middle dimension - rough estimate, since we have atmos levels)
@@ -721,24 +734,53 @@ class BFMEncoder(nn.Module):
         x = x + lead_time_emb.unsqueeze(1)  # shape: [batch_size, num_patches * num_variable_groups, embed_dim]
         x = self._check_tensor(x, "After adding time embedding")
 
+        # Absolute time embedding
+        if hasattr(self, 'absolute_time_embed') and self.absolute_time_embed is not None:
+            start_timestamp_str = batch.batch_metadata.timestamp[0][0]
+            dt_format = "%Y-%m-%d %H:%M:%S"
+            start_dt = datetime.strptime(start_timestamp_str, dt_format)
+
+            abs_time_numerical_values = []
+            for _ in range(B): # B is batch_size
+                abs_time_numerical_values.append(start_dt.hour) # Example: hour of day
+
+            abs_times_tensor = torch.tensor(abs_time_numerical_values, dtype=x.dtype, device=x.device) # Shape [B]
+            
+            absolute_time_encode = self._time_encoding(abs_times_tensor) # Sinusoidal encoding
+            absolute_time_emb_vec = self.absolute_time_embed(absolute_time_encode)
+            x = x + absolute_time_emb_vec.unsqueeze(1)
+            x = self._check_tensor(x, "After adding absolute time embedding")
+
         # normalize before Perceiver IO
         x = self.pre_perceiver_norm(x)
         self._check_tensor(x, "Normalized input")
 
         # Apply Perceiver IO with structured latents
-        latents = self.latents.to(x.device)
+        # latents = self.latents.to(x.device)
+        # construct combined latents on-the-fly from the list of parameters
+        if not hasattr(self, '_latent_parameter_list') or not self._latent_parameter_list:
+            # fallback if _latent_parameter_list was not initialized (e.g. old checkpoint) or if it's empty for some reason
+            print("BFMEncoder forward: _latent_parameter_list not found or empty. Falling back to self.latents if it exists or creating new latents")
+            if hasattr(self, 'latents') and isinstance(self.latents, nn.Parameter):
+                combined_latents_for_query = self.latents.to(x.device)
+            else:
+                total_latents_runtime = sum(self.latent_sizes.values())
+                combined_latents_for_query = torch.randn(total_latents_runtime, self.embed_dim, device=x.device)
+                print(f"BFMEncoder forward: Created new random latents of shape {combined_latents_for_query.shape} as a fallback.")
+        else:
+            combined_latents_for_query = torch.cat([p.to(x.device) for p in self._latent_parameter_list], dim=0)
         # print(f"Encoder forward latents shape: {latents.shape}")
-        latents = self._check_tensor(latents, "Latent queries")  # shape: [num_latents, embed_dim]
+        combined_latents_for_query = self._check_tensor(combined_latents_for_query, "Latent queries")  # shape: [num_latents, embed_dim]
 
         # Track latent splits for potential future use
         current_idx = 0
         structured_latents = {}
         for group, size in self.latent_sizes.items():
             if size > 0:
-                structured_latents[group] = latents[current_idx : current_idx + size]
+                structured_latents[group] = combined_latents_for_query[current_idx : current_idx + size]
                 current_idx += size
 
-        latents = latents.unsqueeze(0).expand(B, -1, -1)  # shape: [batch_size, num_latents, embed_dim]
+        latents = combined_latents_for_query.unsqueeze(0).expand(B, -1, -1)  # shape: [batch_size, num_latents, embed_dim]
         x = self.perceiver_io(x, queries=latents)
         x = self._check_tensor(x, "After Perceiver IO")  # shape: [batch_size, num_latents, embed_dim]
 
