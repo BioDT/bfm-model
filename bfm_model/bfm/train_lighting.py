@@ -108,6 +108,7 @@ class BFM_lighting(LightningModule):
         land_vars: tuple[str, ...],
         agriculture_vars: tuple[str, ...],
         forest_vars: tuple[str, ...],
+        redlist_vars: tuple[str, ...],
         misc_vars: tuple[str, ...],
         atmos_levels: list[int],
         species_num: int,
@@ -139,36 +140,27 @@ class BFM_lighting(LightningModule):
         self.total_steps = total_steps
         self.td_learning = td_learning
 
-        # TODO ADD MORE:
-        # "surface_variables",
-        # "edaphic_variables",
-        # "atmospheric_variables",
-        # "climate_variables",
-        # "species_variables",
-        # "vegetation_variables",
-        # "land_variables",
-        # "agriculture_variables",
-        # "forest_variables",
-        # "misc_variables"
-
         self.variable_weights = {
             "surface_variables": {
-                "t2m": 1.7,
-                "msl": 1.5,
-                # ... add more if surface has more
-            },
-            "single_variables": {"lsm": 1.32},
-            "atmospheric_variables": {"z": 0.46, "t": 1.2},
-            "species_extinction_variables": {"ExtinctionValue": 1.43},
-            "land_variables": {"Land": 0.8, "NDVI": 1.48},
-            "agriculture_variables": {
-                "AgricultureLand": 1.4,
-                "AgricultureIrrLand": 1.22,
-                "ArableLand": 1.38,
-                "Cropland": 1.51,
-            },
-            "forest_variables": {"Forest": 1.38},
-            "species_variables": {"Distribution": 1.0},
+                "t2m": 0.1,
+                "msl": 0.1,
+                "slt": 0.1,
+                "z": 0.1,
+                "u10": 0.1,
+                "v10": 0.1,
+                "lsm": 0.1,
+                },
+            "edaphic_variables": {"swvl1": 0.1, "swvl2": 0.1, "stl1": 0.1, "stl2":0.1,},
+            "atmospheric_variables": {"z": 0.1, "t": 0.1, "u": 0.1, "v": 0.1, "q": 0.1},
+            "climate_variables": {"smlt": 0.1, "tp": 0.1, "csfr": 0.1, "avg_sdswrf": 0.1,
+                                "avg_snswrf": 0.1, "avg_snlwrf": 0.1, "avg_tprate": 0.1,
+                                "avg_sdswrfcs": 0.1, "sd": 0.1, "t2m": 0.1, "d2m": 0.1},
+            "land_variables": {"Land": 0.1},
+            "agriculture_variables": {"Agriculture": 0.1, "Arable": 0.1, "Cropland": 0.1},
+            "forest_variables": {"Forest": 0.1},
+            "redlist_variables": {"RLI": 0.1},
+            "misc_variables": {"avg_slhtf": 0.1, "avg_pevr": 0.1},
+            "species_variables": 5.0
         }
 
         self.encoder = BFMEncoder(
@@ -181,6 +173,7 @@ class BFM_lighting(LightningModule):
             land_vars=land_vars,
             agriculture_vars=agriculture_vars,
             forest_vars=forest_vars,
+            redlist_vars=redlist_vars,
             misc_vars=misc_vars,
             atmos_levels=atmos_levels,
             species_num=species_num,
@@ -203,7 +196,7 @@ class BFM_lighting(LightningModule):
                 encoder_num_heads=(8, 16),
                 decoder_depths=(2, 2),
                 decoder_num_heads=(32, 16),
-                window_size=(1, 1, 1),
+                window_size=(1, 1, 1), # ()
                 mlp_ratio=4.0,
                 qkv_bias=True,
                 drop_rate=0.0,
@@ -247,6 +240,7 @@ class BFM_lighting(LightningModule):
             land_vars=land_vars,
             agriculture_vars=agriculture_vars,
             forest_vars=forest_vars,
+            redlist_vars=redlist_vars,
             misc_vars=misc_vars,
             atmos_levels=atmos_levels,
             species_num=species_num,
@@ -260,13 +254,13 @@ class BFM_lighting(LightningModule):
             **kwargs,
         )
 
-    def forward(self, batch, lead_time=timedelta(hours=6), batch_size: int = 1):
+    def forward(self, batch, lead_time: int = 2, batch_size: int = 1):
         """
         Forward pass of the model.
 
         Args:
             batch: Batch object containing input variables and metadata
-            lead_time (timedelta): Time difference between input and target
+            lead_time (int): Time difference in months between input and target
 
         Returns:
             dict: Dictionary containing decoded outputs for each variable category
@@ -302,7 +296,7 @@ class BFM_lighting(LightningModule):
         return output
 
     def validation_step(self, batch, batch_idx):
-        lead_time = timedelta(hours=6)  # fixed lead time for pre-training
+        lead_time = 2  # fixed lead time (months) for pre-training
         x, y = batch
         output = self(x, lead_time, batch_size=self.batch_size)
         print("Validation time!")
@@ -313,7 +307,7 @@ class BFM_lighting(LightningModule):
         return loss
 
     def training_step(self, batch, batch_idx):
-        lead_time = timedelta(hours=6)  # fixed lead time for pre-training
+        lead_time = 2  # fixed lead time (months) for pre-training
         x, y = batch
         output = self(x, lead_time, batch_size=self.batch_size)
         loss = self.compute_loss(output, y)
@@ -321,7 +315,7 @@ class BFM_lighting(LightningModule):
         return loss
 
     def test_step(self, batch, batch_idx):
-        lead_time = timedelta(hours=6)  # fixed lead time for pre-training
+        lead_time = 2   # fixed lead time (months) for pre-training
         x, y = batch
         output = self(x, lead_time, batch_size=self.batch_size)
         print("Test time")
@@ -331,11 +325,25 @@ class BFM_lighting(LightningModule):
 
     def predict_step(self, batch, batch_idx):
         x, y = batch
-        lead_time = timedelta(hours=6)  # fixed lead time for pre-training
+        lead_time = 2  # fixed lead time (months) for pre-training
         output = self(x, lead_time, batch_size=self.batch_size)
         return output
 
+    def on_after_backward(self):
+        """
+        Checker for not learnable parameters -> Should output nothing!
+        """
+        for name, param in self.named_parameters():
+            if param.grad is None:
+                print(name)
+
     def compute_loss(self, output, batch):
+        """
+        Some helpers:
+        1) https://link.springer.com/article/10.1007/s13253-025-00676-8 
+        2) https://www.sciencedirect.com/science/article/pii/S1574954124001651
+        3) https://www.sciencedirect.com/science/article/pii/S1470160X22009608
+        """
 
         total_loss = 0.0
         count = 0
@@ -350,33 +358,18 @@ class BFM_lighting(LightningModule):
             "land_variables",
             "agriculture_variables",
             "forest_variables",
+            "redlist_variables",
             "misc_variables",
         ]
 
         for group_name in groups:
-            # print(f"Loss calc for {group_name}")
             # If group doesn't exist in output or batch, skip
             if group_name not in output or group_name not in batch._asdict():
                 continue
 
             pred_dict = output[group_name]
             true_dict = getattr(batch, group_name)
-            # print(inspect_batch(batch))
-            # print(true_dict["species_variables"])
-            # print("true dict", true_dict)
 
-            # pred_keys = set(pred_dict.keys())
-            # true_keys = set(true_dict.keys())
-            # print(f"\n=== Group: {group_name} ===")
-            # print(f"  pred keys ({len(pred_keys)}): {sorted(pred_keys)}")
-            # print(f"  true keys ({len(true_keys)}): {sorted(true_keys)}")
-            # missing = pred_keys - true_keys
-            # if missing:
-            #     print(f"  🔴 these keys in pred but not in true: {sorted(missing)}")
-            # extra = true_keys - pred_keys
-            # if extra:
-            #     print(f"  🟢 these keys in true but not in pred: {sorted(extra)}")
-                
             group_loss = 0.0
             var_count = 0
             # x = 1, 2
@@ -515,10 +508,6 @@ def main(cfg):
         shuffle=False,
     )
 
-    # if cfg.training.strategy == "ddp" or cfg.training.strategy == "fsdp":
-    #     torch.distributed.init_process_group(backend="nccl" if torch.cuda.is_available() else "gloo")
-    # train_sampler = DistributedSampler(dataset, shuffle=True)
-
     train_dataloader = DataLoader(
         dataset,
         shuffle=True,  # keep shuffle=True here
@@ -544,21 +533,17 @@ def main(cfg):
 
     print("Done \n Setting up the BFM")
     BFM = BFM_lighting(
-        surface_vars=(["t2m", "msl", "slt", "z", "u10", "v10", "lsm"]),
-        edaphic_vars=(["swvl1", "swvl2", "stl1", "stl2"]),
-        atmos_vars=(["z", "t", "u", "v", "q"]),
-        climate_vars=(["smlt", "tp", "csfr", "avg_sdswrf", "avg_snswrf",
-                       "avg_snlwrf", "avg_tprate", "avg_sdswrfcs", "sd", "t2m", "d2m"]),
-        species_vars=(["1340361", "1340503", "1536449", "1898286", "1920506", "2430567",
-                       "2431885", "2433433", "2434779", "2435240", "2435261", "2437394",
-                       "2441454", "2473958", "2491534", "2891770", "3034825", "4408498",
-                        "5218786", "5219073", "5219173", "5219219", "5844449", "8002952",
-                        "8077224", "8894817", "8909809", "9809229"]),
-        vegetation_vars=(["NDVI"]),
-        land_vars=(["Land"]),
-        agriculture_vars=(["Agriculture", "Arable", "Cropland"]),
-        forest_vars=(["Forest"]),
-        misc_vars=(["avg_slhtf", "avg_pevr"]),
+        surface_vars=(cfg.model.surface_vars),
+        edaphic_vars=(cfg.model.edaphic_vars),
+        atmos_vars=(cfg.model.atmos_vars),
+        climate_vars=(cfg.model.climate_vars),
+        species_vars=(cfg.model.species_vars),
+        vegetation_vars=(cfg.model.vegetation_vars),
+        land_vars=(cfg.model.land_vars),
+        agriculture_vars=(cfg.model.agriculture_vars),
+        forest_vars=(cfg.model.forest_vars),
+        redlist_vars=(cfg.model.redlist_vars),
+        misc_vars=(cfg.model.misc_vars),
         atmos_levels=cfg.data.atmos_levels,
         species_num=cfg.data.species_number,
         H=cfg.model.H,
@@ -584,10 +569,10 @@ def main(cfg):
     checkpoint_callback = ModelCheckpoint(
         dirpath=f"{output_dir}/checkpoints",
         save_top_k=3,
-        monitor="train_loss",  # `log('val_loss', value)` in the `LightningModule`
+        monitor="val_loss",  # `log('val_loss', value)` in the `LightningModule`
         mode="min",
         every_n_train_steps=cfg.training.checkpoint_every,
-        filename="{epoch:02d}-{train_loss:.2f}",
+        filename="{epoch:02d}-{val_loss:.5f}",
         save_last=True,
     )
 
@@ -614,7 +599,7 @@ def main(cfg):
         num_nodes=cfg.training.num_nodes,
         log_every_n_steps=cfg.training.log_steps,
         logger=mlf_logger,  # Only the rank 0 process will have a logger
-        limit_train_batches=2,  # Process 10 batches per epoch.
+        # limit_train_batches=2,  # Process 10 batches per epoch.
         # limit_val_batches=2,
         # limit_test_batches=10,
         val_check_interval=cfg.training.eval_every,  # Run validation every n training batches.
@@ -675,32 +660,6 @@ def main(cfg):
         dist.broadcast_object_list(ckpt_list, src=0)
         selected_ckpt = ckpt_list[0]
 
-    # All ranks must run this simultaneously
-    # trainer.test(model=BFM, ckpt_path=selected_ckpt, dataloaders=val_dataloader)
-
-    # if trainer.is_global_zero:
-    #     best_ckpt = checkpoint_callback.best_model_path
-    #     if best_ckpt:
-    #         print(f"[Rank 0] Testing best checkpoint: {best_ckpt}")
-    #         selected_ckpt = best_ckpt
-    #     else:
-    #         last_ckpt = f"{output_dir}/checkpoints/last.ckpt"
-    #         if os.path.exists(last_ckpt):
-    #             print("[Rank 0] No best checkpoint found. Using last checkpoint.")
-    #             selected_ckpt = last_ckpt
-    #         else:
-    #             print("[Rank 0] No checkpoints found. Testing using current model weights.")
-    #             selected_ckpt = None
-    # else:
-    #     selected_ckpt = None
-
-    # # Ensure all ranks are synchronized and have the checkpoint path
-    # if dist.is_initialized():
-    #     checkpoint_list = [selected_ckpt]
-    #     dist.broadcast_object_list(checkpoint_list, src=0)
-    #     selected_ckpt = checkpoint_list[0]
-
-    # Now all ranks call trainer.test simultaneously
     trainer.test(model=BFM, ckpt_path=selected_ckpt, dataloaders=val_dataloader)
 
     print("Finished testing successfully")

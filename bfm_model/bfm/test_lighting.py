@@ -15,7 +15,7 @@ from lightning.pytorch.loggers import MLFlowLogger
 from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader
 
-from bfm_model.bfm.dataloader_monthly import LargeClimateDataset, custom_collate, detach_batch, detach_output_dict
+from bfm_model.bfm.dataloader_monthly import LargeClimateDataset, custom_collate, _convert
 from bfm_model.bfm.train_lighting import BFM_lighting
 from bfm_model.bfm.decoder import BFMDecoder
 from bfm_model.bfm.encoder import BFMEncoder
@@ -34,6 +34,7 @@ class BFM_lighting(LightningModule):
         land_vars: tuple[str, ...],
         agriculture_vars: tuple[str, ...],
         forest_vars: tuple[str, ...],
+        redlist_vars: tuple[str, ...],
         misc_vars: tuple[str, ...],
         atmos_levels: list[int],
         species_num: int,
@@ -52,7 +53,7 @@ class BFM_lighting(LightningModule):
         warmup_steps: int = 1000,
         total_steps: int = 20000,
         td_learning: bool = True,
-        lead_time: int = 30,
+        lead_time: int = 2,
         **kwargs,
     ):
         super().__init__()
@@ -65,7 +66,7 @@ class BFM_lighting(LightningModule):
         self.warmup_steps = warmup_steps
         self.total_steps = total_steps
         self.td_learning = td_learning
-        self.lead_time = timedelta(hours = lead_time)
+        self.lead_time = lead_time
 
         self.encoder = BFMEncoder(
             surface_vars=surface_vars,
@@ -77,6 +78,7 @@ class BFM_lighting(LightningModule):
             land_vars=land_vars,
             agriculture_vars=agriculture_vars,
             forest_vars=forest_vars,
+            redlist_vars=redlist_vars,
             misc_vars=misc_vars,
             atmos_levels=atmos_levels,
             species_num=species_num,
@@ -141,6 +143,7 @@ class BFM_lighting(LightningModule):
             land_vars=land_vars,
             agriculture_vars=agriculture_vars,
             forest_vars=forest_vars,
+            redlist_vars=redlist_vars,
             misc_vars=misc_vars,
             atmos_levels=atmos_levels,
             species_num=species_num,
@@ -154,7 +157,7 @@ class BFM_lighting(LightningModule):
             **kwargs,
         )
 
-    def forward(self, batch, lead_time=timedelta(hours=6.0), batch_size: int = 1):
+    def forward(self, batch, lead_time=2, batch_size: int = 1):
         encoded = self.encoder(batch, lead_time, batch_size)
         num_patches_h = self.H // self.encoder.patch_size
         num_patches_w = self.W // self.encoder.patch_size
@@ -177,12 +180,12 @@ class BFM_lighting(LightningModule):
         records = []
         x, y = batch
         output = self(x, self.lead_time, batch_size=self.batch_size)
-        pred_cpu = detach_output_dict(output) # helper does detach.clone().cpu()
-        gt_cpu   = detach_batch(y) # The first timestep is the ground truth
+        # pred_cpu = detach_output_dict(output) # helper does detach.clone().cpu()
+        # gt_cpu   = detach_batch(y) # The first timestep is the ground truth
         records.append({
-            "idx":   batch_idx,
-            "pred":  pred_cpu,
-            "gt":    gt_cpu,
+            "idx": batch_idx,
+            "pred": output,
+            "gt": y,
         })
         return records
 
@@ -245,29 +248,25 @@ def main(cfg: DictConfig):
         devices=cfg.training.devices,
         precision=cfg.training.precision,
         log_every_n_steps=cfg.training.log_steps,
-        limit_test_batches=1,
-        limit_predict_batches=1,
+        # limit_test_batches=1,
+        limit_predict_batches=12, #TODO Change this to select how many consecutive months you want to predict
         logger=[mlf_logger_in_hydra_folder, mlf_logger_in_current_folder],
         enable_checkpointing=False,
         enable_progress_bar=True,
     )
 
     bfm_model = BFM_lighting(
-        surface_vars=(["t2m", "msl", "slt", "z", "u10", "v10", "lsm"]),
-        edaphic_vars=(["swvl1", "swvl2", "stl1", "stl2"]),
-        atmos_vars=(["z", "t", "u", "v", "q"]),
-        climate_vars=(["smlt", "tp", "csfr", "avg_sdswrf", "avg_snswrf",
-                       "avg_snlwrf", "avg_tprate", "avg_sdswrfcs", "sd", "t2m", "d2m"]),
-        species_vars=(["1340361", "1340503", "1536449", "1898286", "1920506", "2430567",
-                       "2431885", "2433433", "2434779", "2435240", "2435261", "2437394",
-                       "2441454", "2473958", "2491534", "2891770", "3034825", "4408498",
-                        "5218786", "5219073", "5219173", "5219219", "5844449", "8002952",
-                        "8077224", "8894817", "8909809", "9809229"]),
-        vegetation_vars=(["NDVI"]),
-        land_vars=(["Land"]),
-        agriculture_vars=(["Agriculture", "Arable", "Cropland"]),
-        forest_vars=(["Forest"]),
-        misc_vars=(["avg_slhtf", "avg_pevr"]),
+        surface_vars=(cfg.model.surface_vars),
+        edaphic_vars=(cfg.model.edaphic_vars),
+        atmos_vars=(cfg.model.atmos_vars),
+        climate_vars=(cfg.model.climate_vars),
+        species_vars=(cfg.model.species_vars),
+        vegetation_vars=(cfg.model.vegetation_vars),
+        land_vars=(cfg.model.land_vars),
+        agriculture_vars=(cfg.model.agriculture_vars),
+        forest_vars=(cfg.model.forest_vars),
+        redlist_vars=(cfg.model.redlist_vars),
+        misc_vars=(cfg.model.misc_vars),
         atmos_levels=cfg.data.atmos_levels,
         species_num=cfg.data.species_number,
         H=cfg.model.H,
@@ -289,32 +288,28 @@ def main(cfg: DictConfig):
     # test_results = trainer.test(model=bfm_model, ckpt_path=checkpoint_path, dataloaders=test_dataloader)
     predictions = trainer.predict(model=bfm_model, ckpt_path=checkpoint_path, dataloaders=test_dataloader)
     print("=== Test Results ===")
-    # print(test_results)
-    print(predictions)
-    # predictions_unscaled = test_dataset.scale_batch(predictions, direction="original")
-    # print(predictions_unscaled)
-
-
     SAVE_DIR = Path("pre-train_test_exports")
     SAVE_DIR.mkdir(exist_ok=True, parents=True)
 
-    flat_records = [r for batch_list in predictions for r in batch_list]
+    windows: defaultdict[int, dict] = defaultdict(dict)
 
-    for rec in flat_records:
-        rec["pred"] = test_dataset.scale_batch(rec["pred"], direction="original")
-        rec["gt"]   = test_dataset.scale_batch(rec["gt"], direction="original")
+    for batch in predictions:
+        for rec in batch:
+            idx = rec["idx"]
 
-    by_window = {}
-    for rec in flat_records:
-        idx = rec["idx"]
-        by_window.setdefault(idx, []).append(rec)
+            # scale tensors to original space before CPU conversion
+            pred_scaled = test_dataset.scale_batch(rec["pred"], direction="original")
+            gt_scaled = test_dataset.scale_batch(rec["gt"], direction="original")
 
-    for idx, recs in by_window.items():
-        recs = sorted(recs, key=lambda r: r["idx"])
+            windows[idx] = {
+                "pred": _convert(pred_scaled),
+                "gt": _convert(gt_scaled, move_cpu=True),
+            }
+
+    for idx, payload in windows.items():
         path = SAVE_DIR / f"window_{idx:05d}.pt"
-        torch.save(recs, path)
-        print(f"Saved {path} ({len(recs)} records)")
-
+        torch.save(payload, path)
+        print(f"Saved {path}")
 
 if __name__ == "__main__":
     main()

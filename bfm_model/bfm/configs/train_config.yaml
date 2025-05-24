@@ -1,12 +1,21 @@
 model:
   T: 2   # Time steps
-  V_surf: 2 # Number of surface variables
-  V_atmos: 2 # Number of atmospheric variables
-  C: 3  # Number of atmospheric levels
-  V_spec: 1 # Number of extinct_species variables
-  V_land: 2 # Number of land variables
-  V_agri: 4 # Number of agriculture variables
-  V_forest: 1 # Number of forest variables
+  surface_vars: ["t2m", "msl", "slt", "z", "u10", "v10", "lsm"] # Surface variables
+  edaphic_vars: ["swvl1", "swvl2", "stl1", "stl2"] # Edaphic variables
+  atmos_vars: ["z", "t", "u", "v", "q"]  # Atmospheric variables
+  climate_vars: ["smlt", "tp", "csfr", "avg_sdswrf", "avg_snswrf", "avg_snlwrf", 
+                  "avg_tprate", "avg_sdswrfcs", "sd", "t2m", "d2m"] # Climate variables
+  species_vars: ["1340361", "1340503", "1536449", "1898286", "1920506", "2430567",
+                       "2431885", "2433433", "2434779", "2435240", "2435261", "2437394",
+                       "2441454", "2473958", "2491534", "2891770", "3034825", "4408498",
+                        "5218786", "5219073", "5219173", "5219219", "5844449", "8002952",
+                        "8077224", "8894817", "8909809", "9809229"]  # Species variables
+  vegetation_vars: ["NDVI"] # Vegetation variables
+  land_vars: ["Land"] # Land variables
+  agriculture_vars: ["Agriculture", "Arable", "Cropland"] # Agriculture variables
+  forest_vars: ["Forest"] # Forest variables
+  redlist_vars: ["RLI"] # Red List variables
+  misc_vars: ["avg_slhtf", "avg_pevr"] # Misc variables
   H: 160 #152  # Height
   W: 280 #320  # Width
   num_latent_tokens: 8 #TODO Check consistensy in name and value
@@ -18,29 +27,20 @@ model:
   depth: 3 # Number of transformer layers.
 
 data:
-  atmos_levels: [50, 500, 1000]
-  species_number: 28 # [0-22] available species
-  # data_path: /projects/prjs1134/data/projects/biodt/storage/final_dataset/train
-  # data_path: /home/atrantas/bfm-model/data
+  atmos_levels: [1000, 925, 850, 700, 600, 500, 400, 300, 250, 200, 150, 100, 50]
+  species_number: 28 # available species
   data_path: /projects/prjs1134/data/projects/biodt/storage/final_dataset_monthly/train
-  # data_path: /home/thanasis.trantas/git_projects/bfm-model/data_small/2009_batches # hinton
-  # test_data_path: /projects/prjs1134/data/projects/biodt/storage/final_dataset/test
-  # test_data_path: /home/thanasis.trantas/git_projects/bfm-model/data_small/2009_batches # hinton
-  # test_data_path: /home/atrantas/bfm-model/data
   test_data_path: /projects/prjs1134/data/projects/biodt/storage/final_dataset_monthly/test
   
   scaling:
     enabled: True
-    # stats_path: /home/atrantas/bfm-model/batch_statistics/statistics.json #/projects/prjs1134/data/projects/biodt/storage/batches_2025_02_17/statistics.json # snellius
     stats_path: /projects/prjs1134/data/projects/biodt/storage/monthly_batches/statistics/monthly_batches_stats_splitted_channels.json
-    # stats_path: /data/projects/biodt/storage/batches/statistics.json # hinton
     mode: normalize # normalize (mean and std), standardize (min-max)
-#TODO Checkpointing path: /scratch-shared/<username>
 
 training:
-  batch_size: 11
+  batch_size: 6
   workers: 15
-  epochs: 20
+  epochs: 100
   accelerator: cuda
   precision: bf16-mixed
   precision_in: "high" # ["medium", "high", "highest"] https://pytorch.org/docs/stable/generated/torch.set_float32_matmul_precision.html#torch.set_float32_matmul_precision
@@ -49,11 +49,10 @@ training:
   num_nodes: 1
   gradient_clip: 1.0
   log_steps: 1
-  lr: 0.001  #5e-4
-  wd: 0.0001 #5e-6
-  checkpoint_path: #/home/atrantas/bfm-model/outputs/2025-04-16/21-14-59/checkpoints/epoch=23-train_loss=0.02.ckpt #"/gpfs/home2/damian/projects/bfm-model/outputs"
-  # resume_from_checkpoint: False
-  checkpoint_every: 20
+  lr: 0.003  #5e-4
+  wd: 0.001 #5e-6
+  checkpoint_path: # Add your checkpoint (.pt) path to continue the pre-training
+  checkpoint_every: 21
   eval_every: 20
   td_learning: False
 
@@ -64,8 +63,8 @@ mlflow:
   port: 8082 # change here port if you get [Errno 98] Address already in use
 
 evaluation:
-  test_data: /home/thanasis.trantas/git_projects/bfm-model/data_small/2009_batches
-  checkpoint_path: /home/thanasis.trantas/git_projects/bfm-model/model_weights/epoch=02-train_loss=0.04.ckpt #"/gpfs/scratch1/shared/damian/bflm/outputs/outputs/2025-04-09/23-06-37/checkpoints/last.ckpt" #/home/atrantas/bfm-model/outputs/2025-04-12/13-25-36/checkpoints/epoch=02-train_loss=0.04.ckpt #
+  test_data:  /projects/prjs1134/data/projects/biodt/storage/final_dataset_monthly/test
+  checkpoint_path: /home/atrantas/bfm-model/outputs/2025-05-23/17-20-38-gettingthere/checkpoints/epoch=20-train_loss=0.03.ckpt
   batch_size: 1
   test_device: "cuda:0"
 
@@ -78,7 +77,7 @@ finetune:
   lr: 0.00005  #5e-4
   wd: 0.0001 #5e-6
   td_learning: False
-  checkpoint_path: /home/thanasis.trantas/git_projects/bfm-model/model_weights/epoch=02-train_loss=0.04.ckpt #/home/atrantas/bfm-model/outputs/2025-04-16/21-14-59/checkpoints/epoch=23-train_loss=0.02.ckpt #"/gpfs/home2/damian/projects/bfm-model/outputs"
+  checkpoint_path: # Add your checkpoint (.pt) path to start fine-tuning
   prediction: False
   peft_mode: "all"
   mode: "short" # weekly # monthly
