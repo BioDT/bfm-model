@@ -5,7 +5,7 @@ Copyright (C) 2025 TNO, The Netherlands. All rights reserved.
 import math
 import os
 import pickle
-from datetime import datetime, timedelta
+from datetime import datetime
 from functools import partial
 from typing import Literal
 
@@ -364,9 +364,8 @@ class BFM_lighting(LightningModule):
 
         groups = [
             "surface_variables",
-            "single_variables",
-            "atmospheric_variables",
             "edaphic_variables",
+            "atmospheric_variables",
             "climate_variables",
             "species_variables",
             "vegetation_variables",
