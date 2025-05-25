@@ -20,11 +20,12 @@ model:
   W: 280 #320  # Width
   num_latent_tokens: 8 #TODO Check consistensy in name and value
   backbone: "swin" # mvit
-  patch_size: 4 # Size of spatial patches.
+  patch_size: 2 # Size of spatial patches.
   embed_dim: 256 # Embedding dimension.
   num_heads: 16 # Number of attention heads.
   head_dim: 64 # Dimension of each attention head.
   depth: 3 # Number of transformer layers.
+  swin_backbone_size: "large" # Can be "medium" or "large"
 
 data:
   atmos_levels: [1000, 925, 850, 700, 600, 500, 400, 300, 250, 200, 150, 100, 50]
@@ -39,7 +40,7 @@ data:
     mode: normalize # normalize (mean and std), standardize (min-max)
 
 training:
-  batch_size: 6
+  batch_size: 1
   workers: 15
   epochs: 100
   accelerator: cuda
@@ -56,7 +57,8 @@ training:
   checkpoint_every: 21
   eval_every: 20
   td_learning: False
-  use_mask: False
+  use_mask: "partially" # "no", "fully", or "partially"
+  partially_masked_groups: ["species_variables"]
 
 general:
   do_eval: True
@@ -89,3 +91,29 @@ finetune:
   use_vera: True
   lora_alpha: 8
   d_initial: 0.1
+
+model_swin_backbone:
+  large:  # smaller batch size advised, when using one h100
+    encoder_depths: [2,2,2]
+    encoder_num_heads: [8,16,32]
+    decoder_depths: [2,2,2]
+    decoder_num_heads: [32,16,8]
+    window_size: [1,4,5]
+    mlp_ratio: 4.0
+    qkv_bias: True
+    drop_rate: 0.0
+    attn_drop_rate: 0.0
+    drop_path_rate: 0.1
+    use_lora: False
+  medium:
+    encoder_depths: [2,2]
+    encoder_num_heads: [8,16]
+    decoder_depths: [2,2]
+    decoder_num_heads: [16,8]
+    window_size: [1,4,5]
+    mlp_ratio: 4.0
+    qkv_bias: True
+    drop_rate: 0.0
+    attn_drop_rate: 0.0
+    drop_path_rate: 0.1
+    use_lora: False
