@@ -129,7 +129,8 @@ class BFM_lighting(LightningModule):
         total_steps: int = 20000,
         td_learning: bool = True,
         land_mask_path: str = "",
-        use_mask: bool = True,
+        use_mask: str = "no",
+        partially_masked_groups: list[str] = ["species_variables"],
         **kwargs,
     ):
         super().__init__()
@@ -143,6 +144,7 @@ class BFM_lighting(LightningModule):
         self.total_steps = total_steps
         self.td_learning = td_learning
         self.use_mask = use_mask
+        self.partially_masked_groups = partially_masked_groups
 
         # load land-sea mask
         try:
@@ -377,90 +379,21 @@ class BFM_lighting(LightningModule):
             "misc_variables",
         ]
 
-        if self.land_sea_mask is not None and self.use_mask:
-            print("Computing loss with land-sea mask.")
-            total_masked_loss = 0.0
-            count = 0
-            current_land_mask = None
+        total_loss = 0.0
+        count = 0
+        current_land_mask = None
+
+        mask_available_and_needed = self.land_sea_mask is not None and self.use_mask != "no"
+        if mask_available_and_needed:
             try:
                 sample_output_group_key = next(iter(output))
                 sample_output_var_key = next(iter(output[sample_output_group_key]))
                 target_device = output[sample_output_group_key][sample_output_var_key].device
                 current_land_mask = self.land_sea_mask.to(target_device)
             except Exception as e:
-                return self._compute_unmasked_loss(output, batch, groups)
+                print(f"Error preparing land_sea_mask: {e}. Proceeding without mask.")
+                mask_available_and_needed = False  # welp, no mask if error
 
-            for group_name in groups:
-            # If group doesn't exist in output or batch, skip
-                if group_name not in output or group_name not in batch._asdict():
-                    continue
-
-                pred_dict = output[group_name]
-                true_dict = getattr(batch, group_name)
-                group_masked_loss = 0.0
-                var_count = 0
-
-                for var_name, pred_tensor in pred_dict.items():
-                    if var_name not in true_dict:
-                        print(f"compute_loss: variable {var_name} in group {group_name} not in true_dict, skipping for masked loss")
-                        continue
-                    gt_tensor = true_dict[var_name]
-                    abs_error_map = torch.tensor(0.0, device=pred_tensor.device)
-
-                    if self.td_learning:
-                        time0 = gt_tensor[:, 0]
-                        time1 = gt_tensor[:, 1]
-                        true_diff = time1 - time0
-                        pred_diff = pred_tensor - time0
-                        abs_error_map = torch.abs(pred_diff - true_diff)
-                    else:
-                        time1 = gt_tensor[:, 1]
-                        abs_error_map = torch.abs(pred_tensor - time1)
-                    
-                    # Calculate masked loss directly
-                    masked_loss_var = torch.mean(abs_error_map) # Default if mask cannot be applied
-                    if current_land_mask is not None and abs_error_map.ndim >=2 and \
-                       abs_error_map.shape[-2:] == current_land_mask.shape:
-                        
-                        broadcastable_mask = current_land_mask
-                        if abs_error_map.ndim == 3: 
-                            broadcastable_mask = current_land_mask.unsqueeze(0) 
-                        elif abs_error_map.ndim == 4: 
-                            broadcastable_mask = current_land_mask.unsqueeze(0).unsqueeze(0) 
-                        # No explicit else for ndim < 3 as masked_loss_var is already defaulted
-                        
-                        if abs_error_map.ndim == 3 or abs_error_map.ndim == 4:
-                            masked_error_sum = torch.sum(abs_error_map * broadcastable_mask)
-                            num_elements_for_mean = torch.sum(broadcastable_mask.expand_as(abs_error_map))
-
-                            if num_elements_for_mean > 0:
-                                masked_loss_var = masked_error_sum / num_elements_for_mean
-                            else:
-                                masked_loss_var = torch.tensor(0.0, device=pred_tensor.device) 
-                                print(f"compute_loss: variable {var_name} had 0 land pixels for masked loss calculation.")
-                    elif current_land_mask is not None:  # mask exists but not applicable due to shape mismatch
-                        print(f"compute_loss: land_sea_mask not applicable for {var_name} (map shape {abs_error_map.shape[-2:]} vs mask shape {current_land_mask.shape}), using unmasked mean for this var.")
-
-                    self.log(f"{var_name} land_masked raw loss", masked_loss_var, batch_size=gt_tensor.size(0))
-                    
-                    group_weights = self.variable_weights.get(group_name, {})
-                    w = group_weights.get(var_name, 1.0) if isinstance(group_weights, dict) else group_weights
-                    group_masked_loss += w * masked_loss_var
-                    var_count += 1
-
-                if var_count > 0:
-                    group_masked_loss /= var_count  
-                    total_masked_loss += group_masked_loss
-                    count += 1
-
-            final_total_masked_loss = total_masked_loss / count if count > 0 else torch.tensor(0.0, device=output[groups[0]][next(iter(output[groups[0]]))].device) 
-            return final_total_masked_loss
-        else:
-            return self._compute_unmasked_loss(output, batch, groups)
-
-    def _compute_unmasked_loss(self, output, batch, groups):
-        total_loss = 0.0
-        count = 0
         for group_name in groups:
             if group_name not in output or group_name not in batch._asdict():
                 continue
@@ -470,30 +403,42 @@ class BFM_lighting(LightningModule):
             group_loss = 0.0
             var_count = 0
 
+            apply_mask_to_group = mask_available_and_needed and (self.use_mask == "fully" or (self.use_mask == "partially" and (group_name in self.partially_masked_groups)))
+
             for var_name, pred_tensor in pred_dict.items():
-                # If var_name not in the ground truth dict, skip
                 if var_name not in true_dict:
-                    print(f"{var_name} not in true_dict")
                     continue
                 gt_tensor = true_dict[var_name]
-
+                
+                # Determine target tensor based on td_learning
+                target_tensor = gt_tensor[:, 1]
+                prediction_for_loss = pred_tensor
                 if self.td_learning:
-                    time0 = gt_tensor[:, 0]
-                    time1 = gt_tensor[:, 1]
+                    target_tensor = gt_tensor[:, 1] - gt_tensor[:, 0]
+                    prediction_for_loss = pred_tensor - gt_tensor[:, 0]
+                
+                abs_error_map = torch.abs(prediction_for_loss - target_tensor)
 
-                    true_diff = time1 - time0
-                    pred_diff = pred_tensor - time0
+                loss_var = torch.tensor(0.0, device=pred_tensor.device)
+                use_masked_loss_for_var = apply_mask_to_group and current_land_mask is not None and abs_error_map.ndim >= 2 and abs_error_map.shape[-2:] == current_land_mask.shape
 
-                    loss_var = torch.mean(torch.abs(pred_diff - true_diff))
+                if use_masked_loss_for_var:
+                    broadcastable_mask = current_land_mask
+                    if abs_error_map.ndim == 3:
+                        broadcastable_mask = current_land_mask.unsqueeze(0)
+                    elif abs_error_map.ndim == 4:
+                        broadcastable_mask = current_land_mask.unsqueeze(0).unsqueeze(0)
+                    
+                    masked_error_sum = torch.sum(abs_error_map * broadcastable_mask)
+                    num_elements_for_mean = torch.sum(broadcastable_mask.expand_as(abs_error_map))
+                    loss_var = masked_error_sum / num_elements_for_mean if num_elements_for_mean > 0 else torch.tensor(0.0, device=pred_tensor.device)
                 else:
-                    time1 = gt_tensor[:, 0]
-                    loss_var = torch.mean(torch.abs(pred_tensor - time1))
+                    loss_var = torch.mean(abs_error_map)
 
-                # Determine the weight for this variable.
+                self.log(f"{group_name}_{var_name}_loss", loss_var, batch_size=gt_tensor.size(0))
+                
                 group_weights = self.variable_weights.get(group_name, {})
                 w = group_weights.get(var_name, 1.0) if isinstance(group_weights, dict) else group_weights
-                # Log each variable's raw loss
-                self.log(f"{var_name} raw loss (unmasked)", loss_var, batch_size=gt_tensor.size(0))
                 group_loss += w * loss_var
                 var_count += 1
 
@@ -502,7 +447,7 @@ class BFM_lighting(LightningModule):
                 total_loss += group_loss
                 count += 1
         
-        final_total_loss = total_loss / count if count > 0 else torch.tensor(0.0, device=output[groups[0]][next(iter(output[groups[0]]))].device)
+        final_total_loss = total_loss / count if count > 0 else torch.tensor(0.0, device=output[next(iter(output))][next(iter(output[next(iter(output))]))].device if output else torch.tensor(0.0))
         return final_total_loss
 
     def lr_lambda(self, current_step):
@@ -652,6 +597,7 @@ def main(cfg):
         td_learning=cfg.training.td_learning,
         land_mask_path=cfg.data.land_mask_path,
         use_mask=cfg.training.use_mask,
+        partially_masked_groups=cfg.training.partially_masked_groups,
     )
 
     apply_activation_checkpointing(BFM, checkpoint_wrapper_fn=checkpoint_wrapper, check_fn=activation_ckpt_policy)

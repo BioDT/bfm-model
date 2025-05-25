@@ -56,7 +56,8 @@ training:
   checkpoint_every: 21
   eval_every: 20
   td_learning: False
-  use_mask: False
+  use_mask: "partially" # "no", "fully", or "partially"
+  partially_masked_groups: ["species_variables"]
 
 general:
   do_eval: True
