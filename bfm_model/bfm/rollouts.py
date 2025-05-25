@@ -15,12 +15,12 @@ from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader, Dataset
 
 from bfm_model.bfm.batch_utils import save_batch
-from bfm_model.bfm.dataloder import LargeClimateDataset, custom_collate
+from bfm_model.bfm.dataloader_monthly import LargeClimateDataset, custom_collate
 from bfm_model.bfm.train_lighting import BFM_lighting
 from bfm_model.bfm.utils import compute_next_timestamp, inspect_batch_shapes_namedtuple
 
 
-def rollout_forecast(trainer, model, initial_batch, steps=2, batch_size=1):
+def rollout_forecast(trainer, model, initial_batch, cfg, steps=2, batch_size=1):
 
     # Container for results
     rollout_dict = {
@@ -62,13 +62,27 @@ def rollout_forecast(trainer, model, initial_batch, steps=2, batch_size=1):
         3) run trainer.predict
         4) Combine predictions
         """
+        data_dir = "/home/atrantas/bfm-model/data_small/rollout"
+        test_dataset = LargeClimateDataset(
+        data_dir=data_dir, scaling_settings=cfg.data.scaling, 
+        num_species=cfg.data.species_number, atmos_levels=cfg.data.atmos_levels, mode="pretrain")
+        print("Reading test data from :", data_dir)
+        test_dataloader = DataLoader(
+            test_dataset,
+            batch_size=1,
+            num_workers=cfg.training.workers,
+            collate_fn=custom_collate,
+            drop_last=True,
+            shuffle=False,
+            pin_memory=False,
+        )
+
         ds = SingleBatchDataset(batch_dict)
 
         dl = DataLoader(ds, batch_size=B, collate_fn=single_item_collate, shuffle=False)
 
         # returns a list of predictions (one per batch item, but we only have 1)
-        preds_list = trainer.predict(model, dataloaders=dl)
-
+        preds_list = trainer.predict(model, dataloaders=test_dataloader)
         # predictions_unscaled = test_dataset.scale_batch(preds_list, direction="original")
 
         # print(preds_list)
@@ -78,7 +92,9 @@ def rollout_forecast(trainer, model, initial_batch, steps=2, batch_size=1):
     # For each step in the rollout
     for step_idx in range(steps):
         # run predict
-        preds = run_predict_on_batch(current_batch)  # shape depends on your model, e.g. [B, C, H, W]
+        print(f"Step {step_idx}")
+        print(current_batch)
+        preds = run_predict_on_batch(current_batch)
 
         # store
         rollout_dict["predictions"].append(preds)
@@ -87,15 +103,15 @@ def rollout_forecast(trainer, model, initial_batch, steps=2, batch_size=1):
         # handle times
         # Suppose your "Batch" has metadata => lead_time, timestamps...
         # Store the new predicted time.
-        step_timestamp = current_batch.batch_metadata.timestamp[-1]
+        step_timestamp = current_batch[0].batch_metadata.timestamp[-1]
         rollout_dict["timestamps"].append(step_timestamp)
-        rollout_dict["lead_times"].append(current_batch.batch_metadata.lead_time)
+        rollout_dict["lead_times"].append(current_batch[0].batch_metadata.lead_time)
 
         # Build a new batch that has (last old time) + (predicted new time).
-        new_batch = build_new_batch_with_prediction(current_batch, preds[0])
+        new_batch = build_new_batch_with_prediction(current_batch[0], preds[0])
 
         # This new_batch becomes the "current_batch" for the next iteration
-        current_batch = new_batch
+        current_batch[0] = new_batch
 
     return rollout_dict
 
@@ -110,7 +126,7 @@ def _last_scalar_ts(ts):
 def update_batch_metadata(batch_metadata, hours: int = 6):
     """
     Keep all original fields but normalise `timestamp` to `[t_last , t_next]`
-    where `t_last` is the *scalar* last timestamp (even if nested) and
+    where `t_last` is the scalar last timestamp (even if nested) and
     `t_next  = t_last + hours`.
     `lead_time` is incremented by `hours` (kept as float hours).
     """
@@ -140,38 +156,6 @@ def update_batch_metadata(batch_metadata, hours: int = 6):
     return batch_metadata._replace(**meta_dict)
 
 
-def update_batch_metadata(batch_metadata, hours: float = 6.0):
-    md = batch_metadata._asdict()
-
-    # 1) timestamps (unchanged) …
-    ts = md["timestamp"]
-    if isinstance(ts, (list, tuple)) and ts:
-        t_last = _last_scalar_ts(ts)
-        md["timestamp"] = [t_last, compute_next_timestamp(t_last, hours)]
-
-    # 2) lead_time
-    old_lt = md["lead_time"]
-    if isinstance(old_lt, torch.Tensor):
-        arr = old_lt.detach().cpu().numpy()
-        if arr.ndim == 0:
-            # single element → float
-            new_lt = float(arr) + hours
-        else:
-            # batch of lead_times → list of floats
-            new_lt = (arr + hours).tolist()
-    elif isinstance(old_lt, list):
-        # already a list of floats
-        new_lt = [float(v) + hours for v in old_lt]
-    elif isinstance(old_lt, timedelta):
-        # timedelta → float hours
-        new_lt = (old_lt.total_seconds() / 3600.0) + hours
-    else:
-        # plain float or int
-        new_lt = float(old_lt) + hours
-
-    md["lead_time"] = new_lt
-
-    return batch_metadata._replace(**md)
 
 
 def build_new_batch_with_prediction(old_batch, prediction_dict, groups=None, time_dim=1, hours: int = 6):
@@ -199,13 +183,15 @@ def build_new_batch_with_prediction(old_batch, prediction_dict, groups=None, tim
     if groups is None:
         groups = [
             "surface_variables",
-            "single_variables",
+            "edaphic_variables",
             "atmospheric_variables",
-            "species_extinction_variables",
+            "climate_variables",
+            "species_variables",
+            "vegetation_variables",
             "land_variables",
             "agriculture_variables",
             "forest_variables",
-            "species_variables",
+            "misc_variables"
         ]
 
     # Make a copy so we don't modify old_batch in place
@@ -283,10 +269,11 @@ def main(cfg: DictConfig):
 
     # Load the Test Dataset
     print("Setting up Dataloader ...")
-    data_dir = "data_small/2009_batches" # Needs a single batch item to start the rollouts from
+    # data_dir = "data_small/2009_batches" # Needs a single batch item to start the rollouts from
+    data_dir = "/home/atrantas/bfm-model/data_small/rollout" # Need a single item
     test_dataset = LargeClimateDataset(
-        data_dir=data_dir, scaling_settings=cfg.data.scaling, num_species=cfg.data.species_number
-    )
+        data_dir=data_dir, scaling_settings=cfg.data.scaling, 
+        num_species=cfg.data.species_number, atmos_levels=cfg.data.atmos_levels, mode="pretrain")
     print("Reading test data from :", data_dir)
     test_dataloader = DataLoader(
         test_dataset,
@@ -295,8 +282,9 @@ def main(cfg: DictConfig):
         collate_fn=custom_collate,
         drop_last=True,
         shuffle=False,
-        pin_memory=True,
+        pin_memory=False,
     )
+    print(f"Length Dataloader {len(test_dataloader)}")
 
     output_dir = HydraConfig.get().runtime.output_dir
 
@@ -320,14 +308,21 @@ def main(cfg: DictConfig):
     loaded_model = BFM_lighting.load_from_checkpoint(
         checkpoint_path,
         map_location=device,
-        surface_vars=(["t2m", "msl"]),
-        single_vars=(["lsm"]),
-        atmos_vars=(["z", "t"]),
-        species_vars=(["ExtinctionValue"]),
-        species_distr_vars=(["Distribution"]),
-        land_vars=(["Land", "NDVI"]),
-        agriculture_vars=(["AgricultureLand", "AgricultureIrrLand", "ArableLand", "Cropland"]),
+        surface_vars=(["t2m", "msl", "slt", "z", "u10", "v10", "lsm"]),
+        edaphic_vars=(["swvl1", "swvl2", "stl1", "stl2"]),
+        atmos_vars=(["z", "t", "u", "v", "q"]),
+        climate_vars=(["smlt", "tp", "csfr", "avg_sdswrf", "avg_snswrf",
+                       "avg_snlwrf", "avg_tprate", "avg_sdswrfcs", "sd", "t2m", "d2m"]),
+        species_vars=(["1340361", "1340503", "1536449", "1898286", "1920506", "2430567",
+                       "2431885", "2433433", "2434779", "2435240", "2435261", "2437394",
+                       "2441454", "2473958", "2491534", "2891770", "3034825", "4408498",
+                        "5218786", "5219073", "5219173", "5219219", "5844449", "8002952",
+                        "8077224", "8894817", "8909809", "9809229"]),
+        vegetation_vars=(["NDVI"]),
+        land_vars=(["Land"]),
+        agriculture_vars=(["Agriculture", "Arable", "Cropland"]),
         forest_vars=(["Forest"]),
+        misc_vars=(["avg_slhtf", "avg_pevr"]),
         atmos_levels=cfg.data.atmos_levels,
         species_num=cfg.data.species_number,
         H=cfg.model.H,
@@ -355,15 +350,15 @@ def main(cfg: DictConfig):
     print("=== Test Results ===")
 
     test_sample = next(iter(test_dataloader))
-    rollout_dict = rollout_forecast(trainer, model=loaded_model, initial_batch=test_sample, steps=1)
+    rollout_dict = rollout_forecast(trainer, model=loaded_model, initial_batch=test_sample, cfg=cfg, steps=2)
     # print(f"len rollout dict {len(rollout_dict)}| items in", rollout_dict["batches"][0].batch_metadata)
 
     os.makedirs("rollout_batches", exist_ok=True)
     for i, batch_dict in enumerate(rollout_dict["batches"]):
-        timestamps = batch_dict.batch_metadata.timestamp
+        timestamps = batch_dict[0].batch_metadata.timestamp
         # save_batch(batch_dict, f"rollout_batches/prediction_{timestamps[0]}_to_{timestamps[1]}.pt")
         print(f"\n--- Inspecting Batch {i} ---")
-        inspect_batch_shapes_namedtuple(batch_dict)
+        inspect_batch_shapes_namedtuple(batch_dict[0])
 
 
 if __name__ == "__main__":

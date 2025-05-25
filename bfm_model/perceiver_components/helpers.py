@@ -63,7 +63,9 @@ class PreNorm(nn.Module):
         self.norm_context = nn.LayerNorm(context_dimension) if context_dimension is not None else None
 
     def forward(self, x, **kwargs):
+        # print(f"x shape before norm: {x.shape}")
         x = self.norm(x)
+        # print(f"x shape after norm: {x.shape}")
 
         if self.norm_context is not None:
             context = kwargs["context"]

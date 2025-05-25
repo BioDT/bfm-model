@@ -1,11 +1,11 @@
 #!/bin/bash
 #SBATCH --job-name=bfm_model
 #SBATCH --partition=gpu_h100
-#SBATCH --time=3:00:00
+#SBATCH --time=10:00:00
 #SBATCH --nodes=1
-#SBATCH --ntasks-per-node=4
+#SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=15
-#SBATCH --gpus-per-node=4
+#SBATCH --gpus-per-node=1
 
 module purge
 
@@ -13,7 +13,7 @@ module load 2024 Python/3.12.3-GCCcore-13.3.0 CUDA/12.6.0 cuDNN/9.5.0.50-CUDA-12
 
 set -e
 
-run_path=/gpfs/home2/damian/projects/bfm-model
+run_path=/home/atrantas/bfm-model
 venv_path=${run_path}/venv # local environment
 
 # this can be created with scripts/install_pytorch.sh

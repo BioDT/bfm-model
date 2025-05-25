@@ -244,7 +244,8 @@ def main(cfg: DictConfig):
     print("Setting up Dataloader ...")
     test_dataset = LargeClimateDataset(
         data_dir=cfg.evaluation.test_data, scaling_settings=cfg.data.scaling, 
-        num_species=cfg.data.species_number, atmos_levels=cfg.data.atmos_levels)  # Adapt
+        num_species=cfg.data.species_number, atmos_levels=cfg.data.atmos_levels,
+        model_patch_size=cfg.model.patch_size)
     print("Reading test data from :", cfg.evaluation.test_data)
     test_dataloader = DataLoader(
         test_dataset,
@@ -342,6 +343,9 @@ def main(cfg: DictConfig):
             # scale tensors to original space before CPU conversion
             pred_scaled = test_dataset.scale_batch(rec["pred"], direction="original")
             gt_scaled = test_dataset.scale_batch(rec["gt"], direction="original")
+            # For RAW unscaled
+            # pred_scaled = rec["pred"]
+            # gt_scaled = rec["gt"]
 
             windows[idx] = {
                 "pred": _convert(pred_scaled),

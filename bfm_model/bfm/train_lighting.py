@@ -202,7 +202,7 @@ class BFM_lighting(LightningModule):
             "forest_variables": {"Forest": 0.1},
             "redlist_variables": {"RLI": 0.1},
             "misc_variables": {"avg_slhtf": 0.1, "avg_pevr": 0.1},
-            "species_variables": 5.0
+            "species_variables": 100.0
         }
 
         self.encoder = BFMEncoder(
@@ -470,6 +470,7 @@ class BFM_lighting(LightningModule):
                 count += 1
         
         final_total_loss = total_loss / count if count > 0 else torch.tensor(0.0, device=output[next(iter(output))][next(iter(output[next(iter(output))]))].device if output else torch.tensor(0.0))
+        print(f"Total loss {final_total_loss}")
         return final_total_loss
 
     def lr_lambda(self, current_step):
@@ -485,7 +486,7 @@ class BFM_lighting(LightningModule):
 
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=12000, eta_min=self.learning_rate / 10)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=500, eta_min=self.learning_rate / 10)
         # scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=self.lr_lambda)
 
         return [optimizer], [scheduler]
@@ -667,7 +668,10 @@ def main(cfg):
 
     elif cfg.training.strategy == "ddp":
         distr_strategy = DDPStrategy()
-
+    
+    else:
+        distr_strategy = None
+    
     print(f"Using {cfg.training.strategy} strategy: {distr_strategy}")
 
     trainer = L.Trainer(
