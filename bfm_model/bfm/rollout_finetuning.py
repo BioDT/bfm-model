@@ -2,7 +2,7 @@
 Copyright (C) 2025 TNO, The Netherlands. All rights reserved.
 """
 import os
-from typing import Literal
+from typing import Literal, Tuple
 from functools import partial
 from datetime import datetime, timedelta
 
@@ -24,25 +24,26 @@ from lightning.pytorch.utilities.model_summary import ModelSummary
 from lightning.pytorch.callbacks import ModelCheckpoint, Callback
 from lightning.pytorch.strategies import DDPStrategy, FSDPStrategy
 
-from bfm_model.bfm.dataloder import LargeClimateDataset, custom_collate, detach_graph_batch, detach_batch, batch_to_device
+from bfm_model.bfm.dataloader_monthly import LargeClimateDataset, custom_collate, detach_graph_batch, \
+                                            detach_batch, batch_to_device, detach_preds, debug_batch_devices, inspect_batch_nans
 from bfm_model.bfm.rollouts import build_new_batch_with_prediction
 from bfm_model.bfm.decoder import BFMDecoder
 from bfm_model.bfm.encoder import BFMEncoder
 from bfm_model.mvit.mvit_model import MViT
 from bfm_model.swin_transformer.core.swim_core_v2 import Swin3DTransformer
-from bfm_model.bfm.utils import load_config
+from bfm_model.bfm.utils import compute_next_timestamp, inspect_batch_shapes_namedtuple
 
 def activation_ckpt_policy(module):
     return isinstance(module, (Swin3DTransformer, MViT))
 
 class SequentialWindowDataset(Dataset):
     """
-    Wrap an underlying single‑sample dataset so __getitem__(i) returns a list
-    [sample_i, sample_{i+1}, … sample_{i+steps}] where steps is user‑defined.
+    Wrap an underlying single-sample dataset so __getitem__(i) returns a list
+    [sample_i, sample_{i+1}, … sample_{i+steps}] where steps is user-defined.
     """
     def __init__(self, base_ds: Dataset, steps: int):
-        assert steps >= 1, "`steps` must be ≥ 1"
-        self.base = base_ds          # yields one Batch per index
+        assert steps >= 1, "steps must be ≥ 1"
+        self.base = base_ds # yields one Batch per index
         self.steps = steps
 
     def __len__(self):
@@ -91,13 +92,16 @@ class BFM_Forecastinglighting(LightningModule):
     def __init__(
         self,
         surface_vars: tuple[str, ...],
-        single_vars: tuple[str, ...],
+        edaphic_vars: tuple[str, ...],
         atmos_vars: tuple[str, ...],
+        climate_vars: tuple[str, ...],
         species_vars: tuple[str, ...],
-        species_distr_vars: tuple[str, ...],
+        vegetation_vars: tuple[str, ...],
         land_vars: tuple[str, ...],
         agriculture_vars: tuple[str, ...],
         forest_vars: tuple[str, ...],
+        redlist_vars: tuple[str, ...],
+        misc_vars: tuple[str, ...],
         atmos_levels: list[int],
         species_num: int,
         H: int = 32,
@@ -116,7 +120,7 @@ class BFM_Forecastinglighting(LightningModule):
         total_steps: int = 20000,
         td_learning: bool = False,
         ground_truth_dataset=None, 
-        lead_time: float = 6.0, # hours
+        lead_time: int = 1, # months
         refresh_interval=30,
         buffer_max_size=10, 
         initial_buffer_size=5,
@@ -129,7 +133,17 @@ class BFM_Forecastinglighting(LightningModule):
         use_lora: bool = False,
         use_vera: bool = False,
         rollout_steps: int = 1,
-
+        swin_encoder_depths: Tuple[int, ...] = (2,2,2),
+        swin_encoder_num_heads: Tuple[int, ...] = (8,16,32),
+        swin_decoder_depths: Tuple[int, ...] = (2,2,2),
+        swin_decoder_num_heads: Tuple[int, ...] = (32,16,8),
+        swin_window_size: Tuple[int, ...] = (1,4,5),
+        swin_mlp_ratio: float = 4.0,
+        swin_qkv_bias: bool = True,
+        swin_drop_rate: float = 0.0,
+        swin_attn_drop_rate: float = 0.0,
+        swin_drop_path_rate: float = 0.1,
+        swin_use_lora: bool = False,
         **kwargs,
     ):
         super().__init__()
@@ -143,7 +157,7 @@ class BFM_Forecastinglighting(LightningModule):
         self.total_steps = total_steps
         self.td_learning = td_learning
         self.rollout_steps = rollout_steps
-        self.lead_time = timedelta(hours = lead_time)
+        self.lead_time = lead_time
         self.refresh_interval = refresh_interval
         # Store the ground truth dataset for matching.
         self.ground_truth_dataset = ground_truth_dataset
@@ -177,13 +191,16 @@ class BFM_Forecastinglighting(LightningModule):
 
         self.encoder = BFMEncoder(
             surface_vars=surface_vars,
-            single_vars=single_vars,
+            edaphic_vars=edaphic_vars,
             atmos_vars=atmos_vars,
+            climate_vars=climate_vars,
             species_vars=species_vars,
-            species_distr_vars=species_distr_vars,
+            vegetation_vars=vegetation_vars,
             land_vars=land_vars,
             agriculture_vars=agriculture_vars,
             forest_vars=forest_vars,
+            redlist_vars=redlist_vars,
+            misc_vars=misc_vars,
             atmos_levels=atmos_levels,
             species_num=species_num,
             H=H,
@@ -201,16 +218,16 @@ class BFM_Forecastinglighting(LightningModule):
         if backbone_type == "swin":
             self.backbone = Swin3DTransformer(
                 embed_dim=embed_dim,
-                encoder_depths=(2, 2),
-                encoder_num_heads=(8, 16),
-                decoder_depths=(2, 2),
-                decoder_num_heads=(32, 16),
-                window_size=(1, 1, 2),
-                mlp_ratio=4.0,
-                qkv_bias=True,
-                drop_rate=0.0,
-                attn_drop_rate=0.0,
-                drop_path_rate=0.1,
+                encoder_depths=swin_encoder_depths,
+                encoder_num_heads=swin_encoder_num_heads,
+                decoder_depths=swin_decoder_depths,
+                decoder_num_heads=swin_decoder_num_heads,
+                window_size=swin_window_size,
+                mlp_ratio=swin_mlp_ratio,
+                qkv_bias=swin_qkv_bias,
+                drop_rate=swin_drop_rate,
+                attn_drop_rate=swin_attn_drop_rate,
+                drop_path_rate=swin_drop_path_rate,
                 peft_r=peft_r,
                 lora_alpha=lora_alpha,
                 d_initial=d_initial,
@@ -247,13 +264,16 @@ class BFM_Forecastinglighting(LightningModule):
         self.backbone_type = backbone_type
         self.decoder = BFMDecoder(
             surface_vars=surface_vars,
-            single_vars=single_vars,
+            edaphic_vars=edaphic_vars,
             atmos_vars=atmos_vars,
+            climate_vars=climate_vars,
             species_vars=species_vars,
-            species_distr_vars=species_distr_vars,
+            vegetation_vars=vegetation_vars,
             land_vars=land_vars,
             agriculture_vars=agriculture_vars,
             forest_vars=forest_vars,
+            redlist_vars=redlist_vars,
+            misc_vars=misc_vars,
             atmos_levels=atmos_levels,
             species_num=species_num,
             H=H,
@@ -278,10 +298,10 @@ class BFM_Forecastinglighting(LightningModule):
 
         total = sum(p.numel() for p in self.parameters())
         trainable = sum(p.numel() for p in self.parameters() if p.requires_grad)
-        print(f"{trainable/1e6:.2f} M / {total/1e6:.2f} M parameters will update")
+        print(f"{trainable/1e6:.2f} M / {total/1e6:.2f} M parameters will update")
 
 
-    def forward(self, batch, lead_time=timedelta(hours=6.0), batch_size: int = 1):
+    def forward(self, batch, lead_time: int = 1, batch_size: int = 1):
         """
         Forward pass of the model.
 
@@ -294,6 +314,7 @@ class BFM_Forecastinglighting(LightningModule):
 
         """
         # print(f"BFM batch size: {batch_size}")
+        # debug_batch_devices(batch)
         encoded = self.encoder(batch, lead_time, batch_size)
         # print("Encoded shape", encoded.shape)
 
@@ -346,6 +367,7 @@ class BFM_Forecastinglighting(LightningModule):
             keep_grad = (mode == "finetune" and k == steps - 1)
             with torch.set_grad_enabled(keep_grad):
                 preds = self(curr, self.lead_time, batch_size=batch_size)
+                # print(preds.keys())
             if keep_grad:
                 next_batch = build_new_batch_with_prediction(curr, preds)
             else:
@@ -358,6 +380,8 @@ class BFM_Forecastinglighting(LightningModule):
             rollout_dict["timestamps"].append(next_batch.batch_metadata.timestamp)
             rollout_dict["lead_times"].append(next_batch.batch_metadata.lead_time)
             curr = next_batch
+            # print(f"inspecting batch at step: {k}")
+            # inspect_batch_shapes_namedtuple(curr)
 
         return rollout_dict
 
@@ -397,6 +421,8 @@ class BFM_Forecastinglighting(LightningModule):
         xs = batch
         init_batch = xs[0]
         target_batch = xs[self.rollout_steps]
+        # inspect_batch_shapes_namedtuple(init_batch)
+        # inspect_batch_shapes_namedtuple(target_batch)
         traj_loss = []
         # push‑forward rollout
         roll = self.rollout_forecast(
@@ -406,6 +432,9 @@ class BFM_Forecastinglighting(LightningModule):
             mode="finetune")
 
         pred_last = roll["batches"][-1] # Batch (tK,ŷK+1)
+        inspect_batch_nans(roll["batches"][-1], tag="pred_last")
+        inspect_batch_nans(target_batch, tag="gt_last")
+
         loss = self.compute_loss(pred_last, target_batch)
         # (optional) statistics on earlier steps without grads
         with torch.no_grad():
@@ -469,6 +498,14 @@ class BFM_Forecastinglighting(LightningModule):
                 "gt":    gt_cpu,
             })
         return records
+    # Will show all the layers we freeze! 
+    # def on_after_backward(self):
+    #     """
+    #     Checker for not learnable parameters -> Should output nothing!
+    #     """
+    #     for name, param in self.named_parameters():
+    #         if param.grad is None:
+    #             print(name)
 
     def compute_loss(self, output, batch):
         # batch = target:      t1, t2
@@ -478,36 +515,32 @@ class BFM_Forecastinglighting(LightningModule):
 
         groups = [
             "surface_variables",
-            "single_variables",
+            "edaphic_variables",
             "atmospheric_variables",
-            "species_extinction_variables",
+            "climate_variables",
+            "species_variables",
+            "vegetation_variables",
             "land_variables",
             "agriculture_variables",
             "forest_variables",
-            "species_variables",
+            "redlist_variables",
+            "misc_variables",
         ]
-        # print(f"IN LOSS: PREDICTION {output.batch_metadata.timestamp} \n TARGET {batch.batch_metadata.timestamp}")
-        # print(f"OUTPUT {output} \n BATCH {batch}")
         for group_name in groups:
-            # If group doesn't exist in output or batch, skip
-            # if group_name not in output or group_name not in batch._asdict():
-            #     print(f"{group_name} Does not exist in output or in batch")
-            #     continue
 
             pred_dict = getattr(output, group_name)
             true_dict = getattr(batch, group_name)
             # print(f"pred_dict {pred_dict} \n  TRUE DICT {true_dict}")
             group_loss = 0.0
             var_count = 0
-
+            # inspect_batch_shapes_namedtuple(pred_dict)
             for var_name, pred_tensor in pred_dict.items():
                 # If var_name not in the ground truth dict, skip
                 if var_name not in true_dict:
                     print(f"{var_name} not in true_dict")
                     continue
                 gt_tensor = true_dict[var_name]
-                # print("GT tensor shape:", gt_tensor.shape)
-                # print("Predict tensor shape", pred_tensor.shape)
+
                 if self.td_learning:
                     time0 = gt_tensor[:, 0]
                     time1 = gt_tensor[:, 1]
@@ -518,9 +551,18 @@ class BFM_Forecastinglighting(LightningModule):
 
                     loss_var = torch.mean(torch.abs(pred_diff - true_diff))
                 else:
+                    # print(f"prediction tensor shape: {pred_tensor.shape}")
                     time1 = gt_tensor[:, 1]
-                    # print("pred and true shapes", pred_tensor[:, 1].shape, time1.shape)
-                    loss_var = torch.mean(torch.abs(pred_tensor[:, 1] - time1))
+                    pred = pred_tensor[:, 1]
+
+                    # mask out NaN/Inf before loss
+                    mask = torch.isfinite(time1) & torch.isfinite(pred)
+                    if mask.sum() == 0:
+                        continue
+                    p_clean = pred[mask]
+                    t_clean = time1[mask]
+
+                    loss_var = torch.mean(torch.abs(p_clean - t_clean))
 
                 # Determine the weight for this variable.
                 group_weights = self.variable_weights.get(group_name, {})
@@ -529,7 +571,6 @@ class BFM_Forecastinglighting(LightningModule):
                 else:
                     w = group_weights
                 # Log each variable's raw loss
-                # print(f"{var_name} raw loss", loss_var)
                 self.log(f"{var_name} raw loss", loss_var, batch_size=time1.size(0), sync_dist=True) # to accumulate the metric across devices.
                 group_loss += w * loss_var
                 var_count += 1
@@ -542,7 +583,7 @@ class BFM_Forecastinglighting(LightningModule):
         if count > 0:
             total_loss /= count  # average across groups
 
-        # print(f"Single step Loss: {total_loss}")
+        print(f"Single step Loss: {total_loss}")
         return total_loss
 
     def configure_optimizers(self):
@@ -607,14 +648,6 @@ def main(cfg: DictConfig):
     Returns:
         test_results (dict or list): Test metrics returned by trainer.test().
     """
-    # Load config with the settings used during the weights save time, else use the current config
-    # TODO Enable when have final configs
-    # if cfg_m.master.path:
-    #     cfg = load_config(cfg_m.master.path)
-    #     print(f"Will be loading config & weights from MASTER PATH: {cfg_m.master.path}")
-    # else:
-    #     cfg = cfg_m
-
     MODE = cfg.finetune.mode
     # Setup config
     print(OmegaConf.to_yaml(cfg))
@@ -628,11 +661,11 @@ def main(cfg: DictConfig):
     print(f"Output directory: {output_dir}")
     dataset = LargeClimateDataset(
         data_dir=cfg.data.data_path, scaling_settings=cfg.data.scaling, num_species=cfg.data.species_number,
-        mode="finetune",
+        mode="finetune", atmos_levels=cfg.data.atmos_levels,
     )
     test_dataset = LargeClimateDataset(
         data_dir=cfg.data.test_data_path, scaling_settings=cfg.data.scaling, num_species=cfg.data.species_number,
-        mode="finetune",
+        mode="finetune", atmos_levels=cfg.data.atmos_levels,
     )
     seq_dataset = SequentialWindowDataset(dataset, cfg.finetune.rollout_steps)
     seq_test_dataset = SequentialWindowDataset(test_dataset, cfg.finetune.rollout_steps)
@@ -642,7 +675,7 @@ def main(cfg: DictConfig):
         batch_size=cfg.finetune.batch_size,
         num_workers=cfg.training.workers,
         collate_fn=custom_collate,
-        drop_last=True,
+        drop_last=False,
         shuffle=False,
     )
 
@@ -652,7 +685,7 @@ def main(cfg: DictConfig):
         batch_size=cfg.finetune.batch_size,
         num_workers=cfg.training.workers,
         collate_fn=custom_collate,
-        drop_last=True,
+        drop_last=False,
         pin_memory=True,
     )
 
@@ -675,16 +708,37 @@ def main(cfg: DictConfig):
     # Load Model from Checkpoint
     print(f"Loading model from checkpoint: {checkpoint_path}")
 
+
+    swin_params = {}
+    if cfg.model.backbone == "swin":
+        selected_swin_config = cfg.model_swin_backbone[cfg.model.swin_backbone_size]
+        swin_params = {
+            "swin_encoder_depths": tuple(selected_swin_config.encoder_depths),
+            "swin_encoder_num_heads": tuple(selected_swin_config.encoder_num_heads),
+            "swin_decoder_depths": tuple(selected_swin_config.decoder_depths),
+            "swin_decoder_num_heads": tuple(selected_swin_config.decoder_num_heads),
+            "swin_window_size": tuple(selected_swin_config.window_size),
+            "swin_mlp_ratio": selected_swin_config.mlp_ratio,
+            "swin_qkv_bias": selected_swin_config.qkv_bias,
+            "swin_drop_rate": selected_swin_config.drop_rate,
+            "swin_attn_drop_rate": selected_swin_config.attn_drop_rate,
+            "swin_drop_path_rate": selected_swin_config.drop_path_rate,
+            "swin_use_lora": selected_swin_config.use_lora,
+        }
+
     BFM = BFM_Forecastinglighting.load_from_checkpoint(
         checkpoint_path=checkpoint_path,
-        surface_vars=(["t2m", "msl"]),
-        single_vars=(["lsm"]),
-        atmos_vars=(["z", "t"]),
-        species_vars=(["ExtinctionValue"]),
-        species_distr_vars=(["Distribution"]),
-        land_vars=(["Land", "NDVI"]),
-        agriculture_vars=(["AgricultureLand", "AgricultureIrrLand", "ArableLand", "Cropland"]),
-        forest_vars=(["Forest"]),
+        surface_vars=(cfg.model.surface_vars),
+        edaphic_vars=(cfg.model.edaphic_vars),
+        atmos_vars=(cfg.model.atmos_vars),
+        climate_vars=(cfg.model.climate_vars),
+        species_vars=(cfg.model.species_vars),
+        vegetation_vars=(cfg.model.vegetation_vars),
+        land_vars=(cfg.model.land_vars),
+        agriculture_vars=(cfg.model.agriculture_vars),
+        forest_vars=(cfg.model.forest_vars),
+        redlist_vars=(cfg.model.redlist_vars),
+        misc_vars=(cfg.model.misc_vars),
         atmos_levels=cfg.data.atmos_levels,
         species_num=cfg.data.species_number,
         H=cfg.model.H,
@@ -713,6 +767,8 @@ def main(cfg: DictConfig):
         rollout_steps=cfg.finetune.rollout_steps,
         # lora_steps=cfg.finetune.rollout_steps, # 1 month
         # lora_mode=cfg.finetune.lora_mode, # every step + layers #single
+        **swin_params,
+
     )
 
     apply_activation_checkpointing(
@@ -742,10 +798,10 @@ def main(cfg: DictConfig):
             auto_wrap_policy=partial(size_based_auto_wrap_policy, min_num_params=1e6),
             # activation_checkpointing_policy=activation_ckpt_policy,
         )
+        print(f"Using {cfg.training.strategy} strategy: {distr_strategy}")
     elif cfg.training.strategy == "ddp":
         distr_strategy = DDPStrategy()
-    
-    print(f"Using {cfg.training.strategy} strategy: {distr_strategy}")
+        print(f"Using {cfg.training.strategy} strategy: {distr_strategy}")
 
     trainer = L.Trainer(
         max_epochs=cfg.finetune.epochs,
@@ -758,8 +814,8 @@ def main(cfg: DictConfig):
         # logger=mlf_logger,  # Only the rank 0 process will have a logger
         # limit_train_batches=10,      # Process 10 batches per epoch.
         # limit_val_batches=10,
-        limit_test_batches=1,
-        limit_predict_batches=1,
+        # limit_test_batches=2,
+        # limit_predict_batches=2,
         val_check_interval=cfg.finetune.eval_every,  # Run validation every n training batches.
         check_val_every_n_epoch=None,
         # limit_train_batches=1, # For debugging to see what happens at the end of epoch

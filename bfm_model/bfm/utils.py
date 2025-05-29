@@ -192,10 +192,11 @@ def inspect_batch_shapes_namedtuple(
     print("\n=== Inspecting Batch Shapes (Namedtuple Version) ===")
 
     # Metadata
-    md = batch_obj.batch_metadata
-    print("Metadata:")
-    print(f"  Timestamps: {md.timestamp}")
-    print(f"  Lead time: {md.lead_time}")
+    if hasattr(batch_obj, "batch_metadata"):
+        md = batch_obj.batch_metadata
+        print("Metadata:")
+        print(f"  Timestamps: {md.timestamp}")
+        print(f"  Lead time: {md.lead_time}")
     # Each group
     for group_name in group_names:
         group_data = getattr(batch_obj, group_name, None)

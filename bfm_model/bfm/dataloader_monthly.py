@@ -604,7 +604,7 @@ def detach_graph_batch(batch: Batch) -> Batch:
     def det_grp(grp):
         if grp is None:
             return None
-        return {k: v.detach().cpu() for k, v in grp.items()}
+        return {k: v.detach() for k, v in grp.items()}
 
     return Batch(
         batch_metadata=new_md,
@@ -659,6 +659,43 @@ def batch_to_device(batch: Batch, device: torch.device) -> Batch:
         misc_variables=move_group(batch.misc_variables)
     )
 
+
+
+def inspect_batch_nans(batch, tag: str = ""):
+    """
+    Print where NaN/Inf values live inside a Batch.
+    Args
+    ----
+      batch : Batch named-tuple (pred or gt)
+      tag : free-form label so you know which stage we are inspecting
+    """
+    print(f"=== NaN/Inf inspection {tag} ===")
+    for group_name in [
+        "surface_variables",
+        "edaphic_variables",
+        "atmospheric_variables",
+        "climate_variables",
+        "species_variables",
+        "vegetation_variables",
+        "land_variables",
+        "agriculture_variables",
+        "forest_variables",
+        "redlist_variables",
+        "misc_variables",
+    ]:
+        grp_dict = getattr(batch, group_name, None)
+        if not grp_dict:
+            continue
+        for var, tensor in grp_dict.items():
+            data = tensor
+            while data.dim() > 2:
+                data = data[0]
+            n_nan  = torch.isnan(data).sum().item()
+            n_inf  = torch.isinf(data).sum().item()
+            if n_nan or n_inf:
+                total = data.numel()
+                print(f"  {group_name}:{var:20s}  NaN={n_nan}/{total}  Inf={n_inf}/{total}")
+    print("================================")
 
 def debug_batch_devices(batch: Batch, prefix: str = ""):
     """

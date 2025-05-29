@@ -449,7 +449,6 @@ class BFMEncoder(nn.Module):
         if not variables:
             print(f"\n{group_name}: No variables found")
             return None
-
         # Stack variables => shape [var_count, B, [T,] H, W].
         # e.g. if 2 variables, each [2, 152, 320], then stacking => [2, 2, 152, 320].
         # or if each is [2, 3, 152, 320], => [2, 2, 3, 152, 320].
@@ -544,6 +543,7 @@ class BFMEncoder(nn.Module):
                 # shape => [v, b, H, W] for that single level.
                 level_vars = {}
                 for var_name, var_data in batch.atmospheric_variables.items():
+                    # print(f"Var name : {var_name} | level {level} and lvl idx {level_idx} shape : ", var_data.shape)
                     # var_data is [v, b, l, H, W], but typically v=1 if "var_data" is truly one variable
                     # or if we're grouping multiple variables.
                     # We slice out the level dimension at index 2:
