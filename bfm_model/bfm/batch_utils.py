@@ -58,12 +58,6 @@ def save_batch(batch, batch_path: str):
     """
     if isinstance(batch, Batch):
         batch = convert_namedtuple_to_dict(batch)
-    # test one shape of tensors to see if we need to remove the batch dimension
-    t = batch["agriculture_variables"]["AgricultureIrrLand"]
-    print("Shape of tensor to test:", t.shape)
-    if len(t.shape) == 4:
-        batch = remove_batch_dimension(batch)
-    # shape_species = batch["species_variables"]["dynamic"]["Distribution"].shape
     traverse_nested_dicts(batch)
     torch.save(batch, batch_path)
 

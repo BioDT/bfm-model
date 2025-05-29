@@ -647,13 +647,16 @@ def batch_to_device(batch: Batch, device: torch.device) -> Batch:
     return Batch(
         batch_metadata=new_md,
         surface_variables=move_group(batch.surface_variables),
-        single_variables=move_group(batch.single_variables),
-        species_variables=move_group(batch.species_variables),
+        edaphic_variables=move_group(batch.edaphic_variables),
         atmospheric_variables=move_group(batch.atmospheric_variables),
-        species_extinction_variables=move_group(batch.species_extinction_variables),
+        climate_variables=move_group(batch.climate_variables),
+        species_variables=move_group(batch.species_variables),
+        vegetation_variables=move_group(batch.vegetation_variables),
         land_variables=move_group(batch.land_variables),
         agriculture_variables=move_group(batch.agriculture_variables),
         forest_variables=move_group(batch.forest_variables),
+        redlist_variables=move_group(batch.redlist_variables),
+        misc_variables=move_group(batch.misc_variables)
     )
 
 
@@ -673,13 +676,16 @@ def debug_batch_devices(batch: Batch, prefix: str = ""):
     # variable groups
     for group_name in [
         "surface_variables",
-        "single_variables",
+        "edaphic_variables",
         "atmospheric_variables",
-        "species_extinction_variables",
+        "climate_variables",
+        "species_variables",
+        "vegetation_variables",
         "land_variables",
         "agriculture_variables",
         "forest_variables",
-        "species_variables",
+        "redlist_variables",
+        "misc_variables",
     ]:
         grp = getattr(batch, group_name)
         if grp is None:

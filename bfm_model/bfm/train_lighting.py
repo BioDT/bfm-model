@@ -157,18 +157,6 @@ class BFM_lighting(LightningModule):
         self.use_mask = use_mask
         self.partially_masked_groups = partially_masked_groups
 
-        self.swin_encoder_depths = swin_encoder_depths
-        self.swin_encoder_num_heads = swin_encoder_num_heads
-        self.swin_decoder_depths = swin_decoder_depths
-        self.swin_decoder_num_heads = swin_decoder_num_heads
-        self.swin_window_size = swin_window_size
-        self.swin_mlp_ratio = swin_mlp_ratio
-        self.swin_qkv_bias = swin_qkv_bias
-        self.swin_drop_rate = swin_drop_rate
-        self.swin_attn_drop_rate = swin_attn_drop_rate
-        self.swin_drop_path_rate = swin_drop_path_rate
-        self.swin_use_lora = swin_use_lora
-
         # load land-sea mask
         try:
             with open(land_mask_path, 'rb') as f:
@@ -234,17 +222,17 @@ class BFM_lighting(LightningModule):
         if backbone_type == "swin":
             self.backbone = Swin3DTransformer(
                 embed_dim=embed_dim,
-                encoder_depths=self.swin_encoder_depths,
-                encoder_num_heads=self.swin_encoder_num_heads,
-                decoder_depths=self.swin_decoder_depths,
-                decoder_num_heads=self.swin_decoder_num_heads,
-                window_size=self.swin_window_size,
-                mlp_ratio=self.swin_mlp_ratio,
-                qkv_bias=self.swin_qkv_bias,
-                drop_rate=self.swin_drop_rate,
-                attn_drop_rate=self.swin_attn_drop_rate,
-                drop_path_rate=self.swin_drop_path_rate,
-                use_lora=self.swin_use_lora,
+                encoder_depths=swin_encoder_depths,
+                encoder_num_heads=swin_encoder_num_heads,
+                decoder_depths=swin_decoder_depths,
+                decoder_num_heads=swin_decoder_num_heads,
+                window_size=swin_window_size,
+                mlp_ratio=swin_mlp_ratio,
+                qkv_bias=swin_qkv_bias,
+                drop_rate=swin_drop_rate,
+                attn_drop_rate=swin_attn_drop_rate,
+                drop_path_rate=swin_drop_path_rate,
+                use_lora=swin_use_lora,
             )
         elif backbone_type == "mvit":
             self.backbone = MViT(
