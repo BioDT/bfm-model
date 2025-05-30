@@ -6,18 +6,32 @@ Visualise prediction vs ground-truth batches.
 run:
     streamlit run prediction_viewer.py -- --data_dir ./predictions
 """
-from __future__ import annotations
-import argparse
-from pathlib import Path
-from typing import Dict
-
 import streamlit as st
-import torch
+import argparse
+import io
+from pathlib import Path
+from typing import Dict, List, Tuple
+
 import numpy as np
-import matplotlib.pyplot as plt
-import cartopy.crs as ccrs, cartopy.feature as cfeature
-from cartopy.util import add_cyclic_point
 import pandas as pd
+import torch
+import matplotlib.pyplot as plt
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
+from cartopy.util import add_cyclic_point
+from sklearn.metrics import mean_absolute_error, mean_squared_error
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+from matplotlib import axes as maxes
+
+try:
+    from easy_mpl import taylor_plot as em_taylor_plot
+    TAYLOR_BACKEND = "easy_mpl"
+except ImportError:  # fallback to legacy skillmetrics
+    try:
+        import skillmetrics as sm
+        TAYLOR_BACKEND = "skillmetrics"
+    except ImportError:
+        TAYLOR_BACKEND = None
 
 LAT_START, LAT_END = 32.0, 72.0
 LON_START, LON_END = -25.0, 45.0
@@ -26,13 +40,14 @@ GRID_LON = np.round(np.arange(LON_START, LON_END + 1e-6, 0.25), 3)
 
 def _get_dir() -> Path:
     p = argparse.ArgumentParser(add_help=False)
-    p.add_argument("--data_dir", default="pre_train_exports", type=Path)
+    p.add_argument("--data_dir", default="pre_train_exports-0.00493-weightedspecies", type=Path)
     ns, _ = p.parse_known_args()
     return ns.data_dir.resolve()
 
 DATA_DIR = _get_dir()
 
-def _plot_maps(arr_pred, arr_gt, lats, lons, title):
+def _plot_maps(arr_pred: np.ndarray, arr_gt: np.ndarray, lats: np.ndarray, lons: np.ndarray, title: str) -> plt.Figure:
+    """Quick-look two-panel plot (no grid, low DPI)."""
     arr_pred = np.asarray(arr_pred).squeeze()
     arr_gt = np.asarray(arr_gt).squeeze()
     proj = ccrs.PlateCarree()
@@ -43,9 +58,67 @@ def _plot_maps(arr_pred, arr_gt, lats, lons, title):
         a.add_feature(cfeature.COASTLINE, lw=.4)
         a.set_title(f"{title}\n{lbl}")
     fig.colorbar(mesh, ax=ax.ravel().tolist(), shrink=.75)
-    st.pyplot(fig)
+    return fig
 
-st.sidebar.title("Prediction vs Ground Truth viewer")
+
+def _plot_maps_informative(arr_pred: np.ndarray, arr_gt: np.ndarray, lats: np.ndarray, lons: np.ndarray,
+                           var_group: str, var_name: str, timestamp: str) -> plt.Figure:
+    """High-quality two-panel plot with grid, labels and right-hand colourbar.
+
+    The colourbar axis is created with `axes_grid1.make_axes_locatable`, but we
+    explicitly set `axes_class=plt.Axes` to avoid Cartopy's GeoAxes constructor
+    (which requires a `projection` kwarg and otherwise raises KeyError:
+    'projection').
+    """
+    proj = ccrs.PlateCarree()
+    fig, ax = plt.subplots(1, 2, figsize=(10, 4), subplot_kw=dict(projection=proj))
+
+    # Draw panels and keep last mesh for colourbar
+    mesh = None
+    for a, dat, lbl in zip(ax, (arr_pred.squeeze(), arr_gt.squeeze()), ("Prediction", "Ground Truth")):
+        cyc, lon_cyc = add_cyclic_point(dat, coord=lons)
+        mesh = a.pcolormesh(lon_cyc, lats, cyc, cmap="viridis", transform=proj)
+        a.add_feature(cfeature.COASTLINE, lw=.4)
+        gl = a.gridlines(draw_labels=True, linewidth=0.5, color="gray", linestyle="--")
+        gl.top_labels = gl.right_labels = False
+        a.set_xlabel("Longitude (°E)")
+        a.set_ylabel("Latitude (°N)")
+        a.set_title(lbl)
+
+    divider = make_axes_locatable(ax[-1])
+    cax = divider.append_axes("right", size="2.5%", pad=0.1,
+                            axes_class=maxes.Axes)
+    fig.colorbar(mesh, cax=cax, label="Units")
+
+    # Super‑title
+    fig.suptitle(f"Variable Group: {var_group} | Variable: {var_name} — Timestamp: {timestamp}", fontsize=12)
+    fig.tight_layout(rect=[0, 0.03, 1, 0.95])
+    return fig
+
+
+def _flatten(pred: torch.Tensor, gt: torch.Tensor) -> Tuple[np.ndarray, np.ndarray]:
+    pr = pred.detach().cpu().numpy().ravel()
+    ob = gt.detach().cpu().numpy().ravel()
+    mask = np.isfinite(pr) & np.isfinite(ob)
+    return pr[mask], ob[mask]
+
+
+def _compute_metrics(pred: torch.Tensor, gt: torch.Tensor) -> Dict[str, float]:
+    p, o = _flatten(pred, gt)
+    rmse = float(np.sqrt(mean_squared_error(o, p)))
+    mae = float(mean_absolute_error(o, p))
+    bias = float(np.mean(p - o))
+    corr = float(np.corrcoef(o, p)[0, 1])
+    climo = np.full_like(o, np.mean(o))
+    skill = 1.0 - np.sum((p - o) ** 2) / np.sum((climo - o) ** 2)
+    return {"RMSE": rmse, "MAE": mae, "Bias": bias, "Corr": corr, "Skill": skill}
+
+
+####### STRAEAMLIT APP
+
+st.set_page_config(page_title="Prediction evaluation viewer", layout="wide")
+
+st.sidebar.title("Prediction viewer – extended v3")
 files = sorted(DATA_DIR.glob("window_*.pt"))
 if not files:
     st.sidebar.error("No window_*.pt files found")
@@ -54,96 +127,171 @@ if not files:
 file_sel = st.sidebar.selectbox("Window file", [f.name for f in files])
 window = torch.load(DATA_DIR / file_sel, map_location="cpu", weights_only=False)
 pred, gt = window["pred"], window["gt"]
-
-
 meta = gt["batch_metadata"]
 lats = np.array(meta["latitudes"])[0]
 lons = np.array(meta["longitudes"])[0]
-timestamp = meta["timestamp"][0]# first slice only
-# print(lons, lats)
+timestamp = str(meta["timestamp"][0])
 slot_list = [k for k in pred.keys() if k.endswith("_variables")]
-slot = st.sidebar.selectbox("Variable slot", slot_list)
-
+slot = st.sidebar.selectbox("Variable group", slot_list)
 var_list = list(pred[slot].keys())
-var_sel  = st.sidebar.multiselect("Variable(s)", var_list, default=[var_list[0]])
-if not var_sel: st.info("Pick variable"); st.stop()
+var_sel = st.sidebar.multiselect("Variable(s)", var_list, default=[var_list[0]])
+if not var_sel:
+    st.info("Pick variable(s)")
+    st.stop()
 
-# pressure-level selector
 pl_sel = None
 sample_tensor = next(iter(pred[slot].values()))
-if sample_tensor.ndim == 4:   # (1,C,H,W)
+if sample_tensor.ndim == 4:
     pl_vals = meta["pressure_levels"]
-    pl_sel  = st.sidebar.multiselect("Pressure hPa", pl_vals, default=[pl_vals[0]])
-    if not pl_sel: st.stop()
+    pl_sel = st.sidebar.multiselect("Pressure hPa", pl_vals, default=[pl_vals[0]])
+    if not pl_sel:
+        st.stop()
 
 st.header(f"{file_sel} — {timestamp}")
-for v in var_sel:
-    ten_pred = pred[slot][v] # (1,H,W) or (1,C,H,W)
-    ten_gt = gt[slot][v][0] # take first time slice
 
-    if ten_pred.ndim == 3:
-        _plot_maps(ten_pred[0], ten_gt[0], lats, lons, v)
+TAB_NAMES = (
+    "Spatial Maps",
+    "Spatial Maps Informative",
+    "Metrics Summary",
+    "Taylor Diagram",
+    "Error Distribution",
+    "Species Time-series",
+)
+(tab_spatial, tab_spatial_inf, tab_metrics, tab_taylor, tab_error, tab_species) = st.tabs(TAB_NAMES)
+
+# Spatial Maps ----------------------------------------------------------------
+with tab_spatial:
+    for v in var_sel:
+        ten_pred, ten_gt = pred[slot][v], gt[slot][v][0]
+        if ten_pred.ndim == 3:
+            st.pyplot(_plot_maps(ten_pred[0], ten_gt[0], lats, lons, v))
+        else:
+            assert pl_sel is not None
+            for pl in pl_sel:
+                ci = meta["pressure_levels"].index(pl)
+                st.pyplot(_plot_maps(ten_pred[0, ci], ten_gt[0, ci], lats, lons, f"{v} {pl} hPa"))
+
+# Spatial Maps Informative -----------------------------------------------------
+with tab_spatial_inf:
+    st.info("Download ≥ 300 dpi figures via the buttons below.")
+    for v in var_sel:
+        ten_pred, ten_gt = pred[slot][v], gt[slot][v][0]
+        if ten_pred.ndim == 3:
+            fig = _plot_maps_informative(ten_pred[0], ten_gt[0], lats, lons, slot, v, timestamp)
+            st.pyplot(fig)
+            buf = io.BytesIO(); fig.savefig(buf, dpi=300, format="png", bbox_inches="tight")
+            st.download_button("Download PNG (300 dpi)", buf.getvalue(), file_name=f"{slot}_{v}_{timestamp}.png", mime="image/png")
+        else:
+            assert pl_sel is not None
+            for pl in pl_sel:
+                ci = meta["pressure_levels"].index(pl)
+                fig = _plot_maps_informative(ten_pred[0, ci], ten_gt[0, ci], lats, lons, slot, f"{v}_{pl} hPa", timestamp)
+                st.pyplot(fig)
+                buf = io.BytesIO(); fig.savefig(buf, dpi=300, format="png", bbox_inches="tight")
+                st.download_button("Download PNG (300 dpi)", buf.getvalue(), file_name=f"{slot}_{v}_{pl}hPa_{timestamp}.png", mime="image/png")
+
+# Metrics Summary -------------------------------------------------------------
+with tab_metrics:
+    st.subheader("Deterministic metrics across windows")
+    recs: List[Dict[str, float]] = []
+    for f in files:
+        w = torch.load(f, map_location="cpu")
+        p, g = w["pred"][slot][var_sel[0]], w["gt"][slot][var_sel[0]][0]
+        if p.ndim == 4:
+            ci = meta["pressure_levels"].index(pl_sel[0]) if pl_sel else 0
+            p, g = p[0, ci], g[0, ci]
+        else:
+            p, g = p[0], g[0]
+        m = _compute_metrics(p, g); m["window"] = f.name; recs.append(m)
+    dfm = pd.DataFrame(recs).set_index("window")
+    st.dataframe(dfm.style.format("{:.5f}"))
+    fig_bar, ax = plt.subplots(figsize=(6, 3)); dfm.mean().plot(kind="bar", ax=ax)
+    ax.set_ylabel("Mean score"); ax.set_title("Deterministic skill summary"); st.pyplot(fig_bar)
+
+# Taylor Diagram --------------------------------------------------------------
+with tab_taylor:
+    st.subheader("Taylor diagram — pattern statistics")
+    if TAYLOR_BACKEND is None:
+        st.warning("Install either `easy_mpl` (preferred) or `skillmetrics` to enable this plot.")
+    elif TAYLOR_BACKEND == "easy_mpl":
+        # Build observation array (first window) and simulations dict
+        w0 = torch.load(files[0], map_location="cpu")
+        obs = w0["gt"][slot][var_sel[0]][0]
+        if obs.ndim == 4:
+            ci = meta["pressure_levels"].index(pl_sel[0]) if pl_sel else 0
+            obs = obs[0, ci].detach().cpu().numpy().ravel()
+        else:
+            obs = obs[0].detach().cpu().numpy().ravel()
+        sims: Dict[str, np.ndarray] = {}
+        for f in files:
+            w = torch.load(f, map_location="cpu")
+            p = w["pred"][slot][var_sel[0]]
+            if p.ndim == 4:
+                ci = meta["pressure_levels"].index(pl_sel[0]) if pl_sel else 0
+                p_arr = p[0, ci].detach().cpu().numpy().ravel()
+            else:
+                p_arr = p[0].detach().cpu().numpy().ravel()
+            sims[Path(f).stem] = p_arr
+        fig_tay = em_taylor_plot(obs, sims, show=False)
+        st.pyplot(fig_tay)
+    else:  # skillmetrics fallback
+        ref_std, std_ratio, corrcoef, names = [], [], [], []
+        for f in files:
+            w = torch.load(f, map_location="cpu")
+            p = w["pred"][slot][var_sel[0]]; g = w["gt"][slot][var_sel[0]][0]
+            if p.ndim == 4:
+                ci = meta["pressure_levels"].index(pl_sel[0]) if pl_sel else 0
+                p = p[0, ci].detach().cpu().numpy(); g = g[0, ci].detach().cpu().numpy()
+            else:
+                p = p[0].detach().cpu().numpy(); g = g[0].detach().cpu().numpy()
+            ref_std.append(np.std(g)); std_ratio.append(np.std(p) / np.std(g))
+            corrcoef.append(np.corrcoef(p.ravel(), g.ravel())[0, 1]); names.append(Path(f).stem)
+        fig_tay = plt.figure(figsize=(5, 5))
+        sm.taylor_diagram(std_ratio, corrcoef, markerLabel=names, markerColor="k", refstd=ref_std[0])
+        st.pyplot(fig_tay)
+
+# Error PDF -------------------------------------------------------------------
+with tab_error:
+    st.subheader("Spatial error PDF (Prediction − Observation)")
+    ten_pred, ten_gt = pred[slot][var_sel[0]], gt[slot][var_sel[0]][0]
+    if ten_pred.ndim == 4:
+        ci = meta["pressure_levels"].index(pl_sel[0]) if pl_sel else 0
+        err = (ten_pred[0, ci] - ten_gt[0, ci]).detach().cpu().numpy().ravel()
     else:
-        for pl in pl_sel:
-            cidx = meta["pressure_levels"].index(pl)
-            pred_map = ten_pred[0, cidx]  # (H,W)
-            gt_map = ten_gt[0, cidx] # first time slice  (H,W)
-            _plot_maps(pred_map, gt_map, lats, lons, f"{v}  {pl} hPa")
+        err = (ten_pred[0] - ten_gt[0]).detach().cpu().numpy().ravel()
+    err = err[np.isfinite(err)]
+    fig_err, ax_err = plt.subplots(figsize=(6, 3)); ax_err.hist(err, bins=60, density=True, alpha=0.6)
+    ax_err.set_xlabel("Error"); ax_err.set_ylabel("Probability density"); ax_err.set_title("Spatial error PDF"); ax_err.grid(True)
+    st.pyplot(fig_err)
 
-st.subheader("Species variable - cumulative mean (moving average)")
-spec_slot = "species_variables"
-if spec_slot not in pred:
-    st.info("No species_variables slot present."); st.stop()
-
-all_species: set[str] = set()
-for f in files:
-    w = torch.load(f, map_location="cpu")
-    all_species.update(w["gt"][spec_slot].keys())
-
-species_id = st.sidebar.selectbox(
-    "Species ID for time-series", sorted(all_species))
-
-# species_list = ["1340361", "1340503", "1536449", "1898286", "1920506", "2430567",
-#                        "2431885", "2433433", "2434779", "2435240", "2435261", "2437394",
-#                        "2441454", "2473958", "2491534", "2891770", "3034825", "4408498",
-#                         "5218786", "5219073", "5219173", "5219219", "5844449", "8002952",
-#                         "8077224", "8894817", "8909809", "9809229"]
-
-def _scalar_ts(ts) -> pd.Timestamp:
-    """Return scalar pd.Timestamp from str / numpy / Timestamp / Index."""
-    if isinstance(ts, (list, tuple, np.ndarray)):
-        ts = ts[0]
-    if isinstance(ts, pd.DatetimeIndex):
-        ts = ts[0]
-    return pd.Timestamp(ts)
-
-records = []
-for f in files:
-    w  = torch.load(f, map_location="cpu")
-    ts = _scalar_ts(w["gt"]["batch_metadata"]["timestamp"][0])
-
-    # some windows may lack the chosen species -> skip
-    if species_id not in w["gt"][spec_slot]:
-        continue
-
-    mean_gt= w["gt"  ][spec_slot][species_id][0].float().mean().item()
-    mean_pred= w["pred"][spec_slot][species_id][0].float().mean().item()
-    records.append({"timestamp": ts, "GT": mean_gt, "PRED": mean_pred})
-
-if not records:
-    st.warning(f"No data for species {species_id} in these windows."); st.stop()
-
-df = (pd.DataFrame(records)
-        .sort_values("timestamp")
-        .set_index("timestamp")
-        .astype(float))
-
-df["GT_ma"] = df["GT"].expanding().mean()
-df["PRED_ma"] = df["PRED"].expanding().mean()
-
-fig2 = plt.figure(figsize=(8,3))
-plt.plot(df.index, df["GT_ma"], label="GT", lw=2)
-plt.plot(df.index, df["PRED_ma"], label="PRED", lw=2)
-plt.title(f"Cumulative mean — species {species_id}")
-plt.legend(); plt.grid(True); plt.ylabel("Distribution mean")
-st.pyplot(fig2)
+# Species cumulative mean -----------------------------------------------------
+with tab_species:
+    spec_slot = "species_variables"
+    if spec_slot not in pred:
+        st.info("No species_variables slot present.")
+    else:
+        all_species: set[str] = set()
+        for f in files:
+            w = torch.load(f, map_location="cpu"); all_species.update(w["gt"][spec_slot].keys())
+        species_id = st.sidebar.selectbox("Species ID", sorted(all_species))
+        def _scalar_ts(ts):
+            if isinstance(ts, (list, tuple, np.ndarray)): ts = ts[0]
+            if hasattr(ts, "__iter__") and not isinstance(ts, (str, bytes)): ts = ts[0]
+            return pd.Timestamp(ts)
+        recs = []
+        for f in files:
+            w = torch.load(f, map_location="cpu")
+            ts = _scalar_ts(w["gt"]["batch_metadata"]["timestamp"][0])
+            if species_id not in w["gt"][spec_slot]: continue
+            recs.append({
+                "timestamp": ts,
+                "GT": w["gt"][spec_slot][species_id][0].float().mean().item(),
+                "PRED": w["pred"][spec_slot][species_id][0].float().mean().item(),
+            })
+        if recs:
+            df = pd.DataFrame(recs).set_index("timestamp").astype(float).sort_index()
+            df[["GT_ma", "PRED_ma"]] = df[["GT", "PRED"]].expanding().mean()
+            fig_ts = plt.figure(figsize=(8, 3)); plt.plot(df.index, df["GT_ma"], lw=2, label="GT"); plt.plot(df.index, df["PRED_ma"], lw=2, label="PRED")
+            plt.title(f"Cumulative mean — species {species_id}"); plt.ylabel("Distribution mean"); plt.grid(True); plt.legend(); st.pyplot(fig_ts)
+        else:
+            st.warning(f"No data for species {species_id} in these windows.")
