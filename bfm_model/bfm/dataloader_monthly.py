@@ -6,8 +6,8 @@ import os
 from collections import namedtuple
 from copy import deepcopy
 from datetime import datetime, timedelta
-from typing import Literal, Dict, List, Union, Any
-from copy import deepcopy
+from typing import Any, Dict, List, Literal, Union
+
 import torch
 from omegaconf.dictconfig import DictConfig
 from torch.utils.data import DataLoader, Dataset, default_collate
@@ -230,14 +230,17 @@ class LargeClimateDataset(Dataset):
     """
 
     def __init__(
-        self, data_dir: str, scaling_settings: DictConfig, num_species: int = 2, atmos_levels: list = [50], mode: str = "pretrain", model_patch_size: int = 4
+        self, data_dir: str, scaling_settings: DictConfig, num_species: int = 2, atmos_levels: list = [50], mode: str = "pretrain", model_patch_size: int = 4, max_files: int | None = None
     ):
         self.data_dir = data_dir
         self.num_species = num_species
         self.atmos_levels = atmos_levels
         self.mode = mode
         self.files = [os.path.join(data_dir, f) for f in os.listdir(data_dir) if f.endswith(".pt")]
+        self.max_files = max_files
         self.files.sort()
+        if self.max_files:
+            self.files = self.files[:self.max_files]
         # print("Files sorted", self.files)
         self.scaling_settings = scaling_settings
         self.scaling_statistics = load_stats(scaling_settings.stats_path)
