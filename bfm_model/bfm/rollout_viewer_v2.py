@@ -12,6 +12,8 @@ from collections import defaultdict
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
+
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 import streamlit as st
 from bfm_model.bfm.dataloader_monthly import LargeClimateDataset
@@ -120,7 +122,7 @@ def _spatial_mean_error(pred: torch.Tensor, obs: torch.Tensor) -> torch.Tensor:
 def _file_error(pred: torch.Tensor, obs: torch.Tensor) -> float:
     """Spatial+temporal mean error for an entire batch window."""
     err_ts = _spatial_mean_error(pred, obs)
-    return float(err_ts.mean().cpu())  # (T,)
+    return float(err_ts.cpu().numpy()[0])  # (T,)
 
 # ----------------------------------------------------------------------------
 # Load and process all matched file pairs
@@ -147,13 +149,13 @@ hov_err: DefaultDict[str, List[torch.Tensor]] = defaultdict(list)
 for idx, (gt_path, ro_path) in enumerate(PAIRS):
     GT = torch.load(gt_path, map_location="cpu")
     RO = torch.load(ro_path, map_location="cpu")
-    PRED = RO[1]._asdict()
-    print(type(RO), len(PRED))
+    PRED_dict = RO[0]._asdict()
+    print(type(RO), len(PRED_dict))
 
     GT = _crop_batch(GT)
-
+    PRED = test_dataset.scale_batch(PRED_dict, direction="original")
     if not var_groups:
-        var_groups = {slot: sorted(vdict.keys()) for slot, vdict in GT.items() if slot.endswith("surface_variables")} # TODO Change this to view the groups
+        var_groups = {slot: sorted(vdict.keys()) for slot, vdict in GT.items() if slot.endswith("species_variables")} # TODO Change this to view the groups
     test_var = list(var_groups[next(iter(var_groups))])[0]
     # print(f"Will be using only the ", test_var)
     for slot, vars_ in var_groups.items():
@@ -183,18 +185,20 @@ for idx, (gt_path, ro_path) in enumerate(PAIRS):
                 hov_lat = hov_lat.mean(dim=0)
             hov_err[v].append(hov_lat)
 
-    # -------- species occurrence --------
     if "species_variables" in GT:
         for sp, gt_ten in GT["species_variables"].items():
+            # if sp == 1340361:
+            #     continue
             pr_ten = PRED["species_variables"][sp]
             if idx > 0:
-                gt_ten, pr_ten = gt_ten[1:], pr_ten[1:]
+                gt_ten, pr_ten = gt_ten[:,1:,...], pr_ten[:,1:,...]
             # occ_gt = float((gt_ten > 0).float().mean().cpu())
             # occ_pr = float((pr_ten > 0).float().mean().cpu())
             occ_gt = float((gt_ten > 0).float().mean().cpu())
             occ_pr = float((pr_ten > 0).float().mean().cpu())
             occ_pair_gt[sp].append(occ_gt)
             occ_pair_pr[sp].append(occ_pr)
+            print(f"Occurances GT {occ_gt} | Occurances Pred {occ_pr}")
 
 
 # print(series_err)
@@ -230,8 +234,17 @@ with TAB_SCORE:
 
     err_mat = np.vstack([err_pair[v] for v in vars_sel]).astype(np.float32)
 
+    use_log = st.checkbox("Log scale", value=True)
+
+    if use_log:
+        vmin = np.nanmin(err_mat[err_mat>0])
+        vmax = np.nanmax(err_mat)
+        norm = mcolors.LogNorm(vmin=vmin, vmax=vmax)
+    else:
+        norm = None
+
     fig, ax = plt.subplots(figsize=(10, max(3, 0.45 * len(vars_sel))))
-    im = ax.imshow(err_mat, aspect="auto", cmap="magma_r")
+    im = ax.imshow(err_mat, aspect="auto", cmap="magma_r", norm=norm)
     ax.set_xticks(range(num_pairs))
     date_labels = [p[0].name.split("_")[1] for p in PAIRS]
     ax.set_xticklabels(date_labels, rotation=45, ha="right")
