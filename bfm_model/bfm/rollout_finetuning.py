@@ -171,22 +171,25 @@ class BFM_Forecastinglighting(LightningModule):
 
         self.variable_weights = {
             "surface_variables": {
-                "t2m": 1.7,
-                "msl": 1.5,
-                # ... add more if surface has more
-            },
-            "single_variables": {"lsm": 0.32},
-            "atmospheric_variables": {"z": 0.46, "t": 1.2},
-            "species_extinction_variables": {"ExtinctionValue": 1.43},
-            "land_variables": {"Land": 0.2, "NDVI": 1.48},
-            "agriculture_variables": {
-                "AgricultureLand": 0.4,
-                "AgricultureIrrLand": 0.92,
-                "ArableLand": 0.38,
-                "Cropland": 0.51,
-            },
-            "forest_variables": {"Forest": 0.38},
-            "species_variables": {"Distribution": 2.0},
+                "t2m": 0.1,
+                "msl": 0.1,
+                "slt": 0.1,
+                "z": 0.1,
+                "u10": 0.1,
+                "v10": 0.1,
+                "lsm": 0.1,
+                },
+            "edaphic_variables": {"swvl1": 0.1, "swvl2": 0.1, "stl1": 0.1, "stl2":0.1,},
+            "atmospheric_variables": {"z": 0.1, "t": 0.1, "u": 0.1, "v": 0.1, "q": 0.1},
+            "climate_variables": {"smlt": 0.1, "tp": 0.1, "csfr": 0.1, "avg_sdswrf": 0.1,
+                                "avg_snswrf": 0.1, "avg_snlwrf": 0.1, "avg_tprate": 0.1,
+                                "avg_sdswrfcs": 0.1, "sd": 0.1, "t2m": 0.1, "d2m": 0.1},
+            "land_variables": {"Land": 0.1},
+            "agriculture_variables": {"Agriculture": 0.1, "Arable": 0.1, "Cropland": 0.1},
+            "forest_variables": {"Forest": 0.1},
+            "redlist_variables": {"RLI": 0.1},
+            "misc_variables": {"avg_slhtf": 0.1, "avg_pevr": 0.1},
+            "species_variables": 100.0
         }
 
         self.encoder = BFMEncoder(
@@ -583,12 +586,12 @@ class BFM_Forecastinglighting(LightningModule):
         if count > 0:
             total_loss /= count  # average across groups
 
-        print(f"Single step Loss: {total_loss}")
+        # print(f"Single step Loss: {total_loss}")
         return total_loss
 
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW((p for p in self.parameters() if p.requires_grad), lr=self.learning_rate, weight_decay=self.weight_decay)
-        # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=12000, eta_min=self.learning_rate / 10)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=1000, eta_min=self.learning_rate / 10)
         # scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=self.lr_lambda)
 
         return [optimizer]
@@ -696,13 +699,13 @@ def main(cfg: DictConfig):
     # Single logger approach with rank-specific paths
     mlf_logger = None
     # if "RANK" not in os.environ or os.environ["RANK"] == "0":
-    # if rank == 0 or rank == "0":
-    #     # Use rank in experiment name to avoid conflicts
-    #     mlf_logger = MLFlowLogger(
-    #         experiment_name=f"BFM_{MODE}_finetune_logs_r{rank}", 
-    #         run_name=f"BFM_{MODE}_finetune_{current_time}", 
-    #         save_dir=f"{output_dir}/logs/rank{rank}"
-    #     )
+    if rank == 0 or rank == "0":
+        # Use rank in experiment name to avoid conflicts
+        mlf_logger = MLFlowLogger(
+            experiment_name=f"BFM_{MODE}_finetune_logs_r{rank}", 
+            run_name=f"BFM_{MODE}_finetune_{current_time}", 
+            save_dir=f"{output_dir}/logs/rank{rank}"
+        )
 
     checkpoint_path = cfg.finetune.checkpoint_path
     # Load Model from Checkpoint
@@ -782,8 +785,8 @@ def main(cfg: DictConfig):
 
     checkpoint_callback = ModelCheckpoint(
         dirpath=f"{output_dir}/checkpoints",
-        save_top_k=3,
-        monitor="train_loss", #`log('val_loss', value)` in the `LightningModule`
+        save_top_k=1,
+        monitor="val_loss", #`log('val_loss', value)` in the `LightningModule`
         mode="min",
         every_n_train_steps=cfg.finetune.checkpoint_every,
         filename="{epoch:02d}-{train_loss}",
@@ -811,7 +814,7 @@ def main(cfg: DictConfig):
         # strategy=distr_strategy,
         num_nodes=cfg.training.num_nodes,
         log_every_n_steps=cfg.training.log_steps,
-        # logger=mlf_logger,  # Only the rank 0 process will have a logger
+        logger=mlf_logger,  # Only the rank 0 process will have a logger
         # limit_train_batches=10,      # Process 10 batches per epoch.
         # limit_val_batches=10,
         # limit_test_batches=2,
@@ -821,7 +824,7 @@ def main(cfg: DictConfig):
         # limit_train_batches=1, # For debugging to see what happens at the end of epoch
         # check_val_every_n_epoch=None,  # Do eval every n epochs
         # val_check_interval=3, # Does not work in Distributed settings | Do eval every 10 training steps => 10 steps x 8 batch_size = Every 80 Batches
-        # callbacks=[checkpoint_callback],
+        callbacks=[checkpoint_callback],
         # callbacks=[RolloutSaveCallback()],
         # plugins=[MyClusterEnvironment()],
     )
