@@ -39,30 +39,6 @@ def activation_ckpt_policy(module):
     return isinstance(module, (Swin3DTransformer, MViT))
 
 
-class MyClusterEnvironment(ClusterEnvironment):
-    @property
-    def creates_processes_externally(self) -> bool:
-        """Return True if the cluster is managed (you don't launch processes yourself)"""
-        return True
-
-    def world_size(self) -> int:
-        return int(os.environ["WORLD_SIZE"])
-
-    def global_rank(self) -> int:
-        return int(os.environ["RANK"])
-
-    def local_rank(self) -> int:
-        return int(os.environ["LOCAL_RANK"])
-
-    def node_rank(self) -> int:
-        return int(os.environ["NODE_RANK"])
-
-    def main_address(self) -> str:
-        return os.environ["MASTER_ADDRESS"]
-
-    def main_port(self) -> int:
-        return int(os.environ["MASTER_PORT"])
-
 class BFM_lighting(LightningModule):
     """
     Biodiversity Foundation Model.
@@ -190,7 +166,7 @@ class BFM_lighting(LightningModule):
             "forest_variables": {"Forest": 0.1},
             "redlist_variables": {"RLI": 0.1},
             "misc_variables": {"avg_slhtf": 0.1, "avg_pevr": 0.1},
-            "species_variables": 100.0
+            "species_variables": 10.0
         }
 
         self.encoder = BFMEncoder(
@@ -359,13 +335,16 @@ class BFM_lighting(LightningModule):
         output = self(x, lead_time, batch_size=self.batch_size)
         return output
 
-    def on_after_backward(self):
-        """
-        Checker for not learnable parameters -> Should output nothing!
-        """
-        for name, param in self.named_parameters():
-            if param.grad is None:
-                print(name)
+    # def on_after_backward(self):
+    #     """
+    #     Checker for not learnable parameters -> Should output nothing!
+    #     Does NOT work with FSDP as it flatts the params and makes proxies
+    #     Use it with single GPU to check the params & grads
+    #     """
+    #     for name, param in self.named_parameters():
+    #         if param.grad is None:
+    #             print(name)
+                
 
     def compute_loss(self, output, batch):
         """
@@ -474,7 +453,7 @@ class BFM_lighting(LightningModule):
 
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=500, eta_min=self.learning_rate / 10)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=2000, eta_min=self.learning_rate / 10)
         # scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=self.lr_lambda)
 
         return [optimizer], [scheduler]
@@ -646,11 +625,12 @@ def main(cfg):
     )
 
     print(f"Will be saving checkpoints at: {output_dir}/checkpoints")
-
+    latent_list = list(BFM.encoder._latent_parameter_list)
     if cfg.training.strategy == "fsdp":
         distr_strategy = FSDPStrategy(
             sharding_strategy="FULL_SHARD",
             auto_wrap_policy=partial(size_based_auto_wrap_policy, min_num_params=1e6),
+            ignored_states=latent_list,
             # activation_checkpointing_policy=activation_ckpt_policy,
         )
 
@@ -667,7 +647,7 @@ def main(cfg):
         accelerator=cfg.training.accelerator,
         devices=cfg.training.devices,
         precision=cfg.training.precision,
-        # strategy=distr_strategy,
+        strategy=distr_strategy,
         num_nodes=cfg.training.num_nodes,
         log_every_n_steps=cfg.training.log_steps,
         logger=mlf_logger,  # Only the rank 0 process will have a logger

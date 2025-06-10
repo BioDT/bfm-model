@@ -99,7 +99,7 @@ On snellius, you need to forward the ports to your machine (TODO document comman
 
 ```bash
 # start an interactive job
-salloc -p gpu_h100 --gpus-per-node=1 -t 00:30:00
+salloc -p gpu_h100 --gpus-per-node=1 -t 00:10:00
 # ssh to the node with port forwarding
 # ssh gcn140
 
@@ -128,17 +128,12 @@ This repository contains various visualisation functions that are applicable for
 
 - **Batch level:** Inspect and visualise the RAW data (2 timesteps) from the Batches along with their MAE. Run the notebook `documentation/batch_visualisation.ipynb`. You need to change the `DATA_PATH` to the directory you have the batches you want to visualise. The code plots only a single batch but it can be configured to visualise all of them and save them with the appropriate flag.
 
-- **Prediction level:** You need to have produce predictions either by running `bfm_model/bfm/test_lighting.py` or by `bfm_model/bfm/rollout_finetuning.py` and enabling the **finetune.prediction: True** on the train_config. These will create export folders with the predictions and the ground truths in a compact tensor format. To visualise them simply run `streamlit run documentation/rollout_visualisation.py ` and visit the localhost. There you can inspect the different Variable Groups with their respective Variables and Levels. 
+> [!NOTE]
+> You need to produce predictions either by running `bfm_model/bfm/test_lighting.py` or by `bfm_model/bfm/rollout_finetuning.py` and enabling the **finetune.prediction: True** on the train_config. These will create export folders with the predictions and the ground truths in a compact tensor format.
 
-- TODO: Sharpen the colours & fix the gif timeline.
+- **Prediction level:** To visualise them simply run `streamlit run prediction_viewer.py`. You can navigate the different tabs and variable groups to inspect each and every one of them.
 
-## OOM Errors:
-
-If experience any, use: `export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`
-
-An interesting discussion: https://github.com/pytorch/pytorch/issues/122057
-
-Issue PyTorch 2.1.2 vs 2.2.0
+- **Rollout level:** To visualise them simply run `streamlit run documentation/rollout_visualisation.py ` and visit the localhost. There you can inspect the different Variable Groups with their respective Variables and Levels. 
 
 ## Resources
 
@@ -149,24 +144,22 @@ Issue PyTorch 2.1.2 vs 2.2.0
 + Interesting addition for CLI args generation: https://github.com/google/python-fire
 
 ## TODODs
+- [ ] Codebase cleanup
+
+- [ ] Hugging Face weights upload, loading and tutorial notebook.
+
+- [ ] Make clear the data structure throughout the whole codebase. Currently we have interchanged dicts & Batch Tuples
+
 - [x] Finetune routine implementation with LoRA and optinally VeRA DONE
 
 - [x] Finetune dataset setup
 
-- [ ] Rollout Finetune modes: Daily (4x6h), Weekly & Monthly
+- [x] Rollout Finetune modes: Monthly (x1), Yearly (x12)
 
-- [ ] Investigate if a (Prioritized) Buffer for Rollout Finetune is required
+- [x] Investigate if a (Prioritized) Buffer for Rollout Finetune is required - No need
 
-- [ ] Investigate effect of batch_size on finetuning - currently low memory usage but slow execution
+- [x] Investigate effect of batch_size on finetuning - currently low memory usage but slow execution
 
 - [x] Safe tensors storage
 
--[ ] Hugging Face weights upload, loading and tutorial notebook.
-
-- [ ] Make clear the data structure throughout the whole codebase. Currently we have interchanged dicts & Batch Tuples
-
--[x] Validate distributed training strategy
-
-a) Presence and absence of species: [Geolifeclef](https://www.kaggle.com/competitions/geolifeclef-2023-lifeclef-2023-x-fgvc10/data
-)
-b) Invasive species [flavonge](https://floraveg.eu/) & [opendap](http://opendap.biodt.eu/ias-pdt/0/outputs/)
+- [x] Validate distributed training strategy

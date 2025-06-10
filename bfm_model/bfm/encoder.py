@@ -54,7 +54,8 @@ from bfm_model.bfm.dataset_basics import load_batches
 from bfm_model.perceiver_components.helpers_io import dropout_seq
 from bfm_model.perceiver_components.pos_encoder import build_position_encoding
 from bfm_model.perceiver_core.perceiver_io import PerceiverIO
-
+import torch.distributed as dist
+from torch.distributed.nn.functional import all_gather
 
 class BFMEncoder(nn.Module):
     """
@@ -314,7 +315,7 @@ class BFMEncoder(nn.Module):
         }
 
         # initialize structured latents only if needed
-        latent_list = []
+        latent_list = nn.ParameterList()
         if surface_latents > 0:
             self.surface_latents = nn.Parameter(torch.randn(surface_latents, self.embed_dim, device=device))
             latent_list.append(self.surface_latents)
@@ -350,8 +351,8 @@ class BFMEncoder(nn.Module):
             latent_list.append(self.misc_latents)  
 
         # initialize Perceiver IO with total latents
-        total_latents = sum(self.latent_sizes.values())
-        print(f"total latens {total_latents}")
+        self.total_latents = sum(self.latent_sizes.values())
+        print(f"total latens {self.total_latents}")
 
         # combine all latents for backward compatibility
         # self.latents = nn.Parameter(
@@ -365,7 +366,7 @@ class BFMEncoder(nn.Module):
             dim=self.embed_dim,
             queries_dim=self.embed_dim,
             logits_dimension=None,
-            num_latent_tokens=total_latents,
+            num_latent_tokens=self.total_latents,
             latent_dimension=self.embed_dim,
             cross_attention_heads=self.num_heads,
             latent_attention_heads=self.num_heads,
@@ -399,6 +400,55 @@ class BFMEncoder(nn.Module):
             input_data = torch.cat((input_data, pos_encoding), dim=-1)
 
         return input_data
+
+    def _combine_latents(self, device: torch.device) -> torch.Tensor:
+        fixed = []
+        for p in self._latent_parameter_list:
+            # bring to correct device + restore 2-D if ever saved as 1-D
+            q = p.to(device)
+            if q.ndim == 1:
+                q = q.view(-1, self.embed_dim)
+            fixed.append(q)
+        return torch.cat(fixed, dim=0)
+    
+
+    @torch.no_grad()
+    def _gather_latents(self, device: torch.device) -> torch.Tensor:
+        """
+        Return a [total_latents, D] tensor identical on every rank.
+        Works for single-GPU, DDP, and FSDP (FULL_SHARD).
+        """
+        if not (dist.is_available() and dist.is_initialized()):
+            return torch.cat([p.to(device) for p in self._latent_parameter_list], dim=0)
+
+        def _full_param(param: torch.Tensor) -> torch.Tensor:
+            shards = all_gather(param.to(device))
+            if isinstance(shards, torch.Tensor):
+                return shards.reshape(-1, self.embed_dim)
+            else:
+                return torch.cat(list(shards), dim=0)
+
+        full_list = [_full_param(p) for p in self._latent_parameter_list]
+        full = torch.cat(full_list, dim=0)
+
+        assert full.size(0) == self.total_latents, \
+            f"expected {self.total_latents}, got {full.size(0)}"
+
+        return full  
+            
+        # gathered = []
+        # for p in self._latent_parameter_list:
+        #     # autograd-aware all_gather -> shape [world, shard, D]
+        #     print("All gather output",all_gather(p.to(device)))
+        #     full = all_gather(p.to(device)).reshape(-1, self.embed_dim)
+        #     gathered.append(full)
+
+        # out = torch.cat(gathered, dim=0)
+        # # sanity
+        # assert out.size(0) == self.total_latents, \
+        #     f"Expected {self.total_latents} latents, got {out.size(0)}"
+        # return out.requires_grad_()
+    
 
     def _check_tensor(self, tensor, name, replace_values=True, group=None):
         """
@@ -564,15 +614,7 @@ class BFMEncoder(nn.Module):
                     level_embed = level_embed + specific_level_embedding # Broadcast across patches
                     embeddings.append(level_embed)
                     embedding_groups["atmos"] = level_embed
-                    # atmos.append(level_embed)
-            # TODO Revise the logic why we need to stack them
-            # TODO For now we just add them to the list of embeddings.
-            # TODO v1
-            # If we processed any levels, stack them [L, num_patches, embed_dim]
-            # if len(atmos) > 0:
-            #     stacked_atmos = torch.stack(atmos, dim=0)  # shape: [num_levels, num_patches, embed_dim]
-            # embeddings.append(stacked_atmos)
-            # embedding_groups["atmos"] = stacked_atmos
+
 
         climate_embed = self.process_variable_group(
             batch.climate_variables, self.climate_token_embeds, "Climate Variables"
@@ -580,34 +622,6 @@ class BFMEncoder(nn.Module):
         if climate_embed is not None:
             embeddings.append(climate_embed)
             embedding_groups["climate"] = climate_embed
-
-        # print("process species distribution")
-        # vegetation = []
-        # if batch.species_variables:
-        #     for level_idx in range(self.species_num):
-        #         # For each variable in atmospheric_variables, slice out dimension=2 (the levels)
-        #         # shape => [v, b, H, W] for that single level.
-        #         species_num_vars = {}
-        #         for var_name, var_data in batch.species_variables.items():
-        #             # print(f"var_data_shape {var_data.shape}")
-        #             # var_data is [v, b, l, H, W], but typically v=1 if "var_data" is truly one variable
-        #             # or if we're grouping multiple variables.
-        #             # We slice out the level dimension at index 2:
-        #             sliced = var_data[..., level_idx, :, :]  # shape: [v, b, H, W]
-        #             # print(f"var_data shape {var_data.shape} | sliced shape {sliced.shape}")
-        #             species_num_vars[var_name] = sliced
-        #         # print("species num vars", species_num_vars)
-        #         # print("species token emb", self.vegetation_token_embeds)
-        #         # Now pass that dictionary (one level) to the correct embedding
-        #         species_num_emb = self.process_variable_group(
-        #             species_num_vars,
-        #             self.species_token_embeds,  # sized for 2 variables, 1 level at a time
-        #             f"Species Distribution {level_idx}",
-        #         )
-        #         if species_num_emb is not None:
-        #             # vegetation.append(species_num_emb)
-        #             embeddings.append(species_num_emb)
-        #             embedding_groups["species"] = species_num_emb
 
         species_embed = self.process_variable_group(
             batch.species_variables, self.species_token_embeds, "Species Variables"
@@ -751,41 +765,21 @@ class BFMEncoder(nn.Module):
             x = x + absolute_time_emb_vec.unsqueeze(1)
             x = self._check_tensor(x, "After adding absolute time embedding")
 
-        # normalize before Perceiver IO
         x = self.pre_perceiver_norm(x)
         self._check_tensor(x, "Normalized input")
 
-        # Apply Perceiver IO with structured latents
-        # latents = self.latents.to(x.device)
-        # construct combined latents on-the-fly from the list of parameters
-        if not hasattr(self, '_latent_parameter_list') or not self._latent_parameter_list:
-            # fallback if _latent_parameter_list was not initialized (e.g. old checkpoint) or if it's empty for some reason
-            print("BFMEncoder forward: _latent_parameter_list not found or empty. Falling back to self.latents if it exists or creating new latents")
-            if hasattr(self, 'latents') and isinstance(self.latents, nn.Parameter):
-                combined_latents_for_query = self.latents.to(x.device)
-            else:
-                total_latents_runtime = sum(self.latent_sizes.values())
-                combined_latents_for_query = torch.randn(total_latents_runtime, self.embed_dim, device=x.device)
-                print(f"BFMEncoder forward: Created new random latents of shape {combined_latents_for_query.shape} as a fallback.")
-        else:
-            combined_latents_for_query = torch.cat([p.to(x.device) for p in self._latent_parameter_list], dim=0)
-        # print(f"Encoder forward latents shape: {latents.shape}")
-        combined_latents_for_query = self._check_tensor(combined_latents_for_query, "Latent queries")  # shape: [num_latents, embed_dim]
+        latents = self._combine_latents(x.device) # [num_latents, embed_dim]
+        latents = latents.unsqueeze(0).repeat(B, 1, 1) # [B, num_latents, embed_dim]
 
-        # Track latent splits for potential future use
-        current_idx = 0
-        structured_latents = {}
-        for group, size in self.latent_sizes.items():
-            if size > 0:
-                structured_latents[group] = combined_latents_for_query[current_idx : current_idx + size]
-                current_idx += size
+        assert latents.shape[1] == x.shape[1], \
+            f"Latent tokens {latents.shape[1]} =! input tokens {x.shape[1]}"
+        assert latents.shape[-1] == self.embed_dim == x.shape[-1]
 
-        latents = combined_latents_for_query.unsqueeze(0).expand(B, -1, -1)  # shape: [batch_size, num_latents, embed_dim]
         x = self.perceiver_io(x, queries=latents)
-        x = self._check_tensor(x, "After Perceiver IO")  # shape: [batch_size, num_latents, embed_dim]
+        x = self._check_tensor(x, "After Perceiver IO")  # [batch_size, num_latents, embed_dim]
 
         x = self.pos_drop(x)
-        x = self._check_tensor(x, "Final output")  # shape: [batch_size, num_latents, embed_dim]
+        x = self._check_tensor(x, "Final output")  # [batch_size, num_latents, embed_dim]
 
         return x
 
