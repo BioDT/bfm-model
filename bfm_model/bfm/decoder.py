@@ -380,7 +380,7 @@ class BFMDecoder(nn.Module):
 
             abs_time_numerical_values = []
             for _ in range(B):
-                abs_time_numerical_values.append(start_dt.hour) 
+                abs_time_numerical_values.append(start_dt.month) 
 
             abs_times_tensor = torch.tensor(abs_time_numerical_values, dtype=x.dtype, device=x.device)
 

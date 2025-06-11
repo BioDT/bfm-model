@@ -395,7 +395,7 @@ class BFMEncoder(nn.Module):
         if self.position_encoding_type in ["fourier", "trainable"]:
             pos_encoder = self._build_position_encoding(input_data.shape)
             pos_encoding = pos_encoder(batch_size=input_data.shape[0])
-            self._check_tensor(pos_encoding, "Position encoding")
+            # self._check_tensor(pos_encoding, "Position encoding")
 
             input_data = torch.cat((input_data, pos_encoding), dim=-1)
 
@@ -679,7 +679,7 @@ class BFMEncoder(nn.Module):
         # )  # shape: [batch_size, num_patches * num_variable_groups, embed_dim]
         x = torch.cat(embeddings, dim=1)
         # print("Combined embeddings shape", x.shape)
-        x = self._check_tensor(x, "Combined embeddings")
+        # x = self._check_tensor(x, "Combined embeddings")
 
         # add position encodings #squeeze() was working after lat lon
         lat, lon = batch.batch_metadata.latitudes[-1], batch.batch_metadata.longitudes[-1]
@@ -734,19 +734,19 @@ class BFMEncoder(nn.Module):
         )  # shape: [batch_size, num_patches * num_variable_groups, embed_dim]  (middle dimension - rough estimate, since we have atmos levels)
         # add position encoding
         x = x + pos_encode
-        x = self._check_tensor(
-            x, "After adding position encoding"
-        )  # shape: [batch_size, num_patches * num_variable_groups, embed_dim]
+        # x = self._check_tensor(
+        #     x, "After adding position encoding"
+        # )  # shape: [batch_size, num_patches * num_variable_groups, embed_dim]
 
         # add time embeddings
         # lead_hours = lead_time.total_seconds() / 3600 # for hourly
         lead_times = lead_time * torch.ones(B, dtype=x.dtype, device=x.device)
         lead_time_encode = self._time_encoding(lead_times)  # shape: [batch_size, embed_dim]
-        lead_time_encode = self._check_tensor(lead_time_encode, "Lead time encoding")
+        # lead_time_encode = self._check_tensor(lead_time_encode, "Lead time encoding")
         lead_time_emb = self.lead_time_embed(lead_time_encode)  # shape: [batch_size, embed_dim]
-        lead_time_emb = self._check_tensor(lead_time_emb, "Lead time embedding")
+        # lead_time_emb = self._check_tensor(lead_time_emb, "Lead time embedding")
         x = x + lead_time_emb.unsqueeze(1)  # shape: [batch_size, num_patches * num_variable_groups, embed_dim]
-        x = self._check_tensor(x, "After adding time embedding")
+        # x = self._check_tensor(x, "After adding time embedding")
 
         # Absolute time embedding
         if hasattr(self, 'absolute_time_embed') and self.absolute_time_embed is not None:
@@ -756,17 +756,17 @@ class BFMEncoder(nn.Module):
 
             abs_time_numerical_values = []
             for _ in range(B): # B is batch_size
-                abs_time_numerical_values.append(start_dt.hour) # Example: hour of day
+                abs_time_numerical_values.append(start_dt.month) # Monthly
 
             abs_times_tensor = torch.tensor(abs_time_numerical_values, dtype=x.dtype, device=x.device) # Shape [B]
             
             absolute_time_encode = self._time_encoding(abs_times_tensor) # Sinusoidal encoding
             absolute_time_emb_vec = self.absolute_time_embed(absolute_time_encode)
             x = x + absolute_time_emb_vec.unsqueeze(1)
-            x = self._check_tensor(x, "After adding absolute time embedding")
+            # x = self._check_tensor(x, "After adding absolute time embedding")
 
         x = self.pre_perceiver_norm(x)
-        self._check_tensor(x, "Normalized input")
+        # self._check_tensor(x, "Normalized input")
 
         latents = self._combine_latents(x.device) # [num_latents, embed_dim]
         latents = latents.unsqueeze(0).repeat(B, 1, 1) # [B, num_latents, embed_dim]
@@ -776,10 +776,10 @@ class BFMEncoder(nn.Module):
         assert latents.shape[-1] == self.embed_dim == x.shape[-1]
 
         x = self.perceiver_io(x, queries=latents)
-        x = self._check_tensor(x, "After Perceiver IO")  # [batch_size, num_latents, embed_dim]
+        # x = self._check_tensor(x, "After Perceiver IO")  # [batch_size, num_latents, embed_dim]
 
         x = self.pos_drop(x)
-        x = self._check_tensor(x, "Final output")  # [batch_size, num_latents, embed_dim]
+        # x = self._check_tensor(x, "Final output")  # [batch_size, num_latents, embed_dim]
 
         return x
 

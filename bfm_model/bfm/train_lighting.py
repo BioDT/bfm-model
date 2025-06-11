@@ -148,24 +148,25 @@ class BFM_lighting(LightningModule):
 
         self.variable_weights = {
             "surface_variables": {
-                "t2m": 0.1,
-                "msl": 0.1,
-                "slt": 0.1,
-                "z": 0.1,
-                "u10": 0.1,
-                "v10": 0.1,
-                "lsm": 0.1,
+                "t2m": 2.5,
+                "msl": 1.5,
+                "slt": 0.8,
+                "z": 1.0,
+                "u10": 0.77,
+                "v10": 0.66,
+                "lsm": 1.2,
                 },
-            "edaphic_variables": {"swvl1": 0.1, "swvl2": 0.1, "stl1": 0.1, "stl2":0.1,},
-            "atmospheric_variables": {"z": 0.1, "t": 0.1, "u": 0.1, "v": 0.1, "q": 0.1},
-            "climate_variables": {"smlt": 0.1, "tp": 0.1, "csfr": 0.1, "avg_sdswrf": 0.1,
-                                "avg_snswrf": 0.1, "avg_snlwrf": 0.1, "avg_tprate": 0.1,
-                                "avg_sdswrfcs": 0.1, "sd": 0.1, "t2m": 0.1, "d2m": 0.1},
-            "land_variables": {"Land": 0.1},
-            "agriculture_variables": {"Agriculture": 0.1, "Arable": 0.1, "Cropland": 0.1},
-            "forest_variables": {"Forest": 0.1},
-            "redlist_variables": {"RLI": 0.1},
-            "misc_variables": {"avg_slhtf": 0.1, "avg_pevr": 0.1},
+            "edaphic_variables": {"swvl1": 1.1, "swvl2": 0.9, "stl1": 0.7, "stl2": 0.6,},
+            "atmospheric_variables": {"z": 2.8, "t": 1.7, "u": 0.87, "v": 0.6, "q": 0.78},
+            "climate_variables": {"smlt": 1.0, "tp": 2.2, "csfr": 0.6, "avg_sdswrf": 0.9,
+                                "avg_snswrf": 0.7, "avg_snlwrf": 0.5, "avg_tprate": 2.0,
+                                "avg_sdswrfcs": 0.5, "sd": 0.9, "t2m": 2.5, "d2m": 1.3},
+            "vegetation_variables": {"NDVI": 0.8},
+            "land_variables": {"Land": 0.6},
+            "agriculture_variables": {"Agriculture": 0.4, "Arable": 0.3, "Cropland": 0.4},
+            "forest_variables": {"Forest": 1.2},
+            "redlist_variables": {"RLI": 1.3},
+            "misc_variables": {"avg_slhtf": 1.2, "avg_pevr": 1.0},
             "species_variables": 10.0
         }
 
@@ -608,7 +609,7 @@ def main(cfg):
         partially_masked_groups=cfg.training.partially_masked_groups,
         **swin_params,
     )
-
+    # BFM = torch.compile(BFM)
     apply_activation_checkpointing(BFM, checkpoint_wrapper_fn=checkpoint_wrapper, check_fn=activation_ckpt_policy)
 
     model_summary = ModelSummary(BFM, max_depth=2)
