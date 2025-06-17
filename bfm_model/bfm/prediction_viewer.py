@@ -21,6 +21,8 @@ import cartopy.feature as cfeature
 from cartopy.util import add_cyclic_point
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 from mpl_toolkits.axes_grid1 import make_axes_locatable
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes
+
 from matplotlib import axes as maxes
 
 try:
@@ -71,25 +73,43 @@ def _plot_maps_informative(arr_pred: np.ndarray, arr_gt: np.ndarray, lats: np.nd
     'projection').
     """
     proj = ccrs.PlateCarree()
-    fig, ax = plt.subplots(1, 2, figsize=(10, 4), subplot_kw=dict(projection=proj))
-
+    fig, ax = plt.subplots(1, 2, figsize=(12, 4), subplot_kw=dict(projection=proj))
     # Draw panels and keep last mesh for colourbar
     mesh = None
-    for a, dat, lbl in zip(ax, (arr_pred.squeeze(), arr_gt.squeeze()), ("Prediction", "Ground Truth")):
+    for i, (a, dat, lbl) in enumerate(
+            zip(ax,
+                (arr_pred.squeeze(), arr_gt.squeeze()),
+                ("Prediction", "Ground Truth"))):
+
         cyc, lon_cyc = add_cyclic_point(dat, coord=lons)
-        mesh = a.pcolormesh(lon_cyc, lats, cyc, cmap="viridis", transform=proj)
+        mesh = a.pcolormesh(lon_cyc, lats, cyc,
+                            cmap="viridis",
+                            transform=proj)
         a.add_feature(cfeature.COASTLINE, lw=.4)
-        gl = a.gridlines(draw_labels=True, linewidth=0.5, color="gray", linestyle="--")
+
+        gl = a.gridlines(draw_labels=True,
+                        linewidth=0.5,
+                        color="gray",
+                        linestyle="--")
         gl.top_labels = gl.right_labels = False
+
+        if i == 0:                       # left panel
+            a.set_ylabel("Latitude (°N)")
+        else:                            # right panel
+            gl.left_labels = False       # hide lat tick-labels
+            a.set_ylabel("")
+
         a.set_xlabel("Longitude (°E)")
-        a.set_ylabel("Latitude (°N)")
         a.set_title(lbl)
 
-    divider = make_axes_locatable(ax[-1])
-    cax = divider.append_axes("right", size="2.5%", pad=0.1,
-                            axes_class=maxes.Axes)
-    fig.colorbar(mesh, cax=cax, label="Units")
-
+    cax = inset_axes(
+            ax[-1],                      # parent = right map
+            width="2.5%", height="100%", # bar is 2.5 % wide, full height
+            loc="lower left",
+            bbox_to_anchor=(1.02, 0., 1, 1),  # just outside the map
+            bbox_transform=ax[-1].transAxes,
+            borderpad=0)
+    fig.colorbar(mesh, cax=cax, label="Distribution density")
     # Super‑title
     fig.suptitle(f"Variable Group: {var_group} | Variable: {var_name} — Timestamp: {timestamp}", fontsize=12)
     fig.tight_layout(rect=[0, 0.03, 1, 0.95])
@@ -295,3 +315,4 @@ with tab_species:
             plt.title(f"Cumulative mean — species {species_id}"); plt.ylabel("Distribution mean"); plt.grid(True); plt.legend(); st.pyplot(fig_ts)
         else:
             st.warning(f"No data for species {species_id} in these windows.")
+
