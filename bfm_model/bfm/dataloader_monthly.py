@@ -1,5 +1,5 @@
 """
-Copyright (C) 2025 TNO, The Netherlands. All rights reserved.
+Copyright 2025 (C) TNO. Licensed under the MIT license.
 """
 
 import os
@@ -246,7 +246,6 @@ class LargeClimateDataset(Dataset):
         self.files.sort()
         if self.max_files:
             self.files = self.files[: self.max_files]
-        # print("Files sorted", self.files)
         self.scaling_settings = scaling_settings
         self.scaling_statistics = load_stats(scaling_settings.stats_path)
         self.model_patch_size = model_patch_size
@@ -263,7 +262,7 @@ class LargeClimateDataset(Dataset):
 
         latitudes = data["batch_metadata"]["latitudes"]
         longitudes = data["batch_metadata"]["longitudes"]
-        timestamps = data["batch_metadata"]["timestamp"]  # If it's a single sample, possibly a single timestamp or a list
+        timestamps = data["batch_metadata"]["timestamp"]
         pressure_levels = data["batch_metadata"]["pressure_levels"]
         species_list = data["batch_metadata"]["species_list"]
 
@@ -272,13 +271,10 @@ class LargeClimateDataset(Dataset):
         W = len(data["batch_metadata"]["longitudes"])
 
         # crop dimensions to be divisible by patch size
-        # patch_size = 4  # TODO make this configurable
         new_H = (H // self.model_patch_size) * self.model_patch_size
         new_W = (W // self.model_patch_size) * self.model_patch_size
-        # print(f"Grid size: H x W {new_H}x{new_W}")
         # normalize or standardize variables
         data = self.scale_batch(data, direction="scaled")
-        # print(data["species_variables"].values().max())
 
         surface_vars = crop_variables(data["surface_variables"], new_H, new_W)
         edaphic_vars = crop_variables(data["edaphic_variables"], new_H, new_W)
@@ -295,25 +291,17 @@ class LargeClimateDataset(Dataset):
         # crop metadata dimensions
         latitude_var = torch.tensor(latitudes[:new_H])
         longitude_var = torch.tensor(longitudes[:new_W])
-        # print("Latitues in Dataloder",latitude_var.shape, longitude_var.shape)
         # Calculate lead time
         dt_format = "%Y-%m-%d %H:%M:%S"
         # Convert the two timestamps into datetime objects
         start = datetime.strptime(timestamps[0], dt_format)
         end = datetime.strptime(timestamps[1], dt_format)
-        # shape = atmospheric_vars["z"].shape
-        # print(f"atmos shape before: {shape}")
         atmospheric_vars = extract_atmospheric_levels(atmospheric_vars, pressure_levels, self.atmos_levels, level_dim=1)
-        # new_shape = atmospheric_vars["z"].shape
-        # print(f"atmos shape after: {new_shape}")
-        # print("Dataset species vars", species_vars)
         # Compute lead time in hours
         # lead_time_hours = (end - start).total_seconds() / 86400.0 # Its days now
-        # lead_time_hours = 30
+        # Compute lead time in months
         lead_months = (end.year - start.year) * 12 + (end.month - start.month) + 1
 
-        # Fix the species distribution shapes
-        # print(f"lead time in months", lead_months, type(lead_months))
         metadata = Metadata(
             latitudes=latitude_var,
             longitudes=longitude_var,
@@ -356,7 +344,6 @@ class LargeClimateDataset(Dataset):
         Scale a batch of data back or forward.
         """
         if not self.scaling_settings.enabled:
-            # print("Scaling is not enabled in the configuration.")
             return batch
         convert_to_batch = False
         if isinstance(batch, Batch):
@@ -395,7 +382,7 @@ def extract_atmospheric_levels(
     Returns a new dict with the same keys, but each Tensor is now
     shape (..., len(desired_levels), ...).
     """
-    # 1) map desired level *values* → their integer *indices* in all_levels
+    # Map desired level values -> their integer indices in all_levels
     idxs: List[int] = []
     for lvl in desired_levels:
         try:
@@ -403,11 +390,11 @@ def extract_atmospheric_levels(
         except ValueError:
             raise ValueError(f"Level {lvl!r} not found in available levels {all_levels}")
 
-    # 2) build a 1D index tensor on the same device as your data
+    # Build a 1D index tensor on the same device our data
     device = next(iter(atmos_vars.values())).device
     idx_tensor = torch.tensor(idxs, dtype=torch.long, device=device)
 
-    # 3) slice each variable via index_select
+    # Slice each variable via index_select
     filtered: Dict[str, torch.Tensor] = {}
     for name, tensor in atmos_vars.items():
         filtered[name] = tensor.index_select(dim=level_dim, index=idx_tensor)
@@ -429,8 +416,6 @@ def compute_variable_statistics(tensor: torch.Tensor) -> dict:
         dict: A dictionary of computed statistics
     """
     stats = {}
-    # Ensure float to avoid errors with integer types
-    # (Optional step; .float() is typically safe if you want stats in float precision.)
     t = tensor.float()
 
     stats["min"] = float(t.min().item())
@@ -442,7 +427,7 @@ def compute_variable_statistics(tensor: torch.Tensor) -> dict:
     stats["nan_count"] = int(torch.isnan(t).sum().item())
     stats["inf_count"] = int(torch.isinf(t).sum().item())
 
-    # (Optional) Add shape and dtype for reference
+    # Add shape and dtype for reference
     stats["shape"] = list(tensor.shape)
     stats["dtype"] = str(tensor.dtype)
 
@@ -453,14 +438,18 @@ def compute_batch_statistics(batch: Batch) -> dict:
     """
     Compute statistics for each sub-dictionary in the batch object.
     The batch object has the following structure:
-        batch_metadata,
-        surface_variables,
-        single_variables,
-        atmospheric_variables,
-        species_extinction_variables,
-        land_variables,
-        agriculture_variables,
-        forest_variables
+        "batch_metadata" {...},
+        "surface_variables" {...},
+        "edaphic_variables" {...},
+        "atmospheric_variables" {...},
+        "climate_variables" {...},
+        "species_variables" {...},
+        "vegetation_variables" {...},
+        "land_variables" {...},
+        "agriculture_variables" {...},
+        "forest_variables" {...},
+        "redlist_variables" {...}
+        "misc_variables" {...},
 
     Each of those is a dict of name -> tensor, or a namedtuple for metadata.
     We skip metadata in this function and focus on actual variable tensors.
@@ -502,7 +491,7 @@ def compute_batch_statistics(batch: Batch) -> dict:
 
 scalling_dict = {
     "enabled": False,
-    "stats_path": "/home/atrantas/bfm-model/batch_statistics/all_batches_stats.json",
+    "stats_path": "/projects/prjs1134/data/projects/biodt/storage/monthly_batches/statistics/monthly_batches_stats_splitted_channels.json",
     "mode": "normalize",
 }
 scaling_object = DictObj(scalling_dict)
@@ -513,12 +502,11 @@ def test_dataset_and_dataloader(data_dir):
     Test function to inspect correctness.
     Print distinctive info from a single batch.
     """
-    example_model_patch_size = 4
     dataset = LargeClimateDataset(data_dir, num_species=10, scaling_settings=scaling_object, example_model_patch_size=4)
     dataloader = DataLoader(
         dataset,
-        batch_size=1,  # Fetch two samples for testing
-        num_workers=0,  # For debugging, keep workers=0 to avoid async complexity
+        batch_size=1,
+        num_workers=0,
         pin_memory=False,
         collate_fn=custom_collate,
         shuffle=False,
@@ -547,7 +535,7 @@ def test_dataset_and_dataloader(data_dir):
 
 def detach_batch(batch: Batch) -> Batch:
     """
-    Return a copy of `batch` where every torch.Tensor is
+    Return a copy of batch where every torch. Tensor is
     detached, cloned, and moved to CPU, so it can be torch.save().
     """
     md = batch.batch_metadata
@@ -632,7 +620,7 @@ def detach_graph_batch(batch: Batch) -> Batch:
 
 def batch_to_device(batch: Batch, device: torch.device) -> Batch:
     """
-    Recursively move every tensor in the Batch to `device`.
+    Recursively move every tensor in the Batch to device.
     Nontensor fields (timestamps, lists, floats) are left unchanged.
     """
     md = batch.batch_metadata
@@ -643,8 +631,8 @@ def batch_to_device(batch: Batch, device: torch.device) -> Batch:
         longitudes=lon,
         timestamp=md.timestamp,
         lead_time=md.lead_time,
-        pressure_levels=md.pressure_levels,  # if tensor, also .to(device)
-        species_list=md.species_list,  # list of ints, leave as is
+        pressure_levels=md.pressure_levels,
+        species_list=md.species_list,
     )
 
     def move_group(grp):
@@ -743,7 +731,6 @@ def debug_batch_devices(batch: Batch, prefix: str = ""):
     if isinstance(lt, torch.Tensor):
         devices.add((f"{prefix}.batch_metadata.lead_time", lt.device))
 
-    # print a sorted list
     print("==== Device check:", prefix, "====")
     for k, dev in sorted(devices):
         print(f"  {k:40s} → {dev}")
@@ -805,19 +792,6 @@ def _convert(obj: Any, move_cpu: bool = True, target_dtype: torch.dtype = torch.
 
     return obj
 
-
-# @hydra.main(version_base=None, config_path="configs", config_name="train_config")
-# def main(cfg):
-#     data_path = "/projects/prjs1134/data/projects/biodt/storage/monthly_batches/batches"
-#     dataset = LargeClimateDataset(
-#         data_dir=data_path, scaling_settings=cfg.data.scaling, num_species=2
-#     )
-#     print(len(dataset), dataset[0])
-
-# if __name__ == "__main__":
-#     main()
-
-
 if __name__ == "__main__":
-    data_path = "/home/atrantas/bfm-model/data/"
+    data_path = "/projects/prjs1134/data/projects/biodt/storage/final_dataset_monthly/train"
     test_dataset_and_dataloader(data_path)

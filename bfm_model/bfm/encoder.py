@@ -1,21 +1,12 @@
 """
-Copyright (C) 2025 TNO, The Netherlands. All rights reserved.
+Copyright 2025 (C) TNO. Licensed under the MIT license.
 
 Encoder module for processing biodiversity data using a Perceiver IO architecture.
 
-This module provides a flexible encoder that processes multiple types of environmental variables
-(surface, atmospheric, species, etc.) through patch embeddings and structured latent transformations.
+This module provides a flexible encoder that processes multiple types and modalities data
+through patch embeddings and structured latent transformations.
 It uses a Perceiver IO architecture to handle variable-length inputs and outputs fixed-size latent
 representations.
-
-The encoder handles:
-- Surface variables (e.g. temperature)
-- Single-level variables (e.g. elevation)
-- Atmospheric variables at multiple pressure levels
-- Species-related variables
-- Land use variables
-- Agricultural variables
-- Forest variables
 
 Key Features:
 - Patch-based tokenization of spatial data
@@ -24,36 +15,17 @@ Key Features:
 - Time embeddings for temporal information
 - Multi-head attention for cross-attention and self-attention
 - Dropout and layer normalization
-
-Example:
-    encoder = BFMEncoder(
-        surface_vars=('temp', 'precip'),
-        single_vars=('elev',),
-        atmos_vars=('pressure',),
-        species_vars=('richness',),
-        land_vars=('landcover',),
-        agriculture_vars=('cropland',),
-        forest_vars=('treecover',),
-        atmos_levels=(1000, 850, 700),
-        patch_size=4,
-        H=152,
-        W=320
-    )
-    output = encoder(batch, lead_time)
 """
 
 import math
 from datetime import datetime
+from einops import rearrange
 
 import torch
 import torch.distributed as dist
 import torch.nn as nn
-import torch.nn.functional as F
-from einops import rearrange, repeat
 from torch.distributed.nn.functional import all_gather
 
-from bfm_model.bfm.dataset_basics import load_batches
-from bfm_model.perceiver_components.helpers_io import dropout_seq
 from bfm_model.perceiver_components.pos_encoder import build_position_encoding
 from bfm_model.perceiver_core.perceiver_io import PerceiverIO
 
@@ -66,15 +38,18 @@ class BFMEncoder(nn.Module):
     processes them through patch embeddings and structured latent transformations.
 
     Args:
-        surface_vars (tuple[str, ...]): Names of surface variables
-        single_vars (tuple[str, ...]): Names of single-level variables
-        atmos_vars (tuple[str, ...]): Names of atmospheric variables
-        species_vars (tuple[str, ...]): Names of species-related variables
-        vegetation_vars (tuple[str, ...]): Species distributions-related variables
-        land_vars (tuple[str, ...]): Names of land variables
-        agriculture_vars (tuple[str, ...]): Names of agriculture variables
-        forest_vars (tuple[str, ...]): Names of forest variables
-        atmos_levels (tuple[int, ...]): Atmospheric pressure levels
+        surface_vars (tuple[str, ...]): Names of surface-level variables
+        edaphic_vars (tuple[str, ...]): Names of edaphic-related variables
+        atmos_vars (tuple[str, ...]): Names of atmospheric-related variables
+        climate_vars (tuple[str, ...]): Names of climate-related variables
+        species_vars (tuple[str, ...]): Names of species variables
+        vegetation_vars (tuple[str, ...]): Names of vegetation-related variables
+        land_vars (tuple[str, ...]): Names of land-related variables
+        agriculture_vars (tuple[str, ...]): Names of agriculture-related variables
+        forest_vars (tuple[str, ...]): Names of forest-related variables
+        redlist_vars (tuple[str, ...]): Names of red list-related variables
+        misc_vars (tuple[str, ...]): Names of miscellaneous variables
+        atmos_levels (list[int]): Pressure levels for atmospheric variables
         species_num (int): Number of species distribution to account for
         patch_size (int, optional): Size of patches for tokenization. Defaults to 4
         perceiver_latents (int, optional): Number of latent tokens. Defaults to 256
@@ -186,8 +161,6 @@ class BFMEncoder(nn.Module):
         self.num_atmos_levels = len(self.atmos_levels)
         self.atmos_levels_embed = nn.Embedding(self.num_atmos_levels, embed_dim)
 
-        # embedding for species distributions
-        # self.vegetationibution_embed = nn.Linear(pos_encoding_dim, embed_dim)
         # token embeddings for each variable type
         self.surface_token_embeds = self._create_patch_embed(len(surface_vars), patch_size, embed_dim, max_history_size)
         self.edaphic_token_embeds = self._create_patch_embed(len(edaphic_vars), patch_size, embed_dim, max_history_size)
@@ -275,10 +248,7 @@ class BFMEncoder(nn.Module):
             H (int): Height of input grid
             W (int): Width of input grid
         """
-        # get number of patches
-        # TODO Check why this gives weird error. For now hardcode the # of patches
         num_patches = (H // self.patch_size) * (W // self.patch_size)
-        # num_patches = 3040
         print(f"Num of patches in Encoder: {num_patches}")
         # set the device from an existing parameter or default to CPU
         device = (
@@ -353,12 +323,8 @@ class BFMEncoder(nn.Module):
 
         # initialize Perceiver IO with total latents
         self.total_latents = sum(self.latent_sizes.values())
-        print(f"total latens {self.total_latents}")
+        print(f"Total latens {self.total_latents}")
 
-        # combine all latents for backward compatibility
-        # self.latents = nn.Parameter(
-        #     torch.cat(latent_list, dim=0) if latent_list else torch.randn(total_latents, self.embed_dim, device=device)
-        # )
         self._latent_parameter_list = latent_list
 
         # Initialize Perceiver IO
@@ -396,8 +362,6 @@ class BFMEncoder(nn.Module):
         if self.position_encoding_type in ["fourier", "trainable"]:
             pos_encoder = self._build_position_encoding(input_data.shape)
             pos_encoding = pos_encoder(batch_size=input_data.shape[0])
-            # self._check_tensor(pos_encoding, "Position encoding")
-
             input_data = torch.cat((input_data, pos_encoding), dim=-1)
 
         return input_data
@@ -432,21 +396,7 @@ class BFMEncoder(nn.Module):
         full = torch.cat(full_list, dim=0)
 
         assert full.size(0) == self.total_latents, f"expected {self.total_latents}, got {full.size(0)}"
-
         return full
-
-        # gathered = []
-        # for p in self._latent_parameter_list:
-        #     # autograd-aware all_gather -> shape [world, shard, D]
-        #     print("All gather output",all_gather(p.to(device)))
-        #     full = all_gather(p.to(device)).reshape(-1, self.embed_dim)
-        #     gathered.append(full)
-
-        # out = torch.cat(gathered, dim=0)
-        # # sanity
-        # assert out.size(0) == self.total_latents, \
-        #     f"Expected {self.total_latents} latents, got {out.size(0)}"
-        # return out.requires_grad_()
 
     def _check_tensor(self, tensor, name, replace_values=True, group=None):
         """
@@ -485,7 +435,7 @@ class BFMEncoder(nn.Module):
         Each variable is assumed to be:
         - [B, H, W]   (no time dimension), or
         - [B, T, H, W] (time dimension = T)
-        We will unify the 'var_count * T' dimension into 'channels'.
+        We unify the var_count * T dimension into channels.
 
         Steps:
         1) Stack variables along a new dim => shape [var_count, B, (T,) H, W].
@@ -497,19 +447,9 @@ class BFMEncoder(nn.Module):
         if not variables:
             print(f"\n{group_name}: No variables found")
             return None
-        # Stack variables => shape [var_count, B, [T,] H, W].
-        # e.g. if 2 variables, each [2, 152, 320], then stacking => [2, 2, 152, 320].
-        # or if each is [2, 3, 152, 320], => [2, 2, 3, 152, 320].
         values = list(variables.values())
         x = torch.stack(values, dim=0)
-        # print(f"{group_name}: after stacking => {x.shape}")
-
-        # Move the 'var_count' dimension after batch dim => [B, var_count, ...].
-        # e.g. [2, 2, 152, 320] => [2, 2, 152, 320] if var_count=2 is dimension 0, B=2 dimension 1 => we do a transpose:
-        # We want => [B, var_count, ...].
-        # so do: x = x.permute(1, 0, 2, 3, ...) if 4D
         if x.dim() == 4:
-            # shape => [V, B, H, W]
             x = x.permute(1, 0, 2, 3)  # => [B, V, H, W]
         elif x.dim() == 5:
             # shape => [V, B, T, H, W]
@@ -517,33 +457,19 @@ class BFMEncoder(nn.Module):
         else:
             raise ValueError(f"Unsupported shape {x.shape} in {group_name}")
 
-        # print(f"{group_name}: after permute => {x.shape}")
-
-        # Merge into a single channel dimension => shape [B, C, H, W].
-        # if x.dim()==4, => [B, V, H, W]. then C = V
-        # if x.dim()==5, => [B, V, T, H, W]. then C = V * T
         if x.dim() == 4:
             B, V, H, W = x.shape
-            x = x.reshape(B, V, H, W)  # trivial, no time
+            x = x.reshape(B, V, H, W)
             channel_dim = V
         else:
             # x.dim()==5 => [B, V, T, H, W]
             B, V, T, H, W = x.shape
             x = x.reshape(B, V * T, H, W)
             channel_dim = V * T
-        # print(f"{group_name}: merged var/time => channels => {x.shape} (C={channel_dim})")
 
         # Now do patchify:
-        # We want => [B, (H/p1)*(W/p2), C*(p1*p2)]
-        # einops pattern: "b c (h p1) (w p2) -> b (h w) (c p1 p2)"
-        # Make sure H,W are multiples of p1,p2
         x = rearrange(x, "b c (h p1) (w p2) -> b (h w) (c p1 p2)", p1=self.patch_size, p2=self.patch_size)
-        # print(f"{group_name}: after patchify => {x.shape}")
-
-        # Now x is [B, num_patches, C*(p1*p2)] => feed token_embeds
-        # token_embeds expects the last dim = in_features that matches its linear layer
         x = token_embeds(x)  # => [B, num_patches, embed_dim]
-        # print(f"{group_name}: after token_embeds => {x.shape}")
 
         return x
 
@@ -559,42 +485,35 @@ class BFMEncoder(nn.Module):
             torch.Tensor: Encoded representation
             Shape: [batch_size, num_latents, embed_dim]
         """
-        B = batch_size  # the assumption is that we are taking one batch at a time, but that can be changed of course
+        B = batch_size
         H, W = len(batch.batch_metadata.latitudes[0]), len(batch.batch_metadata.longitudes[0])
-        # print(f"Encoder H, W {H}, {W}")
         if not hasattr(self, "perceiver_io"):
             self._initialize_perceiver(H, W)
 
         # process each variable group
         embeddings = []
         embedding_groups = {}
-        # print("process surface")
         surface_embed = self.process_variable_group(
             batch.surface_variables, self.surface_token_embeds, "Surface Variables"
         )  # shape: [num_patches, embed_dim]
+
         if surface_embed is not None:
             embeddings.append(surface_embed)
             embedding_groups["surface"] = surface_embed
-        # print("process signle")
         edaphic_embed = self.process_variable_group(
             batch.edaphic_variables, self.edaphic_token_embeds, "Edaphic Variables"
         )  # shape: [num_patches, embed_dim]
+
         if edaphic_embed is not None:
             embeddings.append(edaphic_embed)
             embedding_groups["edaphic"] = edaphic_embed
-        # print("process atmospheric")
 
-        # atmos = []
         if batch.atmospheric_variables:
             for level_idx, level in enumerate(self.atmos_levels):
                 # For each variable in atmospheric_variables, slice out dimension=2 (the levels)
                 # shape => [v, b, H, W] for that single level.
                 level_vars = {}
                 for var_name, var_data in batch.atmospheric_variables.items():
-                    # print(f"Var name : {var_name} | level {level} and lvl idx {level_idx} shape : ", var_data.shape)
-                    # var_data is [v, b, l, H, W], but typically v=1 if "var_data" is truly one variable
-                    # or if we're grouping multiple variables.
-                    # We slice out the level dimension at index 2:
                     sliced = var_data[..., level_idx, :, :]  # shape: [v, b, H, W]
                     level_vars[var_name] = sliced
 
@@ -627,21 +546,20 @@ class BFMEncoder(nn.Module):
             embeddings.append(species_embed)
             embedding_groups["species"] = species_embed
 
-        # # print("process species extinction")
         vegetation_embed = self.process_variable_group(
             batch.vegetation_variables, self.vegetation_token_embeds, "Vegetation Variables"
         )  # shape: [num_patches, embed_dim]
         if vegetation_embed is not None:
             embeddings.append(vegetation_embed)
             embedding_groups["vegetation"] = vegetation_embed
-        # print("process land")
+
         land_embed = self.process_variable_group(
             batch.land_variables, self.land_token_embeds, "Land Variables"
         )  # shape: [num_patches, embed_dim]
         if land_embed is not None:
             embeddings.append(land_embed)
             embedding_groups["land"] = land_embed
-        # print("process agri")
+
         agriculture_embed = self.process_variable_group(
             batch.agriculture_variables, self.agriculture_token_embeds, "Agriculture Variables"
         )  # shape: [num_patches, embed_dim]
@@ -675,19 +593,13 @@ class BFMEncoder(nn.Module):
         #     [emb.view(1, -1, self.embed_dim) for emb in embeddings], dim=1
         # )  # shape: [batch_size, num_patches * num_variable_groups, embed_dim]
         x = torch.cat(embeddings, dim=1)
-        # print("Combined embeddings shape", x.shape)
-        # x = self._check_tensor(x, "Combined embeddings")
-
-        # add position encodings #squeeze() was working after lat lon
+        # add position encodings
         lat, lon = batch.batch_metadata.latitudes[-1], batch.batch_metadata.longitudes[-1]
-        # print(f"encoder lat lon {lat.shape} | {lon.shape} and with squeeze {lat}")
         lat_grid, lon_grid = torch.meshgrid(lat, lon, indexing="ij")
-        pos_input = torch.stack((lat_grid, lon_grid), dim=-1).to(x.device)
         # make the positions grid
-
+        pos_input = torch.stack((lat_grid, lon_grid), dim=-1).to(x.device)
         # reshape to patches
         H, W = pos_input.shape[:2]
-        # print(f"H, W in pos_input {H} | {W}")
         pos_input = pos_input.reshape(H // self.patch_size, self.patch_size, W // self.patch_size, self.patch_size, 2)
         pos_input = pos_input[:, self.patch_size // 2, :, self.patch_size // 2, :]
 
@@ -698,7 +610,7 @@ class BFMEncoder(nn.Module):
         num_patches_pos_enc = (self.H // self.patch_size) * (self.W // self.patch_size)
         pos_encoder = build_position_encoding(
             position_encoding_type=self.position_encoding_type,
-            index_dims=(num_patches_pos_enc,),  # 3040 with the old grid
+            index_dims=(num_patches_pos_enc,),
             fourier_position_encoding_kwargs={
                 "num_bands": self.num_fourier_bands,
                 "max_freq": self.max_frequency,
@@ -715,11 +627,10 @@ class BFMEncoder(nn.Module):
 
         # add batch dimension and apply position encoding
         pos_input_norm = pos_input_norm.unsqueeze(0).expand(B, -1, -1)  # [batch_size, num_patches, 2]
-        pos_encode = pos_encoder(batch_size=B, pos=pos_input_norm)  # shape: [batch_size, num_patches, pos_encoding_dim]
+        pos_encode = pos_encoder(batch_size=B, pos=pos_input_norm)  # [batch_size, num_patches, pos_encoding_dim]
 
         # apply linear embedding
         pos_encode = self.pos_embed(pos_encode)  # shape: [num_patches, embed_dim]
-        # num_var_groups = x.shape[1] // (H // self.patch_size * W // self.patch_size)
         num_patches_data = (self.H // self.patch_size) * (self.W // self.patch_size)
         if x.shape[1] % num_patches_data != 0:
             print(
@@ -733,19 +644,13 @@ class BFMEncoder(nn.Module):
         )  # shape: [batch_size, num_patches * num_variable_groups, embed_dim]  (middle dimension - rough estimate, since we have atmos levels)
         # add position encoding
         x = x + pos_encode
-        # x = self._check_tensor(
-        #     x, "After adding position encoding"
-        # )  # shape: [batch_size, num_patches * num_variable_groups, embed_dim]
 
         # add time embeddings
         # lead_hours = lead_time.total_seconds() / 3600 # for hourly
         lead_times = lead_time * torch.ones(B, dtype=x.dtype, device=x.device)
-        lead_time_encode = self._time_encoding(lead_times)  # shape: [batch_size, embed_dim]
-        # lead_time_encode = self._check_tensor(lead_time_encode, "Lead time encoding")
+        lead_time_encode = self._time_encoding(lead_times)  # [batch_size, embed_dim]
         lead_time_emb = self.lead_time_embed(lead_time_encode)  # shape: [batch_size, embed_dim]
-        # lead_time_emb = self._check_tensor(lead_time_emb, "Lead time embedding")
         x = x + lead_time_emb.unsqueeze(1)  # shape: [batch_size, num_patches * num_variable_groups, embed_dim]
-        # x = self._check_tensor(x, "After adding time embedding")
 
         # Absolute time embedding
         if hasattr(self, "absolute_time_embed") and self.absolute_time_embed is not None:
@@ -762,7 +667,6 @@ class BFMEncoder(nn.Module):
             absolute_time_encode = self._time_encoding(abs_times_tensor)  # Sinusoidal encoding
             absolute_time_emb_vec = self.absolute_time_embed(absolute_time_encode)
             x = x + absolute_time_emb_vec.unsqueeze(1)
-            # x = self._check_tensor(x, "After adding absolute time embedding")
 
         x = self.pre_perceiver_norm(x)
         # self._check_tensor(x, "Normalized input")
@@ -806,103 +710,3 @@ class BFMEncoder(nn.Module):
 
         emb = torch.cat((emb.sin(), emb.cos()), dim=-1)
         return emb
-
-
-# def main():
-#     from datetime import datetime, timedelta
-
-#     import torch.cuda as cuda
-
-#     # set device
-#     device = torch.device("cuda:2" if cuda.is_available() else "cpu")
-#     print(f"\nUsing device: {device}")
-
-#     # load batches from data
-#     print("\nLoading batches...")
-#     batches = load_batches("data/", device=device)
-#     print(f"Loaded {len(batches)} batches")
-
-#     # get first batch
-#     batch = batches[0]
-
-#     # crop dimensions to be divisible by patch size
-#     patch_size = 4
-#     H, W = batch.batch_metadata.latitudes.shape[0], batch.batch_metadata.longitudes.shape[0]
-#     new_H = (H // patch_size) * patch_size
-#     new_W = (W // patch_size) * patch_size
-
-#     def crop_variables(variables):
-#         processed_vars = {}
-#         for k, v in variables.items():
-#             # crop dimensions
-#             cropped = v[..., :new_H, :new_W]
-
-#             # handle infinities and NaNs
-#             inf_mask = torch.isinf(cropped)
-#             nan_mask = torch.isnan(cropped)
-
-#             # fix issues!
-#             valid_values = cropped[~inf_mask & ~nan_mask]
-#             if len(valid_values) > 0:
-#                 mean_val = valid_values.mean().item()
-#                 cropped = torch.nan_to_num(cropped, nan=mean_val, posinf=1e6, neginf=-1e6)
-#             else:
-#                 print(f"Warning: No valid values found in {k}")
-#                 cropped = torch.zeros_like(cropped)
-
-#             processed_vars[k] = cropped
-#         return processed_vars
-
-#     print("\nProcessing batches...")
-#     for i, batch in enumerate(batches):
-#         print(f"\nProcessing batch {i+1}/{len(batches)}")
-#         batch.surface_variables = crop_variables(batch.surface_variables)
-#         batch.single_variables = crop_variables(batch.single_variables)
-#         batch.atmospheric_variables = crop_variables(batch.atmospheric_variables)
-#         batch.species_extinction_variables = crop_variables(batch.species_extinction_variables)
-#         batch.land_variables = crop_variables(batch.land_variables)
-#         batch.agriculture_variables = crop_variables(batch.agriculture_variables)
-#         batch.forest_variables = crop_variables(batch.forest_variables)
-
-#         # crop metadata dimensions
-#         batch.batch_metadata.latitudes = batch.batch_metadata.latitudes[:new_H]
-#         batch.batch_metadata.longitudes = batch.batch_metadata.longitudes[:new_W]
-
-#     # init encoder
-#     print("\nInitializing encoder...")
-#     encoder = BFMEncoder(
-#         surface_vars=tuple(batch.surface_variables.keys()),
-#         single_vars=tuple(batch.single_variables.keys()),
-#         atmos_vars=tuple(batch.atmospheric_variables.keys()),
-#         species_vars=tuple(batch.species_extinction_variables.keys()),
-#         land_vars=tuple(batch.land_variables.keys()),
-#         agriculture_vars=tuple(batch.agriculture_variables.keys()),
-#         forest_vars=tuple(batch.forest_variables.keys()),
-#         atmos_levels=batch.batch_metadata.pressure_levels,
-#         patch_size=patch_size,
-#         H=new_H,
-#         W=new_W,
-#     ).to(device)
-
-#     # process each batch
-#     print("\nRunning forward pass on batches...")
-#     for i, batch in enumerate(batches):
-#         print(f"\nProcessing batch {i+1}/{len(batches)}")
-
-#         # find lead time
-#         t1, t2 = batch.batch_metadata.timestamp
-#         lead_time = t2 - t1
-
-#         try:
-#             with torch.no_grad():
-#                 output = encoder(batch, lead_time)
-#                 print(f"Successfully processed batch {i+1}, shape: {output.shape}")
-
-#         except Exception as e:
-#             print(f"\nError processing batch {i+1}:")
-#             print(f"Error message: {str(e)}")
-#             raise e
-
-
-# if __name__ == "__main__":
-#     main()

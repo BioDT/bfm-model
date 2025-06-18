@@ -1,5 +1,5 @@
 """
-Copyright (C) 2025 TNO, The Netherlands. All rights reserved.
+Copyright 2025 (C) TNO. Licensed under the MIT license.
 
 BFM (Biodiversity Foundation Model) Decoder Module.
 
@@ -15,23 +15,6 @@ Key Components:
     - Variable-specific token projections
     - Perceiver IO for flexible decoding
     - Multi-category variable handling (surface, atmospheric, species, etc.)
-
-Example usage:
-    decoder = BFMDecoder(
-        surface_vars=('temperature', 'pressure'),
-        single_vars=('humidity',),
-        atmos_vars=('wind_u', 'wind_v'),
-        species_vars=('species_1', 'species_2'),
-        land_vars=('soil_moisture',),
-        agriculture_vars=('crop_yield',),
-        forest_vars=('tree_coverage',),
-        atmos_levels=[1000, 850, 700],
-        patch_size=4,
-        embed_dim=128,
-        H=32,
-        W=64
-    )
-    output = decoder(encoded_data, batch, lead_time)
 """
 
 import math
@@ -41,7 +24,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from bfm_model.bfm.dataset_basics import load_batches
 from bfm_model.perceiver_components.pos_encoder import build_position_encoding
 from bfm_model.perceiver_core.perceiver_io import PerceiverIO
 
@@ -55,13 +37,16 @@ class BFMDecoder(nn.Module):
 
     Args:
         surface_vars (tuple[str, ...]): Names of surface-level variables
-        single_vars (tuple[str, ...]): Names of single-level variables
-        atmos_vars (tuple[str, ...]): Names of atmospheric variables
-        species_vars (tuple[str, ...]): Names of species-related variables
-        species_distr_vars (tuple[str, ...]): Names of species distributions-related variables
+        edaphic_vars (tuple[str, ...]): Names of edaphic-related variables
+        atmos_vars (tuple[str, ...]): Names of atmospheric-related variables
+        climate_vars (tuple[str, ...]): Names of climate-related variables
+        species_vars (tuple[str, ...]): Names of species variables
+        vegetation_vars (tuple[str, ...]): Names of vegetation-related variables
         land_vars (tuple[str, ...]): Names of land-related variables
         agriculture_vars (tuple[str, ...]): Names of agriculture-related variables
         forest_vars (tuple[str, ...]): Names of forest-related variables
+        redlist_vars (tuple[str, ...]): Names of red list-related variables
+        misc_vars (tuple[str, ...]): Names of miscellaneous variables
         atmos_levels (list[int]): Pressure levels for atmospheric variables
         species_num (int): Number of species distribution to account for
         patch_size (int, optional): Size of spatial patches. Defaults to 4.
@@ -296,7 +281,6 @@ class BFMDecoder(nn.Module):
         emb = math.log(10000) / (half_dim - 1)
         emb = torch.exp(torch.arange(half_dim, device=device) * -emb)
 
-        # Modify this part to handle 2D input
         if times.dim() == 2:
             emb = times.unsqueeze(-1) * emb.unsqueeze(0).unsqueeze(0)
         else:
@@ -315,25 +299,13 @@ class BFMDecoder(nn.Module):
             lead_time (timedelta): Time difference between input and target
 
         Returns:
-            dict: Dictionary containing decoded outputs for each variable category:
-                - surface_variables
-                - single_variables
-                - atmospheric_variables
-                - species_extinction_variables
-                - land_variables
-                - agriculture_variables
-                - forest_variables
-                - species_variables
+            dict: Dictionary containing decoded outputs for each variable category
         """
         B, L, D = x.shape
-        # print(f"Input shape: {x.shape}")
-
         # get dimensions from batch metadata
         H, W = self.H, self.W
         # batch_metadata come with shape [batch_size, lat/lon_dim]
         lat, lon = batch.batch_metadata.latitudes[-1], batch.batch_metadata.longitudes[-1]
-        # print(f"Decode Grid dimensions (H×W): {H}×{W}")
-        # print(f"Decode lat shape: {lat.shape}, lon shape: {lon.shape}", lat)
 
         # counting the number of queries for Perceiver IO
         total_queries = (
@@ -506,166 +478,3 @@ class BFMDecoder(nn.Module):
             "misc_variables": output.pop("misc_vars"),
         }
         return output
-
-
-def main():
-    """Main function for testing the BFM decoder implementation."""
-    import torch.cuda as cuda
-
-    from bfm_model.bfm.encoder import BFMEncoder
-
-    device = torch.device("cuda:2" if cuda.is_available() else "cpu")
-    print(f"\nUsing device: {device}")
-
-    print("\nLoading batches...")
-    batches = load_batches("data/", device=device)
-    print(f"Loaded {len(batches)} batches")
-
-    # some info about the first batch
-    batch = batches[0]
-    print("\nFirst batch variable counts:")
-    print(f"Surface variables: {len(batch.surface_variables)} vars")
-    print(f"Single variables: {len(batch.single_variables)} vars")
-    print(f"Atmospheric variables: {len(batch.atmospheric_variables)} vars × {len(batch.batch_metadata.pressure_levels)} levels")
-    print(f"Species variables: {len(batch.species_extinction_variables)} vars")
-    print(f"Land variables: {len(batch.land_variables)} vars")
-    print(f"Agriculture variables: {len(batch.agriculture_variables)} vars")
-    print(f"Forest variables: {len(batch.forest_variables)} vars")
-
-    # crop dimensions to be divisible by patch size (or just set patch size to 1)
-    patch_size = 4
-    H, W = batch.batch_metadata.latitudes.shape[0], batch.batch_metadata.longitudes.shape[0]
-    new_H = (H // patch_size) * patch_size
-    new_W = (W // patch_size) * patch_size
-
-    print(f"\nOriginal spatial dimensions: {H}×{W}")
-    print(f"Cropped spatial dimensions: {new_H}×{new_W}")
-
-    def crop_variables(variables):
-        processed_vars = {}
-        for k, v in variables.items():
-            # crop dimensions
-            cropped = v[..., :new_H, :new_W]
-
-            # infinities first
-            inf_mask = torch.isinf(cropped)
-            inf_count = inf_mask.sum().item()
-            if inf_count > 0:
-                print(f"\nHandling Inf values in {k}:")
-                print(f"Inf count: {inf_count}")
-                valid_values = cropped[~inf_mask & ~torch.isnan(cropped)]
-                if len(valid_values) > 0:
-                    max_val = valid_values.max().item()
-                    min_val = valid_values.min().item()
-                    cropped = torch.clip(cropped, min_val, max_val)
-                else:
-                    cropped = torch.clip(cropped, -1e6, 1e6)
-
-            # handle NaNs
-            nan_mask = torch.isnan(cropped)
-            nan_count = nan_mask.sum().item()
-            if nan_count > 0:
-                print(f"\nHandling NaN values in {k}:")
-                print(f"Shape: {cropped.shape}")
-                print(f"Total NaN count: {nan_count}")
-                valid_values = cropped[~nan_mask & ~torch.isinf(cropped)]
-                if len(valid_values) > 0:
-                    mean_val = valid_values.mean().item()
-                    std_val = valid_values.std().item()
-                    # use mean +- 2*std as clipping bounds
-                    clip_min = mean_val - 2 * std_val
-                    clip_max = mean_val + 2 * std_val
-                    # replace NaNs with clipped mean
-                    cropped = torch.nan_to_num(cropped, nan=mean_val)
-                    cropped = torch.clip(cropped, clip_min, clip_max)
-                else:
-                    cropped = torch.nan_to_num(cropped, nan=0.0)
-                    cropped = torch.clip(cropped, -1.0, 1.0)
-
-            processed_vars[k] = cropped
-        return processed_vars
-
-    print("\nProcessing batches...")
-    for i, batch in enumerate(batches):
-        print(f"\nProcessing batch {i+1}/{len(batches)}")
-        batch.surface_variables = crop_variables(batch.surface_variables)
-        batch.single_variables = crop_variables(batch.single_variables)
-        batch.atmospheric_variables = crop_variables(batch.atmospheric_variables)
-        batch.species_extinction_variables = crop_variables(batch.species_extinction_variables)
-        batch.land_variables = crop_variables(batch.land_variables)
-        batch.agriculture_variables = crop_variables(batch.agriculture_variables)
-        batch.forest_variables = crop_variables(batch.forest_variables)
-
-        # crop metadata dimensions
-        batch.batch_metadata.latitudes = batch.batch_metadata.latitudes[:new_H]
-        batch.batch_metadata.longitudes = batch.batch_metadata.longitudes[:new_W]
-
-    print("\nSpatial dimensions after cropping:")
-    print(f"Grid size: {new_H}×{new_W}")
-    print(f"Number of patches: {new_H//patch_size}×{new_W//patch_size}")
-
-    # init encoder and decoder
-    print("\nInitializing encoder and decoder...")
-    encoder = BFMEncoder(
-        surface_vars=tuple(batch.surface_variables.keys()),
-        single_vars=tuple(batch.single_variables.keys()),
-        atmos_vars=tuple(batch.atmospheric_variables.keys()),
-        species_vars=tuple(batch.species_extinction_variables.keys()),
-        land_vars=tuple(batch.land_variables.keys()),
-        agriculture_vars=tuple(batch.agriculture_variables.keys()),
-        forest_vars=tuple(batch.forest_variables.keys()),
-        atmos_levels=batch.batch_metadata.pressure_levels,
-        patch_size=patch_size,
-    ).to(device)
-
-    decoder = BFMDecoder(
-        surface_vars=tuple(batch.surface_variables.keys()),
-        single_vars=tuple(batch.single_variables.keys()),
-        atmos_vars=tuple(batch.atmospheric_variables.keys()),
-        species_vars=tuple(batch.species_extinction_variables.keys()),
-        land_vars=tuple(batch.land_variables.keys()),
-        agriculture_vars=tuple(batch.agriculture_variables.keys()),
-        forest_vars=tuple(batch.forest_variables.keys()),
-        atmos_levels=batch.batch_metadata.pressure_levels,
-        patch_size=patch_size,
-        embed_dim=128,
-        H=new_H,
-        W=new_W,
-    ).to(device)
-
-    print("\nModel architectures initialized")
-
-    for i, batch in enumerate(batches):
-        print(f"\nProcessing batch {i+1}/{len(batches)}")
-
-        t1, t2 = batch.batch_metadata.timestamp
-        lead_time = t2 - t1
-        try:
-            # pass through encoder and decoder
-            with torch.no_grad():
-                # we encode first
-                encoded = encoder(batch, lead_time)
-                # and you guessed right - decode afterwards
-                decoded = decoder(encoded, batch, lead_time)  # noqa
-
-                # some output statistics for each variable type (as extra horror, you're welcome)
-                # print("\nDecoder output statistics:")
-                # for var_type, vars_dict in decoded.items():
-                #     print(f"\n{var_type}:")
-                #     for var_name, var_tensor in vars_dict.items():
-                #         print(f"  {var_name}:")
-                #         print(f"    Shape: {var_tensor.shape}")
-                #         print(f"    Mean: {var_tensor.mean().item():.4f}")
-                #         print(f"    Std: {var_tensor.std().item():.4f}")
-                #         print(f"    Min: {var_tensor.min().item():.4f}")
-                #         print(f"    Max: {var_tensor.max().item():.4f}")
-
-        except Exception as e:
-            print(f"\nError processing batch {i+1}:")
-            print(f"Error type: {type(e).__name__}")
-            print(f"Error message: {str(e)}")
-            raise
-
-
-# if __name__ == "__main__":
-#     main()
