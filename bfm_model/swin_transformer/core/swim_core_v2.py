@@ -1,3 +1,9 @@
+"""
+Copyright 2025 (C) TNO. Licensed under the MIT license.
+
+Code adapted from https://github.com/microsoft/aurora/blob/main/aurora/model/swin3d.py
+"""
+
 from datetime import timedelta
 
 import torch
@@ -170,7 +176,6 @@ class Swin3DTransformer(nn.Module):
             tuple[list[tuple[int, int, int]], list[tuple[int, int, int]]]:
                 List of resolutions and list of paddings for each layer
         """
-        # print(f"Initial patch resolution: {patch_shape}")
         all_res = [patch_shape]
         padded_outs = []
         for i in range(1, self.num_encoder_layers):
@@ -179,11 +184,8 @@ class Swin3DTransformer(nn.Module):
             padded_outs.append((0, pad_H, pad_W))
             new_res = (C, (H + pad_H) // 2, (W + pad_W) // 2)
             all_res.append(new_res)
-            # print(f"Layer {i}: Input res: {all_res[-2]}, Padding: {padded_outs[-1]}, Output res: {new_res}")
 
         padded_outs.append((0, 0, 0))
-        # print(f"Final all_res: {all_res}")
-        # print(f"Final padded_outs: {padded_outs}")
         return all_res, padded_outs
 
     def forward(
@@ -206,10 +208,6 @@ class Swin3DTransformer(nn.Module):
             torch.Tensor: Processed tokens. Shape: [B, L, D]
         """
         B, L, D = x.shape
-        # print(f"Input shape: {x.shape}")
-        # print(f"Patch resolution: {patch_shape}")
-        # print(f"L size: {L}")
-        # print(f"Patch res size: {patch_shape[0] * patch_shape[1] * patch_shape[2]}")
         assert L == patch_shape[0] * patch_shape[1] * patch_shape[2], "Input shape does not match patch size"
         assert (
             patch_shape[0] % self.window_size[0] == 0
@@ -225,9 +223,7 @@ class Swin3DTransformer(nn.Module):
         # Encoder forward pass
         skips = []
         for i, layer in enumerate(self.encoder_layers):
-            # print(f"Encoder Layer {i}: Input shape: {x.shape}, Resolution: {all_enc_res[i]}")
             x, x_unscaled = layer(x, c, all_enc_res[i], rollout_step=rollout_step)
-            # print(f"Encoder Layer {i}: Output shape: {x.shape}")
             skips.append(x_unscaled)
 
         if not self.skip_connections:
@@ -239,9 +235,7 @@ class Swin3DTransformer(nn.Module):
         # Decoder forward pass with skip connections
         for i, layer in enumerate(self.decoder_layers):
             index = self.num_decoder_layers - i - 1
-            # print(f"Decoder Layer {i}: Input shape: {x.shape}, Resolution: {all_enc_res[index]}, Padding: {padded_outs[index - 1]}")
             x, _ = layer(x, c, all_enc_res[index], padded_outs[index - 1], rollout_step=rollout_step)
-            # print(f"Decoder Layer {i}: Output shape: {x.shape}")
 
             if 0 < i < self.num_decoder_layers - 1:
                 x = x + skips[index - 1]  # Additive skip connection
@@ -250,7 +244,6 @@ class Swin3DTransformer(nn.Module):
 
         # Final projection to match input dimensions
         x = self.final_proj(x)  # shape: [B, L, D]
-        # print(f"Final output shape: {x.shape}")
 
         return x
 

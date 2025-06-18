@@ -1,5 +1,5 @@
 """
-Copyright (C) 2025 TNO, The Netherlands. All rights reserved.
+Copyright 2025 (C) TNO. Licensed under the MIT license.
 """
 
 import os

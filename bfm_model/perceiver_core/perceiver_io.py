@@ -1,4 +1,8 @@
-from typing import List, Optional, Tuple
+"""
+Copyright 2025 (C) TNO. Licensed under the MIT license.
+"""
+
+from typing import Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -9,10 +13,11 @@ from bfm_model.perceiver_components.helpers_io import (
     BuiltinGQAttention,
     FeedForward,
     GQAttention,
-    PreNorm,
     cache_fn,
     dropout_seq,
 )
+from bfm_model.perceiver_components.helpers import PreNorm
+
 from bfm_model.perceiver_components.pos_encoder import build_position_encoding
 
 
@@ -163,18 +168,6 @@ class PerceiverIO(nn.Module):
         Returns:
             nn.ModuleList: List containing the cross-attention and feedforward layers.
         """
-        # return nn.ModuleList(
-        #     [
-        #         PreNorm(
-        #             latent_dimension,
-        #             Attention(
-        #                 latent_dimension, self.total_input_dim, heads=cross_attention_heads, head_dim=cross_attention_head_dim
-        #             ),
-        #             context_dimension=self.total_input_dim,
-        #         ),
-        #         PreNorm(latent_dimension, FeedForward(latent_dimension)),
-        #     ]
-        # )
         return nn.ModuleList(
             [
                 PreNorm(
@@ -208,9 +201,6 @@ class PerceiverIO(nn.Module):
         Returns:
             PreNorm: Normalized latent attention layer.
         """
-        # return PreNorm(
-        #     latent_dimension, Attention(latent_dimension, heads=latent_attention_heads, head_dim=latent_attention_head_dim)
-        # )
         return PreNorm(
             latent_dimension,
             BuiltinGQAttention(

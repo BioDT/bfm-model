@@ -1,11 +1,12 @@
-import functools
+"""
+Copyright 2025 (C) TNO. Licensed under the MIT license.
+"""
+
 from math import pi
 from typing import Literal, Optional, Tuple
 
-import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from einops import rearrange, repeat
 
 

@@ -1,10 +1,14 @@
+"""
+Copyright 2025 (C) TNO. Licensed under the MIT license.
+"""
+
 import weakref
 from functools import wraps
 
 import torch
 import torch.nn.functional as F
 from einops import rearrange, repeat
-from torch import einsum, nn
+from torch import nn
 
 
 def cache_fn(f):
@@ -466,35 +470,21 @@ class BuiltinGQAAttention(nn.Module):
         bsz, seq_len_q, _ = x.shape
         seq_len_kv = context.size(1)
 
-        # 1) Project Q, K, V
+        # Project Q, K, V
         q = self.q_proj(x)  # (bsz, seq_len_q, n_q_heads * head_dim)
         k = self.k_proj(context)  # (bsz, seq_len_kv, n_kv_heads * head_dim)
         v = self.v_proj(context)  # (bsz, seq_len_kv, n_kv_heads * head_dim)
 
-        # 2) Reshape into [batch, n_q_heads, seq_len, head_dim] for Q
-        #    and [batch, n_kv_heads, seq_len, head_dim] for K/V.
-        #    Then F.scaled_dot_product_attention expects shapes [batch, heads, seq_len, head_dim].
+        # Reshape into [batch, n_q_heads, seq_len, head_dim] for Q
         q = q.reshape(bsz, seq_len_q, self.n_q_heads, self.head_dim).transpose(1, 2)
         k = k.reshape(bsz, seq_len_kv, self.n_kv_heads, self.head_dim).transpose(1, 2)
         v = v.reshape(bsz, seq_len_kv, self.n_kv_heads, self.head_dim).transpose(1, 2)
 
-        # 3) Convert boolean mask => shape [bsz, 1, seq_len_q, seq_len_kv] or None
-        #    PyTorch's scaled_dot_product_attention expects shape [bsz, heads, seq_len_q, seq_len_kv].
-        #    But with GQA, heads can differ for Q vs. K. The function handles it automatically if enable_gqa=True.
-        #    We just need to ensure the first dimension matches the number of Q heads = n_q_heads.
-        #    If mask is [bsz, seq_len_q, seq_len_kv], we can unsqueeze(1).
+        # Convert boolean mask => shape [bsz, 1, seq_len_q, seq_len_kv] or None
         final_attn_mask = None
         if mask is not None:
-            # Expecting True=keep, False=mask -> we invert or we rely on the built-in for masked_fill
-            # scaled_dot_product_attention expects float mask with -inf for masked tokens, or None.
-            # We can convert boolean to float mask or keep it as bool. Let's keep it as bool.
-            # Expand to [bsz, 1, seq_len_q, seq_len_kv] so it can broadcast to all heads.
             final_attn_mask = mask.unsqueeze(1)  # (bsz, 1, seq_len_q, seq_len_kv)
 
-        # 4) Let PyTorch do the heavy lifting with built-in GQA logic
-        #    shape returned: (bsz, n_q_heads, seq_len_q, head_dim)
-        #    enable_gqa=True tells PyTorch we have different # of heads for Q vs K/V
-        #    and it will replicate K/V heads if needed.
         out = F.scaled_dot_product_attention(
             q,
             k,
@@ -502,12 +492,11 @@ class BuiltinGQAAttention(nn.Module):
             attn_mask=final_attn_mask,
             dropout_p=self.dropout_p if self.training else 0.0,
             is_causal=is_causal,
-            enable_gqa=True,  # <--- GQA flag
+            enable_gqa=True,
         )
 
-        # 5) out shape is [bsz, n_q_heads, seq_len_q, head_dim]. We need to bring it back to [bsz, seq_len_q, n_q_heads * head_dim].
+        # out shape is [bsz, n_q_heads, seq_len_q, head_dim]. We need to bring it back to [bsz, seq_len_q, n_q_heads * head_dim].
         out = out.transpose(1, 2).reshape(bsz, seq_len_q, self.n_q_heads * self.head_dim)
 
-        # 6) Final linear
         out = self.out_proj(out)
         return out

@@ -1,4 +1,7 @@
-import math
+"""
+Copyright 2025 (C) TNO. Licensed under the MIT license.
+"""
+
 from functools import partial
 
 import torch

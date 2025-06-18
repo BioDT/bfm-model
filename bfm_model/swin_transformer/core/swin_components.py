@@ -1,16 +1,18 @@
-from datetime import timedelta
+"""
+Copyright 2025 (C) TNO. Licensed under the MIT license.
+"""
+
 from typing import Optional
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
-from timm.models.layers import DropPath, to_3tuple
+from timm.models.layers import DropPath
 
 from bfm_model.swin_transformer.helpers.adaptive_layer_norm import AdaptiveLayerNorm
-from bfm_model.swin_transformer.helpers.fourier_expansion import lead_time_expansion
 from bfm_model.swin_transformer.helpers.low_rank_adaptation import LoRAMode, LoRARollout
-from bfm_model.swin_transformer.helpers.utilities import adjust_windows, init_weights
+from bfm_model.swin_transformer.helpers.utilities import adjust_windows
 from bfm_model.swin_transformer.helpers.vera import VeRA, VeRAMode, VeRARollout
 from bfm_model.swin_transformer.helpers.window_operations import (
     apply_or_remove_3d_padding,

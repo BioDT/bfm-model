@@ -1,11 +1,11 @@
-import weakref
-from collections import OrderedDict
-from functools import wraps
-from typing import Any, Callable, Dict, Optional
+"""
+Copyright 2025 (C) TNO. Licensed under the MIT license.
+"""
+
+from typing import Optional
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from einops import rearrange, repeat
 from einops.layers.torch import Reduce
 
@@ -327,9 +327,5 @@ def main():
     print(f"Output: {output}")
 
 
-if __name__ == "__main__":
-    main()
-
-# TODO:
-# 1) Improve flexibility with regards to applying positional encdoigns and passing parameters for these
-# 2) (For later) Warmup learning rate scheduler?
+# if __name__ == "__main__":
+#     main()

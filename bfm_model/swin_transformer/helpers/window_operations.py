@@ -1,3 +1,7 @@
+"""
+Copyright 2025 (C) TNO. Licensed under the MIT license.
+"""
+
 import itertools
 from functools import lru_cache
 from typing import Literal

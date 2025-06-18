@@ -1,3 +1,9 @@
+"""
+Copyright 2025 (C) TNO. Licensed under the MIT license.
+
+Code adapted from: https://github.com/microsoft/aurora/blob/main/aurora/model/lora.py
+"""
+
 import math
 from typing import Literal
 
