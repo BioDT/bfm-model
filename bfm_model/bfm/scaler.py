@@ -29,6 +29,7 @@ dimensions_to_keep_monthly = {
     }
 }
 
+
 def _rescale_recursive(
     obj: dict,
     stats: dict,

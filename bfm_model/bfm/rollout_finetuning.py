@@ -26,6 +26,7 @@ from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
 from torch.distributed.fsdp.wrap import size_based_auto_wrap_policy
 from torch.utils.data import DataLoader, Dataset
 
+from bfm_model.bfm.batch_utils import build_new_batch_with_prediction
 from bfm_model.bfm.dataloader_monthly import (
     LargeClimateDataset,
     batch_to_device,
@@ -38,7 +39,6 @@ from bfm_model.bfm.dataloader_monthly import (
 )
 from bfm_model.bfm.decoder import BFMDecoder
 from bfm_model.bfm.encoder import BFMEncoder
-from bfm_model.bfm.rollouts import build_new_batch_with_prediction
 from bfm_model.bfm.utils import compute_next_timestamp, inspect_batch_shapes_namedtuple
 from bfm_model.mvit.mvit_model import MViT
 from bfm_model.swin_transformer.core.swim_core_v2 import Swin3DTransformer
@@ -156,7 +156,6 @@ class BFM_Forecastinglighting(LightningModule):
         swin_drop_rate: float = 0.0,
         swin_attn_drop_rate: float = 0.0,
         swin_drop_path_rate: float = 0.1,
-        swin_use_lora: bool = False,
         **kwargs,
     ):
         super().__init__()
@@ -745,7 +744,6 @@ def main(cfg: DictConfig):
             "swin_drop_rate": selected_swin_config.drop_rate,
             "swin_attn_drop_rate": selected_swin_config.attn_drop_rate,
             "swin_drop_path_rate": selected_swin_config.drop_path_rate,
-            "swin_use_lora": selected_swin_config.use_lora,
         }
 
     BFM = BFM_Forecastinglighting.load_from_checkpoint(
@@ -819,13 +817,18 @@ def main(cfg: DictConfig):
     elif cfg.training.strategy == "ddp":
         distr_strategy = DDPStrategy()
         print(f"Using {cfg.training.strategy} strategy: {distr_strategy}")
+    else:
+        distr_strategy = "auto"
+
+    # TODO: If this is not set, it's complaining about unused parameters
+    distr_strategy = "ddp_find_unused_parameters_true"
 
     trainer = L.Trainer(
         max_epochs=cfg.finetune.epochs,
         accelerator=cfg.training.accelerator,
         devices=cfg.training.devices,
         precision=cfg.training.precision,
-        # strategy=distr_strategy,
+        strategy=distr_strategy,
         num_nodes=cfg.training.num_nodes,
         log_every_n_steps=cfg.training.log_steps,
         logger=mlf_logger,  # Only the rank 0 process will have a logger

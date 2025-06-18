@@ -67,7 +67,7 @@ def setup_bfm_model(cfg, mode: Literal["train", "test"]) -> BFM:
             "swin_drop_rate": selected_swin_config.drop_rate,
             "swin_attn_drop_rate": selected_swin_config.attn_drop_rate,
             "swin_drop_path_rate": selected_swin_config.drop_path_rate,
-            "swin_use_lora": selected_swin_config.use_lora,
+            "use_lora": selected_swin_config.use_lora,
         }
 
     if mode == "train":
