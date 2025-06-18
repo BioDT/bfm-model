@@ -17,6 +17,8 @@ import matplotlib.colors as mcolors
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 from cartopy.util import add_cyclic_point
+import cartopy.io.shapereader as shpreader
+import shapely.vectorized as sv
 
 from scipy.spatial import ConvexHull
 from math import radians, cos, sin, sqrt, atan2
@@ -31,8 +33,6 @@ from hydra.core.global_hydra import GlobalHydra
 GlobalHydra.instance().clear()
 
 hydra.initialize(config_path="", version_base=None)
-# cfg = hydra.compose(config_name="configs/train_config.yaml")
-# print(OmegaConf.to_yaml(cfg))
 
 cfg = hydra.compose(config_name="configs/train_config.yaml", overrides=["+data.scaling.enabled=True"])
 
@@ -44,7 +44,7 @@ scaling = SimpleNamespace(
 print(scaling.stats_path)
 data_dir = "/Users/azd/Desktop/git_projects/bfm/bfm-model/rollout_monthly"
 
-def crop_variables(variables, new_H, new_W, **kwargs):  # type: ignore
+def crop_variables(variables, new_H, new_W, **kwargs):
     """Fallback: crop tensors or dicts to (new_H,new_W)."""
     if isinstance(variables, dict):
         return {k: v[..., :new_H, :new_W] for k, v in variables.items()}
@@ -92,6 +92,24 @@ metric_choice = st.sidebar.radio("Error metric", ["RMSE", "MAE"], index=0)
 # Helpers
 # ----------------------------------------------------------------------------
 
+@st.cache_data(show_spinner=False)
+def build_land_mask(lon_grid: np.ndarray, lat_grid: np.ndarray) -> np.ndarray:
+    """
+    Returns a boolean mask (HxW) that is True over land, using Natural Earth
+    110 m land polygons.  Works with 2-D lon/lat grids.
+    """
+    reader = shpreader.Reader(
+        shpreader.natural_earth(resolution="110m",
+                                category="physical",
+                                name="land")
+    )
+    mask = np.zeros(lon_grid.shape, dtype=bool)
+
+    for geom in reader.geometries():
+        mask |= sv.contains(geom, lon_grid, lat_grid)
+
+    return mask
+
 def _crop_batch(batch: Dict[str, Dict[str, torch.Tensor]]):
     for slot, vdict in list(batch.items()):
         if slot.endswith("_variables"):
@@ -110,10 +128,10 @@ def _align(pred: torch.Tensor, obs: torch.Tensor):
 
 def _intify_species_keys(batch: Dict[str, Dict[str, torch.Tensor]]
                          ) -> Dict[str, Dict[str, torch.Tensor]]:
-    """Return a *copy* of `batch` where species keys are ints, not strings."""
+    """Return a copy of batch where species keys are ints, not strings."""
     if "species_variables" not in batch:
         return batch
-    new = batch.copy()                      # shallow copy
+    new = batch.copy()
     sp_dict = {}
     for k, v in batch["species_variables"].items():
         try:                                # '1340361' -> 1340361
@@ -126,7 +144,7 @@ def _intify_species_keys(batch: Dict[str, Dict[str, torch.Tensor]]
 
 
 def _spatial_mean_error(pred: torch.Tensor, obs: torch.Tensor) -> torch.Tensor:
-    """Return a 1-D `(T,)` tensor: error averaged over batch + channel + space.
+    """Return a 1-D (T,) tensor: error averaged over batch + channel + space.
 
     """
     pred, obs = _align(pred, obs)
@@ -182,11 +200,9 @@ for idx, (gt_path, ro_path) in enumerate(PAIRS):
     print(f"LATS {len(lats)} and \n LONS {len(lons)}")
 
     PRED = _intify_species_keys(test_dataset.scale_batch(PRED_dict, direction="original"))
-    # print(PRED["species_variables"].keys())
     if not var_groups:
         var_groups = {slot: sorted(vdict.keys()) for slot, vdict in GT.items() if slot.endswith("species_variables")} # TODO Change this to view the groups
     test_var = list(var_groups[next(iter(var_groups))])[0]
-    # print(f"Will be using only the ", test_var)
     for slot, vars_ in var_groups.items():
         for v in vars_:
             gt_ten = GT[slot][v]
@@ -234,7 +250,6 @@ for idx, (gt_path, ro_path) in enumerate(PAIRS):
             print(f"Occurance value: {gt_ten.float().mean(dim=(-2, -1)).squeeze(0).cpu().numpy()} | Prediction Value: {pr_ten.float().mean(dim=(-2, -1)).squeeze(0).cpu().numpy()}")
 
 
-# print(series_err)
 num_pairs = len(PAIRS)
 lead_times = list(range(1, num_pairs + 1))
 err_full = {v: np.concatenate(lst) for v, lst in series_err.items()}
@@ -259,7 +274,8 @@ for idx, (gt_path, _) in enumerate(PAIRS):
 # -----------------------------------------------------------------------------
 # UI Tabs
 # -----------------------------------------------------------------------------
-TAB_SCORE, TAB_OCC, TAB_HOV, TAB_SPEC, TAB_FACET, TAB_TRAJ, TAB_ANALYTICS = st.tabs(["Scorecard", "Species Occurrence", "Hovmöller Error", "Species Timeseries", "Species Face Maps", "Trajectory map", "Trajecotry Analytics"])
+TAB_SCORE, TAB_OCC, TAB_HOV, TAB_SPEC, TAB_FACET, TAB_TRAJ, TAB_ANALYTICS = st.tabs(["Scorecard", "Species Occurrence", "Hovmöller Error", \
+                                                                                      "Species Timeseries", "Species Face Maps", "Trajectory Map", "Trajectory Analytics"])
 
 # ==================== SCORECARD ============================================
 with TAB_SCORE:
@@ -320,8 +336,8 @@ with TAB_HOV:
         # lon_labels = (lontitudes[lon_ticks] % 360).astype(int)       # wrap & intcast
 
         lon_deg = (lons % 360).round(1)                 # 0–360°, 0.25° spacing
-        step     = 20                                   # every 5° (= 0.25×20)
-        lon_ticks  = np.arange(0, len(lon_deg), step)
+        step = 20                                   # every 5° (= 0.25x20)
+        lon_ticks = np.arange(0, len(lon_deg), step)
         lon_labels = lon_deg[lon_ticks]
 
         fig3, ax3 = plt.subplots(figsize=(10, 4))
@@ -333,7 +349,7 @@ with TAB_HOV:
 
         ax3.set_xlabel("Longitude (°E)")
         ax3.set_ylabel("Lead-time index (months)")
-        ax3.set_title(f"Hovmöller error – {hov_var}")
+        ax3.set_title(f"Hovmöller error - {hov_var}")
 
         ax3.set_xticks(lon_ticks)
         ax3.set_xticklabels(lon_labels)
@@ -373,7 +389,7 @@ with TAB_SPEC:
 
         # decide default display mode
         amp_ratio = (ts_pr.max() + 1e-12) / (ts_gt.max() + 1e-12)
-        use_dual = amp_ratio > 100          # rollout dominates → dual axis
+        use_dual = amp_ratio > 100          # rollout dominates -> dual axis
         use_log = st.checkbox("Log-scale (shared axis)", value=False)
 
         fig, ax  = plt.subplots(figsize=(9, 3))
@@ -500,6 +516,10 @@ with TAB_TRAJ:
     source = st.radio("Data source", ["Ground Truth", "Rollout"],
                       horizontal=True, key="traj_src")
 
+    weight_by_abund = st.sidebar.checkbox("Weight centroid by abundance", value=False)
+    use_landmask = st.sidebar.checkbox("Apply land mask", value=True)
+    show_mask = st.sidebar.checkbox("Show land mask overlay", value=False)
+
     # ---------- concatenate all batches for this species --------------------
     full_ts = []
     for gt_p, pr_p in PAIRS:
@@ -515,7 +535,12 @@ with TAB_TRAJ:
 
     proj = ccrs.PlateCarree()
 
-    fig, ax = plt.subplots(figsize=(6, 4),
+    plt.rcParams.update({"axes.titlesize": 10,
+                        "axes.labelsize": 8,
+                        "xtick.labelsize": 6,
+                        "ytick.labelsize": 6})
+
+    fig, ax = plt.subplots(figsize=(7, 8),
                            subplot_kw=dict(projection=proj))
 
     cmap = plt.cm.get_cmap("tab20", full_ts.shape[0])
@@ -530,15 +555,87 @@ with TAB_TRAJ:
                     alpha=0.4,
                     transform=proj)
 
-    # ---------- centroid track + arrows ------------------------------------
+    # ---------- build presence / abundance tensor -------------------------------
     lon_grid, lat_grid = np.meshgrid(lons, lats)
-    pres = (full_ts > 0).float()
-    weight = pres.sum(dim=(-2, -1)) + 1e-9
+    base = full_ts.float() if weight_by_abund else (full_ts > 0).float()
 
-    lon_cent = (pres * torch.tensor(lon_grid)).sum(dim=(-2, -1)) / weight
-    lat_cent = (pres * torch.tensor(lat_grid)).sum(dim=(-2, -1)) / weight
+    if use_landmask:
+        land_mask = torch.tensor(build_land_mask(lon_grid, lat_grid),
+                                dtype=base.dtype)
+        pres = base * land_mask            # broadcast over time
+    else:
+        pres = base                                            # no masking
+
+
+    w     = pres.sum(dim=(-2, -1))                             # (T,)
+
+    # V4
+    # -- flat indices of occupied land cells for each month ------------------
+    # lon_flat = torch.tensor(lon_grid)
+    # lat_flat = torch.tensor(lat_grid)
+
+    # lon_cent, lat_cent = [], []
+    # for t in range(pres.shape[0]):
+    #     m = pres[t] > 0
+    #     if m.any():
+    #         lon_cent.append(torch.median(lon_flat[m]).item())
+    #         lat_cent.append(torch.median(lat_flat[m]).item())
+    #     else:
+    #         # skip month t if no land cells are occupied
+    #         continue
+
+    # lon_cent = np.array(lon_cent)
+    # lat_cent = np.array(lat_cent)
+
+
+    # V3
+    # where w==0 -> centroid = NaN so it is excluded downstream
+    lon_cent = torch.where(
+                w>0,
+                (pres*torch.tensor(lon_grid)).sum((-2,-1))/w,
+                torch.nan)
+    lat_cent = torch.where(
+                w>0,
+                (pres*torch.tensor(lat_grid)).sum((-2,-1))/w,
+                torch.nan)
+
+    # drop NaN months for plotting and analytics -------------------------------
+    valid     = ~torch.isnan(lon_cent)
+    lon_cent  = lon_cent[valid].cpu().numpy()
+    lat_cent  = lat_cent[valid].cpu().numpy()
+    # V2
+    # weight & centroid ---------------------------------------------------------
+    # weight   = pres.sum(dim=(-2, -1))                       # shape (T,)
+    # valid    = weight > 0                                   # boolean vector
+
+    # lon_sum  = (pres * torch.tensor(lon_grid)).sum(dim=(-2, -1))
+    # lat_sum  = (pres * torch.tensor(lat_grid)).sum(dim=(-2, -1))
+
+    # # only compute where weight>0
+    # lon_cent_np = torch.where(valid, lon_sum / weight, torch.nan)
+    # lat_cent_np = torch.where(valid, lat_sum / weight, torch.nan)
+
+    # # drop invalid (all-sea) months for plotting & analytics
+    # lon_cent = lon_cent_np[valid].cpu().numpy()
+    # lat_cent = lat_cent_np[valid].cpu().numpy()
+    # T_valid = len(lon_cent_np)
+    # V1
+    # # ---------- centroid coordinates --------------------------------------------
+    # weight   = pres.sum(dim=(-2, -1)) + 1e-9
+    # lon_cent = (pres * torch.tensor(lon_grid)).sum(dim=(-2, -1)) / weight
+    # lat_cent = (pres * torch.tensor(lat_grid)).sum(dim=(-2, -1)) / weight
+
+    if show_mask:
+        mask_alpha = 0.25
+        ax.contourf(lon_grid, lat_grid, build_land_mask(lon_grid, lat_grid),
+                    levels=[0.5, 1],
+                    colors=["lightgrey"],
+                    alpha=mask_alpha,
+                    transform=proj)
+        
 
     ax.plot(lon_cent, lat_cent, "-k", lw=1, transform=proj)
+    # ax.scatter(lon_cent, lat_cent, s=30, alpha=.8)
     for t in range(len(lon_cent)-1):
         ax.annotate("",
                     xy=(lon_cent[t+1], lat_cent[t+1]),
@@ -546,8 +643,8 @@ with TAB_TRAJ:
                     textcoords=proj,
                     arrowprops=dict(arrowstyle="->",
                                     color="k",
-                                    shrinkA=0, shrinkB=0,
-                                    lw=1),
+                                    shrinkA=0.3, shrinkB=0.3,
+                                    lw=0.6),
                     annotation_clip=False)
         ax.plot(lon_cent[t], lat_cent[t],
                 "o", color=cmap(norm(t)), transform=proj)
@@ -572,19 +669,22 @@ with TAB_TRAJ:
                       color="gray",
                       linestyle="--")
     gl.top_labels = gl.right_labels = False
-    ax.set_title(f"{source}: species {sp_id} — centroid trajectory")
+    ax.set_title(f"{source}: species ID {sp_id} — centroid trajectory")
     ax.set_xlabel("Longitude (°E)")
     ax.set_ylabel("Latitude (°N)")
 
-    # legend mapping colour → timestep
-    handles = [plt.Line2D([0], [0], marker="s", ls="",
-                          mfc=cmap(norm(i)), mec=cmap(norm(i)),
-                          label=f"t{i}") for i in range(full_ts.shape[0])]
-    ax.legend(handles=handles, ncol=5, fontsize=6,
-              loc="lower left", bbox_to_anchor=(0, -0.15))
+    handles = [plt.Line2D([0], [0], ms=5, marker="s", ls="",
+                        mfc=cmap(norm(i)), mec=cmap(norm(i)))
+            for i in range(full_ts.shape[0])]
 
+    ax.legend(handles,
+                [f"t{i}" for i in range(full_ts.shape[0])],
+                ncol=1,
+                fontsize=6,
+                loc="center left",
+                bbox_to_anchor=(1.00, 0.5),
+                frameon=False)
     st.pyplot(fig)
-
 
     # ---------- distances & areas --------------------------------------------------
     dists = np.array([_haversine(lon_cent[i], lat_cent[i],
@@ -609,7 +709,7 @@ with TAB_TRAJ:
     fig = plt.figure(figsize=(6, 8))
     gs  = fig.add_gridspec(4, 1, height_ratios=[3, 1, 1, 1], hspace=0.35)
 
-    # ax_map  = fig.add_subplot(gs[0, 0], projection=proj)   # (re-draw map here)
+    # ax_map  = fig.add_subplot(gs[0, 0], projection=proj)
     ax_dist = fig.add_subplot(gs[1, 0])
     ax_area = fig.add_subplot(gs[2, 0])
     ax_cum  = fig.add_subplot(gs[3, 0])
