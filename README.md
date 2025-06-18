@@ -45,6 +45,8 @@ poetry shell
 ### Training
 
 ```bash
+salloc -p gpu_h100 --nodes 1 --gpus-per-node 2 -t 02:00:00
+source venv/bin/activate
 python bfm_model/bfm/train_lighting.py
 ```
 
