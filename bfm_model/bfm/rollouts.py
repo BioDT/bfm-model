@@ -1,13 +1,15 @@
 """
 Copyright (C) 2025 TNO, The Netherlands. All rights reserved.
 """
+
 import copy
 import os
 from datetime import datetime, timedelta
-from dateutil.relativedelta import relativedelta
+
 import hydra
 import lightning as L
 import torch
+from dateutil.relativedelta import relativedelta
 from hydra.core.hydra_config import HydraConfig
 from lightning.pytorch import seed_everything
 from lightning.pytorch.loggers import MLFlowLogger
@@ -63,8 +65,12 @@ def rollout_forecast(trainer, model, initial_batch, cfg, steps=2, batch_size=1):
         4) Combine predictions
         """
         test_dataset = LargeClimateDataset(
-        data_dir=cfg.evaluation.rollout_data, scaling_settings=cfg.data.scaling, 
-        num_species=cfg.data.species_number, atmos_levels=cfg.data.atmos_levels, mode="pretrain")
+            data_dir=cfg.evaluation.rollout_data,
+            scaling_settings=cfg.data.scaling,
+            num_species=cfg.data.species_number,
+            atmos_levels=cfg.data.atmos_levels,
+            mode="pretrain",
+        )
         print("Reading test data from :", cfg.evaluation.rollout_data)
         test_dataloader = DataLoader(
             test_dataset,
@@ -82,7 +88,7 @@ def rollout_forecast(trainer, model, initial_batch, cfg, steps=2, batch_size=1):
 
         # returns a list of predictions (one per batch item, but we only have 1)
         preds_list = trainer.predict(model, dataloaders=test_dataloader)
-        # The prediction is scaled, so no need to do futher scaling 
+        # The prediction is scaled, so no need to do futher scaling
         # predictions_unscaled = test_dataset.scale_batch(preds_list, direction="original")
 
         # print(preds_list)
@@ -114,6 +120,7 @@ def rollout_forecast(trainer, model, initial_batch, cfg, steps=2, batch_size=1):
 
     return rollout_dict
 
+
 def _last_scalar_ts(ts):
     """Return the last scalar timestamp string from (possibly nested) lists."""
     while isinstance(ts, (list, tuple)):
@@ -121,6 +128,7 @@ def _last_scalar_ts(ts):
             return ""
         ts = ts[-1]
     return str(ts)
+
 
 def _add_months(ts_str: str, months: int) -> str:
     """Return ts_str + `months` months, preserving the DT_FORMAT."""
@@ -188,7 +196,7 @@ def build_new_batch_with_prediction(old_batch, prediction_dict, groups=None, tim
             "land_variables",
             "agriculture_variables",
             "forest_variables",
-            "misc_variables"
+            "misc_variables",
         ]
 
     new_batch = old_batch
@@ -231,7 +239,7 @@ def build_new_batch_with_prediction(old_batch, prediction_dict, groups=None, tim
     new_metadata = update_batch_metadata(new_batch.batch_metadata, months=months)
     new_batch = new_batch._replace(batch_metadata=new_metadata)
     # print(f"new batch in creation timestamps: {new_batch.batch_metadata.timestamp}")
-    
+
     return new_batch
 
 
@@ -264,8 +272,12 @@ def main(cfg: DictConfig):
     # Load the Test Dataset
     print("Setting up Dataloader ...")
     test_dataset = LargeClimateDataset(
-        data_dir=cfg.evaluation.rollout_data, scaling_settings=cfg.data.scaling, 
-        num_species=cfg.data.species_number, atmos_levels=cfg.data.atmos_levels, mode="pretrain")
+        data_dir=cfg.evaluation.rollout_data,
+        scaling_settings=cfg.data.scaling,
+        num_species=cfg.data.species_number,
+        atmos_levels=cfg.data.atmos_levels,
+        mode="pretrain",
+    )
     print("Reading test data from :", cfg.evaluation.rollout_data)
     test_dataloader = DataLoader(
         test_dataset,
@@ -338,7 +350,6 @@ def main(cfg: DictConfig):
         head_dim=cfg.model.head_dim,
         depth=cfg.model.depth,
         **swin_params,
-
     )
 
     trainer = L.Trainer(

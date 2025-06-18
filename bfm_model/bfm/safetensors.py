@@ -1,8 +1,10 @@
 from pathlib import Path
 from typing import Union
+
 import torch
-from safetensors.torch import save_file, load_file
 from huggingface_hub import HfApi
+from safetensors.torch import load_file, save_file
+
 
 def convert_pt_to_safetensors(
     pt_file: Union[str, Path],
@@ -34,13 +36,11 @@ def convert_pt_to_safetensors(
         state_dict = checkpoint
 
     if strip_prefix:
-        state_dict = {
-            k[len(strip_prefix):] if k.startswith(strip_prefix) else k: v
-            for k, v in state_dict.items()
-        }
+        state_dict = {k[len(strip_prefix) :] if k.startswith(strip_prefix) else k: v for k, v in state_dict.items()}
     safe_path = str(safe_file)
     save_file(state_dict, safe_path)
     return safe_file, safe_path
+
 
 def load_safetensors_into_model(
     safe_file: Union[str, Path],
@@ -58,11 +58,12 @@ def load_safetensors_into_model(
     missing, unexpected = model.load_state_dict(state_dict, strict=strict)
     return missing, unexpected
 
+
 if __name__ == "__main__":
     WEIGHTS_PATH = "/home/thanasis.trantas/git_projects/bfm-model/model_weights/epoch=02-train_loss=0.04.ckpt"
     file, path = convert_pt_to_safetensors(WEIGHTS_PATH)
     print(f"Done converting at {path}!")
-    
+
     # HfApi().upload_file(
     #         repo_id="bfm/model/tba",
     #         path_or_fileobj=path,

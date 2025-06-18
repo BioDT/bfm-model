@@ -1,8 +1,10 @@
 """
 Copyright (C) 2025 TNO, The Netherlands. All rights reserved.
 """
+
 import math
 from typing import Literal, Optional
+
 import torch
 from torch import nn
 
@@ -51,17 +53,17 @@ class VeRA(nn.Module):
             self.register_buffer("vera_B", shared_B[:out_features, :], persistent=False)
 
         # trainable scaling vectors
-        self.lambda_b = nn.Parameter(torch.ones(r)) # length‑r
-        self.lambda_d = nn.Parameter(torch.full((out_features,), d_initial)) # length‑out
+        self.lambda_b = nn.Parameter(torch.ones(r))  # length‑r
+        self.lambda_d = nn.Parameter(torch.full((out_features,), d_initial))  # length‑out
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # (B, *, in) · (in, r)  ->  (B, *, r)
         x_dropped = self.dropout(x)
-        h = x_dropped @ self.vera_A.T # random projection
-        h = h * self.lambda_b # scale inside the sub‑space
+        h = x_dropped @ self.vera_A.T  # random projection
+        h = h * self.lambda_b  # scale inside the sub‑space
         # (B, *, r) · (r, out) ->  (B, *, out)
         delta = h @ self.vera_B.T
-        delta = delta * self.lambda_d # per‑output gating
+        delta = delta * self.lambda_d  # per‑output gating
         return delta
 
 

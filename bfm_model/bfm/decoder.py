@@ -35,6 +35,8 @@ Example usage:
 """
 
 import math
+from datetime import datetime
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -42,7 +44,6 @@ import torch.nn.functional as F
 from bfm_model.bfm.dataset_basics import load_batches
 from bfm_model.perceiver_components.pos_encoder import build_position_encoding
 from bfm_model.perceiver_core.perceiver_io import PerceiverIO
-from datetime import datetime
 
 
 class BFMDecoder(nn.Module):
@@ -195,7 +196,7 @@ class BFMDecoder(nn.Module):
             + len(atmos_vars) * len(atmos_levels)
             + len(climate_vars)
             + len(species_vars)
-            + len(vegetation_vars) 
+            + len(vegetation_vars)
             + len(land_vars)
             + len(agriculture_vars)
             + len(forest_vars)
@@ -329,7 +330,7 @@ class BFMDecoder(nn.Module):
 
         # get dimensions from batch metadata
         H, W = self.H, self.W
-        # batch_metadata come with shape [batch_size, lat/lon_dim] 
+        # batch_metadata come with shape [batch_size, lat/lon_dim]
         lat, lon = batch.batch_metadata.latitudes[-1], batch.batch_metadata.longitudes[-1]
         # print(f"Decode Grid dimensions (H×W): {H}×{W}")
         # print(f"Decode lat shape: {lat.shape}, lon shape: {lon.shape}", lat)
@@ -373,21 +374,20 @@ class BFMDecoder(nn.Module):
         queries = queries + lead_time_emb.unsqueeze(1)
 
         # Add absolute time embedding
-        if hasattr(self, 'absolute_time_embed') and self.absolute_time_embed is not None:
+        if hasattr(self, "absolute_time_embed") and self.absolute_time_embed is not None:
             start_timestamp_str = batch.batch_metadata.timestamp[0][0]
             dt_format = "%Y-%m-%d %H:%M:%S"
             start_dt = datetime.strptime(start_timestamp_str, dt_format)
 
             abs_time_numerical_values = []
             for _ in range(B):
-                abs_time_numerical_values.append(start_dt.month) 
+                abs_time_numerical_values.append(start_dt.month)
 
             abs_times_tensor = torch.tensor(abs_time_numerical_values, dtype=x.dtype, device=x.device)
 
             absolute_time_encode = self._time_encoding(abs_times_tensor)
             absolute_time_emb_vec = self.absolute_time_embed(absolute_time_encode)
             queries = queries + absolute_time_emb_vec.unsqueeze(1)
-
 
         # Apply Perceiver IO
         decoded = self.perceiver_io(x, queries=queries)
@@ -422,7 +422,7 @@ class BFMDecoder(nn.Module):
             atmos_output = atmos_output.view(B, len(self.atmos_vars), len(self.atmos_levels), H, W)
             output["atmos_vars"] = {var: atmos_output[:, i] for i, var in enumerate(self.atmos_vars)}
             current_idx = next_idx
-        
+
         # climate variables
         if len(self.climate_vars) > 0:
             next_idx = current_idx + len(self.climate_vars)

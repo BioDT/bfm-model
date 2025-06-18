@@ -55,7 +55,6 @@ class Swin3DTransformer(nn.Module):
         peft_mode: LoRAMode = "single",
         use_lora: bool = False,
         use_vera: bool = False,
-
     ) -> None:
         """
         Args:

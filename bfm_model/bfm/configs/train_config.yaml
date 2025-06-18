@@ -3,7 +3,7 @@ model:
   surface_vars: ["t2m", "msl", "slt", "z", "u10", "v10", "lsm"] # Surface variables
   edaphic_vars: ["swvl1", "swvl2", "stl1", "stl2"] # Edaphic variables
   atmos_vars: ["z", "t", "u", "v", "q"]  # Atmospheric variables
-  climate_vars: ["smlt", "tp", "csfr", "avg_sdswrf", "avg_snswrf", "avg_snlwrf", 
+  climate_vars: ["smlt", "tp", "csfr", "avg_sdswrf", "avg_snswrf", "avg_snlwrf",
                   "avg_tprate", "avg_sdswrfcs", "sd", "t2m", "d2m"] # Climate variables
   species_vars: ["1340361", "1340503", "1536449", "1898286", "1920506", "2430567",
                        "2431885", "2433433", "2434779", "2435240", "2435261", "2437394",
@@ -33,7 +33,7 @@ data:
   data_path: /projects/prjs1134/data/projects/biodt/storage/final_dataset_monthly/train
   test_data_path: /projects/prjs1134/data/projects/biodt/storage/final_dataset_monthly/test
   land_mask_path: batch_statistics/europe_Land_2020_grid.pkl
-  
+
   scaling:
     enabled: True
     stats_path: /projects/prjs1134/data/projects/biodt/storage/monthly_batches/statistics/monthly_batches_stats_splitted_channels.json

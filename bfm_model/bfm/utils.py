@@ -1,18 +1,18 @@
 """
 Copyright (C) 2025 TNO, The Netherlands. All rights reserved.
 """
+
 import glob
 import os
 from pathlib import Path
-from omegaconf import OmegaConf
 
 import cartopy.crs as ccrs
 import matplotlib.pyplot as plt
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-
 import numpy as np
+import plotly.graph_objects as go
 import torch
+from omegaconf import OmegaConf
+from plotly.subplots import make_subplots
 
 
 def load_last_run_id(run_id_file: str):
@@ -159,6 +159,7 @@ def compute_next_timestamp(old_time_str, hours=6):
     Example function to parse an ISO date, add specified number of hours, return new iso string.
     """
     from datetime import datetime, timedelta
+
     #           "%Y-%m-%dT%H:%M:%S"
     dt_format = "%Y-%m-%d %H:%M:%S"
     # print("old_dt", old_time_str)
@@ -168,7 +169,6 @@ def compute_next_timestamp(old_time_str, hours=6):
     new_dt = old_dt + timedelta(hours=hours)
     # print(f"old dt {old_dt} vs new_dt {new_dt}")
     return new_dt.strftime(dt_format)
-
 
 
 def inspect_batch_shapes_namedtuple(
@@ -183,7 +183,7 @@ def inspect_batch_shapes_namedtuple(
         "land_variables",
         "agriculture_variables",
         "forest_variables",
-        "misc_variables"
+        "misc_variables",
     ],
 ):
     """
@@ -407,8 +407,9 @@ def compute_species_occurrences(batch) -> dict:
 
     return result
 
+
 class DictObj:
-    def __init__(self, in_dict:dict):
+    def __init__(self, in_dict: dict):
         assert isinstance(in_dict, dict)
         for key, val in in_dict.items():
             if isinstance(val, (list, tuple)):
@@ -420,11 +421,11 @@ class DictObj:
 def plot_species_stats_from_lists(actual_list: list, predicted_list: list, group_size: int = 5):
     """
     Plots a comparison of actual vs. predicted observations for each channel.
-    
+
     Inputs:
       - actual_list: List of dictionaries with original observations.
       - predicted_list: List of dictionaries with model predictions.
-      
+
     Both lists contain dictionaries of the form:
       {'Distribution': {
            'timestamp_t0': '2000-01-01T00:00:00',
@@ -432,10 +433,10 @@ def plot_species_stats_from_lists(actual_list: list, predicted_list: list, group
            'occurrences': {
                'channel_0': {'t0': <value>, 't1': <value>},
                'channel_1': {'t0': <value>, 't1': <value>},
-               ... 
+               ...
            }
       }}
-      
+
     Functionality:
       1. The top subplot shows raw time series (two observation points per record)
          for each channel from both actual and predicted lists.
@@ -450,48 +451,48 @@ def plot_species_stats_from_lists(actual_list: list, predicted_list: list, group
     """
     channels_set = set()
     for record in actual_list:
-        occ = record.get('Distribution', {}).get('occurrences', {})
+        occ = record.get("Distribution", {}).get("occurrences", {})
         channels_set.update(occ.keys())
-    channels = sorted(channels_set, key=lambda x: int(x.split('_')[1]) if x.split('_')[1].isdigit() else x)
-    
+    channels = sorted(channels_set, key=lambda x: int(x.split("_")[1]) if x.split("_")[1].isdigit() else x)
+
     # For each channel, we extract two data points per record from both lists.
     ts_actual = {ch: [] for ch in channels}
-    ts_pred   = {ch: [] for ch in channels}
-    
+    ts_pred = {ch: [] for ch in channels}
+
     for record in actual_list:
-        dist = record.get('Distribution', {})
-        t0 = dist.get('timestamp_t0')
-        t1 = dist.get('timestamp_t1')
-        occ = dist.get('occurrences', {})
+        dist = record.get("Distribution", {})
+        t0 = dist.get("timestamp_t0")
+        t1 = dist.get("timestamp_t1")
+        occ = dist.get("occurrences", {})
         for ch in channels:
             if ch in occ:
                 # Use the value under 't0' at timestamp_t0 and under 't1' at timestamp_t1.
-                val0 = occ[ch].get('t0')
-                val1 = occ[ch].get('t1')
+                val0 = occ[ch].get("t0")
+                val1 = occ[ch].get("t1")
                 if t0:
                     ts_actual[ch].append((t0, val0))
                 if t1:
                     ts_actual[ch].append((t1, val1))
-    
+
     for record in predicted_list:
-        dist = record.get('Distribution', {})
-        t0 = dist.get('timestamp_t0')
-        t1 = dist.get('timestamp_t1')
-        occ = dist.get('occurrences', {})
+        dist = record.get("Distribution", {})
+        t0 = dist.get("timestamp_t0")
+        t1 = dist.get("timestamp_t1")
+        occ = dist.get("occurrences", {})
         for ch in channels:
             if ch in occ:
-                val0 = occ[ch].get('t0')
-                val1 = occ[ch].get('t1')
+                val0 = occ[ch].get("t0")
+                val1 = occ[ch].get("t1")
                 if t0:
                     ts_pred[ch].append((t0, val0))
                 if t1:
                     ts_pred[ch].append((t1, val1))
-    
+
     # Sort each series by timestamp.
     for ch in channels:
         ts_actual[ch].sort(key=lambda x: x[0])
         ts_pred[ch].sort(key=lambda x: x[0])
-    
+
     def aggregate_by_day(series):
         agg = {}
         for ts, val in series:
@@ -500,10 +501,10 @@ def plot_species_stats_from_lists(actual_list: list, predicted_list: list, group
             day = ts.split("T")[0]
             agg[day] = agg.get(day, 0) + (val if val is not None else 0)
         return agg
-    
+
     daily_actual = {ch: aggregate_by_day(ts_actual[ch]) for ch in channels}
-    daily_pred   = {ch: aggregate_by_day(ts_pred[ch]) for ch in channels}
-    
+    daily_pred = {ch: aggregate_by_day(ts_pred[ch]) for ch in channels}
+
     daily_perc_diff = {ch: {} for ch in channels}
     for ch in channels:
         days = sorted(set(list(daily_actual[ch].keys()) + list(daily_pred[ch].keys())))
@@ -512,78 +513,80 @@ def plot_species_stats_from_lists(actual_list: list, predicted_list: list, group
             p_sum = daily_pred[ch].get(day, 0)
             diff = (p_sum - a_sum) / a_sum * 100 if a_sum != 0 else 0
             daily_perc_diff[ch][day] = diff
-    
+
     # We assume the actual_list and predicted_list are paired (same order).
     residuals = {ch: [] for ch in channels}
     for rec_act, rec_pred in zip(actual_list, predicted_list):
-        dist_act = rec_act.get('Distribution', {})
-        dist_pred = rec_pred.get('Distribution', {})
-        for ts_key in ['timestamp_t0', 'timestamp_t1']:
+        dist_act = rec_act.get("Distribution", {})
+        dist_pred = rec_pred.get("Distribution", {})
+        for ts_key in ["timestamp_t0", "timestamp_t1"]:
             ts_act = dist_act.get(ts_key)
-            occ_act = dist_act.get('occurrences', {})
-            occ_pred = dist_pred.get('occurrences', {})
+            occ_act = dist_act.get("occurrences", {})
+            occ_pred = dist_pred.get("occurrences", {})
             # Choose the corresponding value key: 't0' for timestamp_t0, 't1' for timestamp_t1.
-            key = 't0' if ts_key == 'timestamp_t0' else 't1'
+            key = "t0" if ts_key == "timestamp_t0" else "t1"
             for ch in channels:
                 if ch in occ_act and ch in occ_pred:
                     a_val = occ_act[ch].get(key)
                     p_val = occ_pred[ch].get(key)
                     if a_val is not None and p_val is not None:
                         residuals[ch].append(p_val - a_val)
-    
-    fig = make_subplots(rows=3, cols=1,
-                        shared_xaxes=False,
-                        subplot_titles=("Raw Time Series: Actual vs. Predicted", 
-                                        "Daily Percentage Difference", 
-                                        "Residual Distribution (Violin Plot)"),
-                        vertical_spacing=0.12)
-    
+
+    fig = make_subplots(
+        rows=3,
+        cols=1,
+        shared_xaxes=False,
+        subplot_titles=(
+            "Raw Time Series: Actual vs. Predicted",
+            "Daily Percentage Difference",
+            "Residual Distribution (Violin Plot)",
+        ),
+        vertical_spacing=0.12,
+    )
+
     all_traces = []  # To manage dropdown visibility.
-    
+
     # Top Plot: Add traces for raw time series.
     for ch in channels:
         x_act = [pt[0] for pt in ts_actual[ch]]
         y_act = [pt[1] for pt in ts_actual[ch]]
         x_pred = [pt[0] for pt in ts_pred[ch]]
         y_pred = [pt[1] for pt in ts_pred[ch]]
-        trace_act = go.Scatter(x=x_act, y=y_act, mode='lines+markers', name=f"{ch} Actual")
-        trace_pred = go.Scatter(x=x_pred, y=y_pred, mode='lines+markers', name=f"{ch} Predicted")
+        trace_act = go.Scatter(x=x_act, y=y_act, mode="lines+markers", name=f"{ch} Actual")
+        trace_pred = go.Scatter(x=x_pred, y=y_pred, mode="lines+markers", name=f"{ch} Predicted")
         fig.add_trace(trace_act, row=1, col=1)
         all_traces.append(trace_act)
         fig.add_trace(trace_pred, row=1, col=1)
         all_traces.append(trace_pred)
-    
+
     # Middle Plot: Daily % difference.
     for ch in channels:
         days = sorted(daily_perc_diff[ch].keys())
         pdiff = [daily_perc_diff[ch][day] for day in days]
-        trace_diff = go.Scatter(x=days, y=pdiff, mode='lines+markers', name=f"{ch} Daily % Diff")
+        trace_diff = go.Scatter(x=days, y=pdiff, mode="lines+markers", name=f"{ch} Daily % Diff")
         fig.add_trace(trace_diff, row=2, col=1)
         all_traces.append(trace_diff)
-    
+
     # Bottom Plot: Residual distribution via violin plot.
     for ch in channels:
-        trace_violin = go.Violin(y=residuals[ch],
-                                 name=f"{ch} Residuals",
-                                 box_visible=True,
-                                 meanline_visible=True)
+        trace_violin = go.Violin(y=residuals[ch], name=f"{ch} Residuals", box_visible=True, meanline_visible=True)
         fig.add_trace(trace_violin, row=3, col=1)
         all_traces.append(trace_violin)
-    
+
     total_traces = len(all_traces)
-    
+
     # Each channel contributes 4 traces (2 top, 1 middle, 1 bottom).
     traces_per_channel = 4
-    channel_groups = [channels[i:i+group_size] for i in range(0, len(channels), group_size)]
+    channel_groups = [channels[i : i + group_size] for i in range(0, len(channels), group_size)]
     group_trace_indices = []
     for group in channel_groups:
         indices = []
         for ch in group:
             ch_index = channels.index(ch)
             start = ch_index * traces_per_channel
-            indices.extend([start, start+1, start+2, start+3])
+            indices.extend([start, start + 1, start + 2, start + 3])
         group_trace_indices.append(indices)
-    
+
     # Set initial visibility: if more than one group, show only the first group's traces.
     initial_visible = [False] * total_traces
     if group_trace_indices:
@@ -591,7 +594,7 @@ def plot_species_stats_from_lists(actual_list: list, predicted_list: list, group
             initial_visible[idx] = True
     for i, trace in enumerate(all_traces):
         trace.visible = initial_visible[i]
-    
+
     # Build dropdown buttons.
     buttons = []
     for i, indices in enumerate(group_trace_indices):
@@ -599,89 +602,82 @@ def plot_species_stats_from_lists(actual_list: list, predicted_list: list, group
         for idx in indices:
             vis[idx] = True
         label = f"Channels: {', '.join(channel_groups[i])}"
-        button = dict(
-            label=label,
-            method="update",
-            args=[{"visible": vis},
-                  {"title": f"Actual vs. Predicted: {label}"}]
-        )
+        button = dict(label=label, method="update", args=[{"visible": vis}, {"title": f"Actual vs. Predicted: {label}"}])
         buttons.append(button)
-    
+
     if buttons:
         fig.update_layout(
-            updatemenus=[dict(
-                active=0,
-                buttons=buttons,
-                direction="down",
-                pad={"r": 10, "t": 10},
-                showactive=True,
-                x=0.5,
-                xanchor="center",
-                y=1.05,
-                yanchor="top"
-            )]
+            updatemenus=[
+                dict(
+                    active=0,
+                    buttons=buttons,
+                    direction="down",
+                    pad={"r": 10, "t": 10},
+                    showactive=True,
+                    x=0.5,
+                    xanchor="center",
+                    y=1.05,
+                    yanchor="top",
+                )
+            ]
         )
-    
+
     fig.update_layout(
         title="Comparison of Actual vs. Predicted Observations, Daily % Difference, and Residual Distribution",
         height=900,
-        width=1100
+        width=1100,
     )
-    fig.update_xaxes(title_text="Timestamp", row=1, col=1, type='date')
+    fig.update_xaxes(title_text="Timestamp", row=1, col=1, type="date")
     fig.update_yaxes(title_text="Value", row=1, col=1)
     fig.update_xaxes(title_text="Day", row=2, col=1)
     fig.update_yaxes(title_text="Percentage Difference (%)", row=2, col=1)
     fig.update_xaxes(title_text=" ", row=3, col=1)  # Violin plot: x-axis is categorical
     fig.update_yaxes(title_text="Residual (Predicted - Actual)", row=3, col=1)
-    
+
     fig.show()
 
 
 def plot_species_stats_from_single_lists(stats_list: list, group_size: int = 5):
     channel_series = {}
     for stats in stats_list:
-        dist = stats.get('Distribution', {})
-        ts_t0 = dist.get('timestamp_t0')
-        ts_t1 = dist.get('timestamp_t1')
-        occ = dist.get('occurrences', {})
+        dist = stats.get("Distribution", {})
+        ts_t0 = dist.get("timestamp_t0")
+        ts_t1 = dist.get("timestamp_t1")
+        occ = dist.get("occurrences", {})
         for ch, values in occ.items():
             if ch not in channel_series:
                 channel_series[ch] = []
             if ts_t0:
-                channel_series[ch].append((ts_t0, values.get('t0', 0)))
+                channel_series[ch].append((ts_t0, values.get("t0", 0)))
             if ts_t1:
-                channel_series[ch].append((ts_t1, values.get('t1', 0)))
-    
+                channel_series[ch].append((ts_t1, values.get("t1", 0)))
+
     # Optionally sort each channel's series by timestamp (assuming ISO format).
     for ch, points in channel_series.items():
         points.sort(key=lambda x: x[0])
-    
+
     fig = go.Figure()
     # We'll also record the channel order.
-    channels = sorted(channel_series.keys(), key=lambda x: int(x.split('_')[1]) if x.split('_')[1].isdigit() else x)
+    channels = sorted(channel_series.keys(), key=lambda x: int(x.split("_")[1]) if x.split("_")[1].isdigit() else x)
     for ch in channels:
         pts = channel_series[ch]
         x_vals = [pt[0] for pt in pts]
         y_vals = [pt[1] for pt in pts]
-        fig.add_trace(go.Scatter(
-            x=x_vals,
-            y=y_vals,
-            mode='lines+markers',
-            name=ch
-        ))
-    
+        fig.add_trace(go.Scatter(x=x_vals, y=y_vals, mode="lines+markers", name=ch))
+
     total_traces = len(channels)
     # Create a list of buttons.
     buttons = []
     # Button for "All Channels"
-    buttons.append(dict(
-        label="All Channels",
-        method="update",
-        args=[{"visible": [True] * total_traces},
-              {"title": "Species Occurrences: All Channels"}]
-    ))
+    buttons.append(
+        dict(
+            label="All Channels",
+            method="update",
+            args=[{"visible": [True] * total_traces}, {"title": "Species Occurrences: All Channels"}],
+        )
+    )
     # Group channels into groups of group_size.
-    groups = [channels[i:i+group_size] for i in range(0, total_traces, group_size)]
+    groups = [channels[i : i + group_size] for i in range(0, total_traces, group_size)]
     for group in groups:
         # Build a list of booleans for trace visibility.
         visibility = [False] * total_traces
@@ -690,41 +686,42 @@ def plot_species_stats_from_single_lists(stats_list: list, group_size: int = 5):
             idx = channels.index(ch)
             visibility[idx] = True
         label = ", ".join(group)
-        buttons.append(dict(
-            label=label,
-            method="update",
-            args=[{"visible": visibility},
-                  {"title": f"Species Occurrences: {label}"}]
-        ))
-    
+        buttons.append(
+            dict(label=label, method="update", args=[{"visible": visibility}, {"title": f"Species Occurrences: {label}"}])
+        )
+
     fig.update_layout(
-        updatemenus=[dict(
-            active=0,
-            buttons=buttons,
-            direction="down",
-            pad={"r": 10, "t": 10},
-            showactive=True,
-            x=0.5,
-            xanchor="center",
-            y=1.15,
-            yanchor="top"
-        )]
+        updatemenus=[
+            dict(
+                active=0,
+                buttons=buttons,
+                direction="down",
+                pad={"r": 10, "t": 10},
+                showactive=True,
+                x=0.5,
+                xanchor="center",
+                y=1.15,
+                yanchor="top",
+            )
+        ]
     )
-    
+
     fig.update_layout(
         title="Species Occurrences Over Time (Single Trace per Channel)",
         xaxis_title="Timestamp",
         yaxis_title="Occurrences",
         height=600,
-        width=1000
+        width=1000,
     )
-    fig.update_xaxes(type='date')
+    fig.update_xaxes(type="date")
     fig.show()
+
 
 def load_config(output_dir: str | Path, config_file_name: str = "config.yaml"):
     config_path = Path(output_dir) / ".hydra"
     cfg = OmegaConf.load(str(config_path / config_file_name))
     return cfg
+
 
 def inspect_batch(batch, indent: int = 0) -> None:
     """
@@ -761,5 +758,3 @@ def inspect_batch(batch, indent: int = 0) -> None:
 
     else:
         print(f"{prefix}  {type(batch).__name__}: {batch!r}")
-
-

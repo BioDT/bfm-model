@@ -62,10 +62,10 @@ def _rescale_recursive(
                 # print(format_prefix(prefix), "real mean:", [splitted[i].mean() for i in range(shape_on_splitted_dimension)], "real std:", [splitted[i].std() for i in range(shape_on_splitted_dimension)])
                 if not isinstance(mean_val, (list, tuple)):
                     mean_val = [mean_val] * shape_on_splitted_dimension
-                    std_val  = [std_val]  * shape_on_splitted_dimension
-                    min_val  = [min_val]  * shape_on_splitted_dimension
-                    max_val  = [max_val]  * shape_on_splitted_dimension
-                
+                    std_val = [std_val] * shape_on_splitted_dimension
+                    min_val = [min_val] * shape_on_splitted_dimension
+                    max_val = [max_val] * shape_on_splitted_dimension
+
                 if mode == "standardize":
                     if direction == "scaled":
                         splitted_changed = [(splitted[i] - mean_val[i]) / std_val[i] for i in range(shape_on_splitted_dimension)]

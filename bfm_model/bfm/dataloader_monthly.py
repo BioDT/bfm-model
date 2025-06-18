@@ -41,7 +41,8 @@ Batch = namedtuple(
 
 Metadata = namedtuple("Metadata", ["latitudes", "longitudes", "timestamp", "lead_time", "pressure_levels", "species_list"])
 
-def normalize_keys(d: Dict[Union[int,str], torch.Tensor]) -> Dict[str, torch.Tensor]:
+
+def normalize_keys(d: Dict[Union[int, str], torch.Tensor]) -> Dict[str, torch.Tensor]:
     """
     Turn any int or mixed keys into strings.
     """
@@ -61,9 +62,8 @@ def custom_collate(batch_list):
     # If we're collating our Batch objects:
     if isinstance(batch_list[0], Batch):
 
-        def collate_dicts(
-            dicts: List[Dict[Union[int,str], torch.Tensor]]) -> Dict[Union[int,str], torch.Tensor]:
-            out: Dict[Union[int,str], torch.Tensor] = {}
+        def collate_dicts(dicts: List[Dict[Union[int, str], torch.Tensor]]) -> Dict[Union[int, str], torch.Tensor]:
+            out: Dict[Union[int, str], torch.Tensor] = {}
             keys = dicts[0].keys()
             for key in keys:
                 values = [d[key] for d in dicts]
@@ -71,9 +71,7 @@ def custom_collate(batch_list):
                     shapes = [tuple(v.shape) for v in values]
                     if len(set(shapes)) != 1:
                         # fail loud & clear
-                        raise RuntimeError(
-                            f"[collate] key={key!r} has mismatched shapes: {shapes}"
-                        )
+                        raise RuntimeError(f"[collate] key={key!r} has mismatched shapes: {shapes}")
                     out[key] = torch.stack(values, dim=0)
                 else:
                     # keep lists (e.g. timestamps) as-is
@@ -230,7 +228,14 @@ class LargeClimateDataset(Dataset):
     """
 
     def __init__(
-        self, data_dir: str, scaling_settings: DictConfig, num_species: int = 2, atmos_levels: list = [50], mode: str = "pretrain", model_patch_size: int = 4, max_files: int | None = None
+        self,
+        data_dir: str,
+        scaling_settings: DictConfig,
+        num_species: int = 2,
+        atmos_levels: list = [50],
+        mode: str = "pretrain",
+        model_patch_size: int = 4,
+        max_files: int | None = None,
     ):
         self.data_dir = data_dir
         self.num_species = num_species
@@ -240,7 +245,7 @@ class LargeClimateDataset(Dataset):
         self.max_files = max_files
         self.files.sort()
         if self.max_files:
-            self.files = self.files[:self.max_files]
+            self.files = self.files[: self.max_files]
         # print("Files sorted", self.files)
         self.scaling_settings = scaling_settings
         self.scaling_statistics = load_stats(scaling_settings.stats_path)
@@ -508,8 +513,8 @@ def test_dataset_and_dataloader(data_dir):
     Test function to inspect correctness.
     Print distinctive info from a single batch.
     """
-    example_model_patch_size = 4 
-    dataset = LargeClimateDataset(data_dir, num_species=10, scaling_settings=scaling_object, example_model_patch_size = 4)
+    example_model_patch_size = 4
+    dataset = LargeClimateDataset(data_dir, num_species=10, scaling_settings=scaling_object, example_model_patch_size=4)
     dataloader = DataLoader(
         dataset,
         batch_size=1,  # Fetch two samples for testing
@@ -585,7 +590,7 @@ def detach_batch(batch: Batch) -> Batch:
         agriculture_variables=_detach_and_clone(batch.agriculture_variables),
         forest_variables=_detach_and_clone(batch.forest_variables),
         redlist_variables=_detach_and_clone(batch.redlist_variables),
-        misc_variables=_detach_and_clone(batch.misc_variables)
+        misc_variables=_detach_and_clone(batch.misc_variables),
     )
 
 
@@ -621,7 +626,7 @@ def detach_graph_batch(batch: Batch) -> Batch:
         agriculture_variables=det_grp(batch.agriculture_variables),
         forest_variables=det_grp(batch.forest_variables),
         redlist_variables=det_grp(batch.redlist_variables),
-        misc_variables=det_grp(batch.misc_variables)
+        misc_variables=det_grp(batch.misc_variables),
     )
 
 
@@ -659,9 +664,8 @@ def batch_to_device(batch: Batch, device: torch.device) -> Batch:
         agriculture_variables=move_group(batch.agriculture_variables),
         forest_variables=move_group(batch.forest_variables),
         redlist_variables=move_group(batch.redlist_variables),
-        misc_variables=move_group(batch.misc_variables)
+        misc_variables=move_group(batch.misc_variables),
     )
-
 
 
 def inspect_batch_nans(batch, tag: str = ""):
@@ -693,12 +697,13 @@ def inspect_batch_nans(batch, tag: str = ""):
             data = tensor
             while data.dim() > 2:
                 data = data[0]
-            n_nan  = torch.isnan(data).sum().item()
-            n_inf  = torch.isinf(data).sum().item()
+            n_nan = torch.isnan(data).sum().item()
+            n_inf = torch.isinf(data).sum().item()
             if n_nan or n_inf:
                 total = data.numel()
                 print(f"  {group_name}:{var:20s}  NaN={n_nan}/{total}  Inf={n_inf}/{total}")
     print("================================")
+
 
 def debug_batch_devices(batch: Batch, prefix: str = ""):
     """
@@ -776,7 +781,8 @@ def detach_output_dict(d):
             out[k] = deepcopy(v)
     return out
 
-#V1> Works
+
+# V1> Works
 def _convert(obj: Any, move_cpu: bool = True, target_dtype: torch.dtype = torch.float32) -> Any:
     """Recursively convert to plain-Python containers; move tensors to CPU."""
     if isinstance(obj, torch.Tensor):

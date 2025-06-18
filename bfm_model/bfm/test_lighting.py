@@ -1,10 +1,11 @@
 """
 Copyright (C) 2025 TNO, The Netherlands. All rights reserved.
 """
-from datetime import datetime, timedelta
-from typing import Literal, Tuple
-from pathlib import Path
+
 from collections import defaultdict
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Literal, Tuple
 
 import hydra
 import lightning as L
@@ -15,12 +16,17 @@ from lightning.pytorch.loggers import MLFlowLogger
 from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader
 
-from bfm_model.bfm.dataloader_monthly import LargeClimateDataset, custom_collate, _convert
-from bfm_model.bfm.train_lighting import BFM_lighting
+from bfm_model.bfm.dataloader_monthly import (
+    LargeClimateDataset,
+    _convert,
+    custom_collate,
+)
 from bfm_model.bfm.decoder import BFMDecoder
 from bfm_model.bfm.encoder import BFMEncoder
+from bfm_model.bfm.train_lighting import BFM_lighting
 from bfm_model.mvit.mvit_model import MViT
 from bfm_model.swin_transformer.core.swim_core_v2 import Swin3DTransformer
+
 
 class BFM_lighting(LightningModule):
     def __init__(
@@ -54,11 +60,11 @@ class BFM_lighting(LightningModule):
         total_steps: int = 20000,
         td_learning: bool = True,
         lead_time: int = 2,
-        swin_encoder_depths: Tuple[int, ...] = (2,2,2),
-        swin_encoder_num_heads: Tuple[int, ...] = (8,16,32),
-        swin_decoder_depths: Tuple[int, ...] = (2,2,2),
-        swin_decoder_num_heads: Tuple[int, ...] = (32,16,8),
-        swin_window_size: Tuple[int, ...] = (1,4,5),
+        swin_encoder_depths: Tuple[int, ...] = (2, 2, 2),
+        swin_encoder_num_heads: Tuple[int, ...] = (8, 16, 32),
+        swin_decoder_depths: Tuple[int, ...] = (2, 2, 2),
+        swin_decoder_num_heads: Tuple[int, ...] = (32, 16, 8),
+        swin_window_size: Tuple[int, ...] = (1, 4, 5),
         swin_mlp_ratio: float = 4.0,
         swin_qkv_bias: bool = True,
         swin_drop_rate: float = 0.0,
@@ -206,11 +212,13 @@ class BFM_lighting(LightningModule):
         output = self(x, self.lead_time, batch_size=self.batch_size)
         # pred_cpu = detach_output_dict(output) # helper does detach.clone().cpu()
         # gt_cpu   = detach_batch(y) # The first timestep is the ground truth
-        records.append({
-            "idx": batch_idx,
-            "pred": output,
-            "gt": y,
-        })
+        records.append(
+            {
+                "idx": batch_idx,
+                "pred": output,
+                "gt": y,
+            }
+        )
         return records
 
 
@@ -243,9 +251,12 @@ def main(cfg: DictConfig):
     # Load the Test Dataset
     print("Setting up Dataloader ...")
     test_dataset = LargeClimateDataset(
-        data_dir=cfg.evaluation.test_data, scaling_settings=cfg.data.scaling, 
-        num_species=cfg.data.species_number, atmos_levels=cfg.data.atmos_levels,
-        model_patch_size=cfg.model.patch_size)
+        data_dir=cfg.evaluation.test_data,
+        scaling_settings=cfg.data.scaling,
+        num_species=cfg.data.species_number,
+        atmos_levels=cfg.data.atmos_levels,
+        model_patch_size=cfg.model.patch_size,
+    )
     print("Reading test data from :", cfg.evaluation.test_data)
     test_dataloader = DataLoader(
         test_dataset,
@@ -274,7 +285,7 @@ def main(cfg: DictConfig):
         precision=cfg.training.precision,
         log_every_n_steps=cfg.training.log_steps,
         # limit_test_batches=1,
-        limit_predict_batches=12, #TODO Change this to select how many consecutive months you want to predict
+        limit_predict_batches=12,  # TODO Change this to select how many consecutive months you want to predict
         logger=[mlf_logger_in_hydra_folder, mlf_logger_in_current_folder],
         enable_checkpointing=False,
         enable_progress_bar=True,
@@ -356,6 +367,7 @@ def main(cfg: DictConfig):
         path = SAVE_DIR / f"window_{idx:05d}.pt"
         torch.save(payload, path)
         print(f"Saved {path}")
+
 
 if __name__ == "__main__":
     main()

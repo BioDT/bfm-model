@@ -1,21 +1,24 @@
 """
 Copyright (C) 2025 TNO, The Netherlands. All rights reserved.
 """
+
 import os
 from collections import namedtuple
+from copy import deepcopy
 from datetime import datetime, timedelta
 from typing import Literal
-from copy import deepcopy
+
 import torch
 from omegaconf.dictconfig import DictConfig
 from torch.utils.data import DataLoader, Dataset, default_collate
-from bfm_model.bfm.utils import DictObj
+
 from bfm_model.bfm.dataset_basics import *
 from bfm_model.bfm.scaler import (
     _rescale_recursive,
     dimensions_to_keep_by_key,
     load_stats,
 )
+from bfm_model.bfm.utils import DictObj
 
 # Namedtuple definitions
 Batch = namedtuple(
@@ -205,7 +208,9 @@ class LargeClimateDataset(Dataset):
     }
     """
 
-    def __init__(self, data_dir: str, scaling_settings: DictConfig, num_species: int = 2, mode: str = "pretrain", model_patch_size: int = 4):
+    def __init__(
+        self, data_dir: str, scaling_settings: DictConfig, num_species: int = 2, mode: str = "pretrain", model_patch_size: int = 4
+    ):
         self.data_dir = data_dir
         self.num_species = num_species
         self.mode = mode
@@ -219,7 +224,7 @@ class LargeClimateDataset(Dataset):
 
     def __len__(self):
         return max(0, len(self.files) - 1)
-    
+
     def load_and_process_files(self, fpath: str):
         data = torch.load(fpath, map_location="cpu", weights_only=True)
 
@@ -287,7 +292,7 @@ class LargeClimateDataset(Dataset):
             forest_variables=forest_vars,
             species_variables=species_vars_wanted,
         )
-    
+
     def __getitem__(self, idx):
         fpath_x = self.files[idx]
         fpath_y = self.files[idx + 1]
@@ -295,10 +300,9 @@ class LargeClimateDataset(Dataset):
             x = self.load_and_process_files(fpath_x)
             y = self.load_and_process_files(fpath_y)
             return x, y
-        else: # finetune
+        else:  # finetune
             x = self.load_and_process_files(fpath_x)
             return x
-
 
     def scale_batch(self, batch: dict | Batch, direction: Literal["original", "scaled"] = "scaled"):
         """
@@ -413,13 +417,16 @@ def compute_batch_statistics(batch: Batch) -> dict:
 scalling_dict = {"enabled": False, "stats_path": "batch_statistics/statistics.json", "mode": "normalize"}
 scaling_object = DictObj(scalling_dict)
 
+
 def test_dataset_and_dataloader(data_dir):
     """
     Test function to inspect correctness.
     Print distinctive info from a single batch.
     """
-    example_model_patch_size = 4 
-    dataset = LargeClimateDataset(data_dir, num_species=10, scaling_settings=scaling_object, model_patch_size=example_model_patch_size)
+    example_model_patch_size = 4
+    dataset = LargeClimateDataset(
+        data_dir, num_species=10, scaling_settings=scaling_object, model_patch_size=example_model_patch_size
+    )
     dataloader = DataLoader(
         dataset,
         batch_size=1,  # Fetch two samples for testing
@@ -452,7 +459,6 @@ def test_dataset_and_dataloader(data_dir):
 if __name__ == "__main__":
     data_dir = "data_small/rollout/"  # Replace this with the actual directory path
     test_dataset_and_dataloader(data_dir)
-
 
 
 def detach_batch(batch: Batch) -> Batch:
@@ -489,16 +495,17 @@ def detach_batch(batch: Batch) -> Batch:
         return out
 
     return Batch(
-        batch_metadata = new_md,
-        surface_variables = _detach_and_clone(batch.surface_variables),
-        single_variables = _detach_and_clone(batch.single_variables),
-        species_variables = _detach_and_clone(batch.species_variables),
-        atmospheric_variables = _detach_and_clone(batch.atmospheric_variables),
-        species_extinction_variables = _detach_and_clone(batch.species_extinction_variables),
-        land_variables = _detach_and_clone(batch.land_variables),
-        agriculture_variables = _detach_and_clone(batch.agriculture_variables),
-        forest_variables = _detach_and_clone(batch.forest_variables),
+        batch_metadata=new_md,
+        surface_variables=_detach_and_clone(batch.surface_variables),
+        single_variables=_detach_and_clone(batch.single_variables),
+        species_variables=_detach_and_clone(batch.species_variables),
+        atmospheric_variables=_detach_and_clone(batch.atmospheric_variables),
+        species_extinction_variables=_detach_and_clone(batch.species_extinction_variables),
+        land_variables=_detach_and_clone(batch.land_variables),
+        agriculture_variables=_detach_and_clone(batch.agriculture_variables),
+        forest_variables=_detach_and_clone(batch.forest_variables),
     )
+
 
 def detach_preds(preds: dict) -> dict:
     """
@@ -509,26 +516,29 @@ def detach_preds(preds: dict) -> dict:
         out[g] = {v: t.detach().clone().cpu() for v, t in vars_.items()}
     return out
 
+
 def detach_graph_batch(batch: Batch) -> Batch:
     """Detach every tensor in the Batch (break graph), but keep device."""
     md = batch.batch_metadata
     new_md = md  # timestamps/lead_time floats are unchanged
 
     def det_grp(grp):
-        if grp is None: return None
+        if grp is None:
+            return None
         return {k: v.detach() for k, v in grp.items()}
 
     return Batch(
         batch_metadata=new_md,
-        surface_variables = det_grp(batch.surface_variables),
-        single_variables= det_grp(batch.single_variables),
-        species_variables= det_grp(batch.species_variables),
-        atmospheric_variables = det_grp(batch.atmospheric_variables),
-        species_extinction_variables = det_grp(batch.species_extinction_variables),
-        land_variables = det_grp(batch.land_variables),
-        agriculture_variables = det_grp(batch.agriculture_variables),
-        forest_variables= det_grp(batch.forest_variables),
+        surface_variables=det_grp(batch.surface_variables),
+        single_variables=det_grp(batch.single_variables),
+        species_variables=det_grp(batch.species_variables),
+        atmospheric_variables=det_grp(batch.atmospheric_variables),
+        species_extinction_variables=det_grp(batch.species_extinction_variables),
+        land_variables=det_grp(batch.land_variables),
+        agriculture_variables=det_grp(batch.agriculture_variables),
+        forest_variables=det_grp(batch.forest_variables),
     )
+
 
 def batch_to_device(batch: Batch, device: torch.device) -> Batch:
     """
@@ -544,7 +554,7 @@ def batch_to_device(batch: Batch, device: torch.device) -> Batch:
         timestamp=md.timestamp,
         lead_time=md.lead_time,
         pressure_levels=md.pressure_levels,  # if tensor, also .to(device)
-        species_list=md.species_list         # list of ints, leave as is
+        species_list=md.species_list,  # list of ints, leave as is
     )
 
     def move_group(grp):
@@ -553,15 +563,15 @@ def batch_to_device(batch: Batch, device: torch.device) -> Batch:
         return {k: v.to(device) for k, v in grp.items()}
 
     return Batch(
-        batch_metadata = new_md,
-        surface_variables = move_group(batch.surface_variables),
-        single_variables = move_group(batch.single_variables),
-        species_variables = move_group(batch.species_variables),
-        atmospheric_variables = move_group(batch.atmospheric_variables),
-        species_extinction_variables = move_group(batch.species_extinction_variables),
-        land_variables = move_group(batch.land_variables),
-        agriculture_variables = move_group(batch.agriculture_variables),
-        forest_variables = move_group(batch.forest_variables),
+        batch_metadata=new_md,
+        surface_variables=move_group(batch.surface_variables),
+        single_variables=move_group(batch.single_variables),
+        species_variables=move_group(batch.species_variables),
+        atmospheric_variables=move_group(batch.atmospheric_variables),
+        species_extinction_variables=move_group(batch.species_extinction_variables),
+        land_variables=move_group(batch.land_variables),
+        agriculture_variables=move_group(batch.agriculture_variables),
+        forest_variables=move_group(batch.forest_variables),
     )
 
 
@@ -580,12 +590,17 @@ def debug_batch_devices(batch: Batch, prefix: str = ""):
 
     # variable groups
     for group_name in [
-        "surface_variables", "single_variables", "atmospheric_variables",
-        "species_extinction_variables", "land_variables", "agriculture_variables",
-        "forest_variables", "species_variables"
+        "surface_variables",
+        "single_variables",
+        "atmospheric_variables",
+        "species_extinction_variables",
+        "land_variables",
+        "agriculture_variables",
+        "forest_variables",
+        "species_variables",
     ]:
         grp = getattr(batch, group_name)
-        if grp is None: 
+        if grp is None:
             continue
         for var_name, tensor in grp.items():
             devices.add((f"{prefix}.{group_name}.{var_name}", tensor.device))
@@ -600,6 +615,7 @@ def debug_batch_devices(batch: Batch, prefix: str = ""):
     for k, dev in sorted(devices):
         print(f"  {k:40s} → {dev}")
     print("======================================")
+
 
 def detach_output_dict(d):
     """

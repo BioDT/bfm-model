@@ -8,6 +8,6 @@
   prior written consent of TNO.
 
 
-  Contact: 
+  Contact:
     TNO Intelligent Cyber Physical Engineering (ICSE)
     <info@tno.nl ... thanasis.trantas@tno.nl, martino.mension@tno.nl>

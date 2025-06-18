@@ -43,19 +43,20 @@ Example:
 """
 
 import math
+from datetime import datetime
 
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
-from datetime import datetime
 from einops import rearrange, repeat
+from torch.distributed.nn.functional import all_gather
 
 from bfm_model.bfm.dataset_basics import load_batches
 from bfm_model.perceiver_components.helpers_io import dropout_seq
 from bfm_model.perceiver_components.pos_encoder import build_position_encoding
 from bfm_model.perceiver_core.perceiver_io import PerceiverIO
-import torch.distributed as dist
-from torch.distributed.nn.functional import all_gather
+
 
 class BFMEncoder(nn.Module):
     """
@@ -348,7 +349,7 @@ class BFMEncoder(nn.Module):
             latent_list.append(self.redlist_latents)
         if misc_latents > 0:
             self.misc_latents = nn.Parameter(torch.randn(misc_latents, self.embed_dim, device=device))
-            latent_list.append(self.misc_latents)  
+            latent_list.append(self.misc_latents)
 
         # initialize Perceiver IO with total latents
         self.total_latents = sum(self.latent_sizes.values())
@@ -410,7 +411,6 @@ class BFMEncoder(nn.Module):
                 q = q.view(-1, self.embed_dim)
             fixed.append(q)
         return torch.cat(fixed, dim=0)
-    
 
     @torch.no_grad()
     def _gather_latents(self, device: torch.device) -> torch.Tensor:
@@ -431,11 +431,10 @@ class BFMEncoder(nn.Module):
         full_list = [_full_param(p) for p in self._latent_parameter_list]
         full = torch.cat(full_list, dim=0)
 
-        assert full.size(0) == self.total_latents, \
-            f"expected {self.total_latents}, got {full.size(0)}"
+        assert full.size(0) == self.total_latents, f"expected {self.total_latents}, got {full.size(0)}"
 
-        return full  
-            
+        return full
+
         # gathered = []
         # for p in self._latent_parameter_list:
         #     # autograd-aware all_gather -> shape [world, shard, D]
@@ -448,7 +447,6 @@ class BFMEncoder(nn.Module):
         # assert out.size(0) == self.total_latents, \
         #     f"Expected {self.total_latents} latents, got {out.size(0)}"
         # return out.requires_grad_()
-    
 
     def _check_tensor(self, tensor, name, replace_values=True, group=None):
         """
@@ -526,7 +524,7 @@ class BFMEncoder(nn.Module):
         # if x.dim()==5, => [B, V, T, H, W]. then C = V * T
         if x.dim() == 4:
             B, V, H, W = x.shape
-            x = x.reshape(B, V, H, W) # trivial, no time
+            x = x.reshape(B, V, H, W)  # trivial, no time
             channel_dim = V
         else:
             # x.dim()==5 => [B, V, T, H, W]
@@ -610,11 +608,10 @@ class BFMEncoder(nn.Module):
                     # level_idx is the index for self.atmos_levels
                     # self.atmos_levels_embed expects a LongTensor as input
                     level_idx_tensor = torch.tensor([level_idx], dtype=torch.long, device=level_embed.device)
-                    specific_level_embedding = self.atmos_levels_embed(level_idx_tensor) # Shape [1, embed_dim]
-                    level_embed = level_embed + specific_level_embedding # Broadcast across patches
+                    specific_level_embedding = self.atmos_levels_embed(level_idx_tensor)  # Shape [1, embed_dim]
+                    level_embed = level_embed + specific_level_embedding  # Broadcast across patches
                     embeddings.append(level_embed)
                     embedding_groups["atmos"] = level_embed
-
 
         climate_embed = self.process_variable_group(
             batch.climate_variables, self.climate_token_embeds, "Climate Variables"
@@ -701,7 +698,7 @@ class BFMEncoder(nn.Module):
         num_patches_pos_enc = (self.H // self.patch_size) * (self.W // self.patch_size)
         pos_encoder = build_position_encoding(
             position_encoding_type=self.position_encoding_type,
-            index_dims=(num_patches_pos_enc,), # 3040 with the old grid
+            index_dims=(num_patches_pos_enc,),  # 3040 with the old grid
             fourier_position_encoding_kwargs={
                 "num_bands": self.num_fourier_bands,
                 "max_freq": self.max_frequency,
@@ -725,8 +722,10 @@ class BFMEncoder(nn.Module):
         # num_var_groups = x.shape[1] // (H // self.patch_size * W // self.patch_size)
         num_patches_data = (self.H // self.patch_size) * (self.W // self.patch_size)
         if x.shape[1] % num_patches_data != 0:
-            print(f"########## BFMEncoder forward: x.shape[1] ({x.shape[1]}) is not divisible by num_patches_data ({num_patches_data}) ##########")
-            num_var_groups = x.shape[1] // num_patches_data if num_patches_data > 0 else 1 
+            print(
+                f"########## BFMEncoder forward: x.shape[1] ({x.shape[1]}) is not divisible by num_patches_data ({num_patches_data}) ##########"
+            )
+            num_var_groups = x.shape[1] // num_patches_data if num_patches_data > 0 else 1
         else:
             num_var_groups = x.shape[1] // num_patches_data
         pos_encode = pos_encode.repeat_interleave(
@@ -749,18 +748,18 @@ class BFMEncoder(nn.Module):
         # x = self._check_tensor(x, "After adding time embedding")
 
         # Absolute time embedding
-        if hasattr(self, 'absolute_time_embed') and self.absolute_time_embed is not None:
+        if hasattr(self, "absolute_time_embed") and self.absolute_time_embed is not None:
             start_timestamp_str = batch.batch_metadata.timestamp[0][0]
             dt_format = "%Y-%m-%d %H:%M:%S"
             start_dt = datetime.strptime(start_timestamp_str, dt_format)
 
             abs_time_numerical_values = []
-            for _ in range(B): # B is batch_size
-                abs_time_numerical_values.append(start_dt.month) # Monthly
+            for _ in range(B):  # B is batch_size
+                abs_time_numerical_values.append(start_dt.month)  # Monthly
 
-            abs_times_tensor = torch.tensor(abs_time_numerical_values, dtype=x.dtype, device=x.device) # Shape [B]
-            
-            absolute_time_encode = self._time_encoding(abs_times_tensor) # Sinusoidal encoding
+            abs_times_tensor = torch.tensor(abs_time_numerical_values, dtype=x.dtype, device=x.device)  # Shape [B]
+
+            absolute_time_encode = self._time_encoding(abs_times_tensor)  # Sinusoidal encoding
             absolute_time_emb_vec = self.absolute_time_embed(absolute_time_encode)
             x = x + absolute_time_emb_vec.unsqueeze(1)
             # x = self._check_tensor(x, "After adding absolute time embedding")
@@ -768,11 +767,10 @@ class BFMEncoder(nn.Module):
         x = self.pre_perceiver_norm(x)
         # self._check_tensor(x, "Normalized input")
 
-        latents = self._combine_latents(x.device) # [num_latents, embed_dim]
-        latents = latents.unsqueeze(0).repeat(B, 1, 1) # [B, num_latents, embed_dim]
+        latents = self._combine_latents(x.device)  # [num_latents, embed_dim]
+        latents = latents.unsqueeze(0).repeat(B, 1, 1)  # [B, num_latents, embed_dim]
 
-        assert latents.shape[1] == x.shape[1], \
-            f"Latent tokens {latents.shape[1]} =! input tokens {x.shape[1]}"
+        assert latents.shape[1] == x.shape[1], f"Latent tokens {latents.shape[1]} =! input tokens {x.shape[1]}"
         assert latents.shape[-1] == self.embed_dim == x.shape[-1]
 
         x = self.perceiver_io(x, queries=latents)

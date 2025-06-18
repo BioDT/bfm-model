@@ -107,11 +107,11 @@ class BFM_lighting(LightningModule):
         land_mask_path: str = "",
         use_mask: str = "no",
         partially_masked_groups: list[str] = ["species_variables"],
-        swin_encoder_depths: Tuple[int, ...] = (2,2,2),
-        swin_encoder_num_heads: Tuple[int, ...] = (8,16,32),
-        swin_decoder_depths: Tuple[int, ...] = (2,2,2),
-        swin_decoder_num_heads: Tuple[int, ...] = (32,16,8),
-        swin_window_size: Tuple[int, ...] = (1,4,5),
+        swin_encoder_depths: Tuple[int, ...] = (2, 2, 2),
+        swin_encoder_num_heads: Tuple[int, ...] = (8, 16, 32),
+        swin_decoder_depths: Tuple[int, ...] = (2, 2, 2),
+        swin_decoder_num_heads: Tuple[int, ...] = (32, 16, 8),
+        swin_window_size: Tuple[int, ...] = (1, 4, 5),
         swin_mlp_ratio: float = 4.0,
         swin_qkv_bias: bool = True,
         swin_drop_rate: float = 0.0,
@@ -135,16 +135,16 @@ class BFM_lighting(LightningModule):
 
         # load land-sea mask
         try:
-            with open(land_mask_path, 'rb') as f:
+            with open(land_mask_path, "rb") as f:
                 land_sea_mask_numpy = pickle.load(f)
             # the loaded mask is a numpy array with 1 for land, 0 for sea and has shape (H, W) matching self.H, self.W after training_config values are used
             land_sea_mask_tensor = torch.from_numpy(land_sea_mask_numpy.astype(float)).float()
             if land_sea_mask_tensor.shape != (self.H, self.W):
                 print(f"Land mask shape {land_sea_mask_tensor.shape} does not match H,W parameters ({self.H},{self.W})")
-            self.register_buffer('land_sea_mask', land_sea_mask_tensor, persistent=False)
+            self.register_buffer("land_sea_mask", land_sea_mask_tensor, persistent=False)
         except FileNotFoundError:
             print(f"Land-sea mask file not found at {land_mask_path}. Loss will be calculated over all pixels.")
-            self.register_buffer('land_sea_mask', None, persistent=False)
+            self.register_buffer("land_sea_mask", None, persistent=False)
 
         self.variable_weights = {
             "surface_variables": {
@@ -155,19 +155,34 @@ class BFM_lighting(LightningModule):
                 "u10": 0.77,
                 "v10": 0.66,
                 "lsm": 1.2,
-                },
-            "edaphic_variables": {"swvl1": 1.1, "swvl2": 0.9, "stl1": 0.7, "stl2": 0.6,},
+            },
+            "edaphic_variables": {
+                "swvl1": 1.1,
+                "swvl2": 0.9,
+                "stl1": 0.7,
+                "stl2": 0.6,
+            },
             "atmospheric_variables": {"z": 2.8, "t": 1.7, "u": 0.87, "v": 0.6, "q": 0.78},
-            "climate_variables": {"smlt": 1.0, "tp": 2.2, "csfr": 0.6, "avg_sdswrf": 0.9,
-                                "avg_snswrf": 0.7, "avg_snlwrf": 0.5, "avg_tprate": 2.0,
-                                "avg_sdswrfcs": 0.5, "sd": 0.9, "t2m": 2.5, "d2m": 1.3},
+            "climate_variables": {
+                "smlt": 1.0,
+                "tp": 2.2,
+                "csfr": 0.6,
+                "avg_sdswrf": 0.9,
+                "avg_snswrf": 0.7,
+                "avg_snlwrf": 0.5,
+                "avg_tprate": 2.0,
+                "avg_sdswrfcs": 0.5,
+                "sd": 0.9,
+                "t2m": 2.5,
+                "d2m": 1.3,
+            },
             "vegetation_variables": {"NDVI": 0.8},
             "land_variables": {"Land": 0.6},
             "agriculture_variables": {"Agriculture": 0.4, "Arable": 0.3, "Cropland": 0.4},
             "forest_variables": {"Forest": 1.2},
             "redlist_variables": {"RLI": 1.3},
             "misc_variables": {"avg_slhtf": 1.2, "avg_pevr": 1.0},
-            "species_variables": 10.0
+            "species_variables": 10.0,
         }
 
         self.encoder = BFMEncoder(
@@ -322,7 +337,7 @@ class BFM_lighting(LightningModule):
         return loss
 
     def test_step(self, batch, batch_idx):
-        lead_time = 2   # fixed lead time (months) for pre-training
+        lead_time = 2  # fixed lead time (months) for pre-training
         x, y = batch
         output = self(x, lead_time, batch_size=self.batch_size)
         print("Test time")
@@ -345,12 +360,11 @@ class BFM_lighting(LightningModule):
     #     for name, param in self.named_parameters():
     #         if param.grad is None:
     #             print(name)
-                
 
     def compute_loss(self, output, batch):
         """
         Some helpers:
-        1) https://link.springer.com/article/10.1007/s13253-025-00676-8 
+        1) https://link.springer.com/article/10.1007/s13253-025-00676-8
         2) https://www.sciencedirect.com/science/article/pii/S1574954124001651
         3) https://www.sciencedirect.com/science/article/pii/S1470160X22009608
         """
@@ -393,24 +407,31 @@ class BFM_lighting(LightningModule):
             group_loss = 0.0
             var_count = 0
 
-            apply_mask_to_group = mask_available_and_needed and (self.use_mask == "fully" or (self.use_mask == "partially" and (group_name in self.partially_masked_groups)))
+            apply_mask_to_group = mask_available_and_needed and (
+                self.use_mask == "fully" or (self.use_mask == "partially" and (group_name in self.partially_masked_groups))
+            )
 
             for var_name, pred_tensor in pred_dict.items():
                 if var_name not in true_dict:
                     continue
                 gt_tensor = true_dict[var_name]
-                
+
                 # Determine target tensor based on td_learning
                 target_tensor = gt_tensor[:, 1]
                 prediction_for_loss = pred_tensor
                 if self.td_learning:
                     target_tensor = gt_tensor[:, 1] - gt_tensor[:, 0]
                     prediction_for_loss = pred_tensor - gt_tensor[:, 0]
-                
+
                 abs_error_map = torch.abs(prediction_for_loss - target_tensor)
 
                 loss_var = torch.tensor(0.0, device=pred_tensor.device)
-                use_masked_loss_for_var = apply_mask_to_group and current_land_mask is not None and abs_error_map.ndim >= 2 and abs_error_map.shape[-2:] == current_land_mask.shape
+                use_masked_loss_for_var = (
+                    apply_mask_to_group
+                    and current_land_mask is not None
+                    and abs_error_map.ndim >= 2
+                    and abs_error_map.shape[-2:] == current_land_mask.shape
+                )
 
                 if use_masked_loss_for_var:
                     broadcastable_mask = current_land_mask
@@ -418,15 +439,19 @@ class BFM_lighting(LightningModule):
                         broadcastable_mask = current_land_mask.unsqueeze(0)
                     elif abs_error_map.ndim == 4:
                         broadcastable_mask = current_land_mask.unsqueeze(0).unsqueeze(0)
-                    
+
                     masked_error_sum = torch.sum(abs_error_map * broadcastable_mask)
                     num_elements_for_mean = torch.sum(broadcastable_mask.expand_as(abs_error_map))
-                    loss_var = masked_error_sum / num_elements_for_mean if num_elements_for_mean > 0 else torch.tensor(0.0, device=pred_tensor.device)
+                    loss_var = (
+                        masked_error_sum / num_elements_for_mean
+                        if num_elements_for_mean > 0
+                        else torch.tensor(0.0, device=pred_tensor.device)
+                    )
                 else:
                     loss_var = torch.mean(abs_error_map)
 
                 self.log(f"{group_name}_{var_name}_loss", loss_var, batch_size=gt_tensor.size(0))
-                
+
                 group_weights = self.variable_weights.get(group_name, {})
                 w = group_weights.get(var_name, 1.0) if isinstance(group_weights, dict) else group_weights
                 group_loss += w * loss_var
@@ -436,8 +461,15 @@ class BFM_lighting(LightningModule):
                 group_loss /= var_count  # average within group
                 total_loss += group_loss
                 count += 1
-        
-        final_total_loss = total_loss / count if count > 0 else torch.tensor(0.0, device=output[next(iter(output))][next(iter(output[next(iter(output))]))].device if output else torch.tensor(0.0))
+
+        final_total_loss = (
+            total_loss / count
+            if count > 0
+            else torch.tensor(
+                0.0,
+                device=output[next(iter(output))][next(iter(output[next(iter(output))]))].device if output else torch.tensor(0.0),
+            )
+        )
         print(f"Total loss {final_total_loss}")
         return final_total_loss
 
@@ -516,14 +548,14 @@ def main(cfg):
         scaling_settings=cfg.data.scaling,
         num_species=cfg.data.species_number,
         atmos_levels=cfg.data.atmos_levels,
-        model_patch_size=cfg.model.patch_size
+        model_patch_size=cfg.model.patch_size,
     )
     test_dataset = LargeClimateDataset(
         data_dir=cfg.data.test_data_path,
         scaling_settings=cfg.data.scaling,
         num_species=cfg.data.species_number,
         atmos_levels=cfg.data.atmos_levels,
-        model_patch_size=cfg.model.patch_size
+        model_patch_size=cfg.model.patch_size,
     )
 
     val_dataloader = DataLoader(
@@ -559,7 +591,7 @@ def main(cfg):
         )
 
     print("Done \n Setting up the BFM")
-    
+
     swin_params = {}
     if cfg.model.backbone == "swin":
         selected_swin_config = cfg.model_swin_backbone[cfg.model.swin_backbone_size]
@@ -637,10 +669,10 @@ def main(cfg):
 
     elif cfg.training.strategy == "ddp":
         distr_strategy = DDPStrategy()
-    
+
     else:
         distr_strategy = None
-    
+
     print(f"Using {cfg.training.strategy} strategy: {distr_strategy}")
 
     trainer = L.Trainer(

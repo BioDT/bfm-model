@@ -1,49 +1,62 @@
 """
 Copyright (C) 2025 TNO, The Netherlands. All rights reserved.
 """
+
 import os
-from typing import Literal, Tuple
-from functools import partial
 from datetime import datetime, timedelta
+from functools import partial
+from pathlib import Path
+from typing import Literal, Tuple
 
-
+import hydra
+import lightning as L
 import torch
 import torch.distributed as dist
-from torch.utils.data import DataLoader, Dataset
-from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import checkpoint_wrapper, apply_activation_checkpointing
-from torch.distributed.fsdp.wrap import size_based_auto_wrap_policy
-from pathlib import Path
-import hydra
 from hydra.core.hydra_config import HydraConfig
-from omegaconf import DictConfig, OmegaConf
-
-import lightning as L
-from lightning.pytorch import seed_everything, LightningModule
+from lightning.pytorch import LightningModule, seed_everything
+from lightning.pytorch.callbacks import Callback, ModelCheckpoint
 from lightning.pytorch.loggers import MLFlowLogger
-from lightning.pytorch.utilities.model_summary import ModelSummary
-from lightning.pytorch.callbacks import ModelCheckpoint, Callback
 from lightning.pytorch.strategies import DDPStrategy, FSDPStrategy
+from lightning.pytorch.utilities.model_summary import ModelSummary
+from omegaconf import DictConfig, OmegaConf
+from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
+    apply_activation_checkpointing,
+    checkpoint_wrapper,
+)
+from torch.distributed.fsdp.wrap import size_based_auto_wrap_policy
+from torch.utils.data import DataLoader, Dataset
 
-from bfm_model.bfm.dataloader_monthly import LargeClimateDataset, custom_collate, detach_graph_batch, \
-                                            detach_batch, batch_to_device, detach_preds, debug_batch_devices, inspect_batch_nans
-from bfm_model.bfm.rollouts import build_new_batch_with_prediction
+from bfm_model.bfm.dataloader_monthly import (
+    LargeClimateDataset,
+    batch_to_device,
+    custom_collate,
+    debug_batch_devices,
+    detach_batch,
+    detach_graph_batch,
+    detach_preds,
+    inspect_batch_nans,
+)
 from bfm_model.bfm.decoder import BFMDecoder
 from bfm_model.bfm.encoder import BFMEncoder
+from bfm_model.bfm.rollouts import build_new_batch_with_prediction
+from bfm_model.bfm.utils import compute_next_timestamp, inspect_batch_shapes_namedtuple
 from bfm_model.mvit.mvit_model import MViT
 from bfm_model.swin_transformer.core.swim_core_v2 import Swin3DTransformer
-from bfm_model.bfm.utils import compute_next_timestamp, inspect_batch_shapes_namedtuple
+
 
 def activation_ckpt_policy(module):
     return isinstance(module, (Swin3DTransformer, MViT))
+
 
 class SequentialWindowDataset(Dataset):
     """
     Wrap an underlying single-sample dataset so __getitem__(i) returns a list
     [sample_i, sample_{i+1}, … sample_{i+steps}] where steps is user-defined.
     """
+
     def __init__(self, base_ds: Dataset, steps: int):
         assert steps >= 1, "steps must be ≥ 1"
-        self.base = base_ds # yields one Batch per index
+        self.base = base_ds  # yields one Batch per index
         self.steps = steps
 
     def __len__(self):
@@ -119,10 +132,10 @@ class BFM_Forecastinglighting(LightningModule):
         warmup_steps: int = 1000,
         total_steps: int = 20000,
         td_learning: bool = False,
-        ground_truth_dataset=None, 
-        lead_time: int = 1, # months
+        ground_truth_dataset=None,
+        lead_time: int = 1,  # months
         refresh_interval=30,
-        buffer_max_size=10, 
+        buffer_max_size=10,
         initial_buffer_size=5,
         peft_r: int = 8,
         lora_alpha: int = 8,
@@ -133,11 +146,11 @@ class BFM_Forecastinglighting(LightningModule):
         use_lora: bool = False,
         use_vera: bool = False,
         rollout_steps: int = 1,
-        swin_encoder_depths: Tuple[int, ...] = (2,2,2),
-        swin_encoder_num_heads: Tuple[int, ...] = (8,16,32),
-        swin_decoder_depths: Tuple[int, ...] = (2,2,2),
-        swin_decoder_num_heads: Tuple[int, ...] = (32,16,8),
-        swin_window_size: Tuple[int, ...] = (1,4,5),
+        swin_encoder_depths: Tuple[int, ...] = (2, 2, 2),
+        swin_encoder_num_heads: Tuple[int, ...] = (8, 16, 32),
+        swin_decoder_depths: Tuple[int, ...] = (2, 2, 2),
+        swin_decoder_num_heads: Tuple[int, ...] = (32, 16, 8),
+        swin_window_size: Tuple[int, ...] = (1, 4, 5),
         swin_mlp_ratio: float = 4.0,
         swin_qkv_bias: bool = True,
         swin_drop_rate: float = 0.0,
@@ -178,18 +191,33 @@ class BFM_Forecastinglighting(LightningModule):
                 "u10": 0.1,
                 "v10": 0.1,
                 "lsm": 0.1,
-                },
-            "edaphic_variables": {"swvl1": 0.1, "swvl2": 0.1, "stl1": 0.1, "stl2":0.1,},
+            },
+            "edaphic_variables": {
+                "swvl1": 0.1,
+                "swvl2": 0.1,
+                "stl1": 0.1,
+                "stl2": 0.1,
+            },
             "atmospheric_variables": {"z": 0.1, "t": 0.1, "u": 0.1, "v": 0.1, "q": 0.1},
-            "climate_variables": {"smlt": 0.1, "tp": 0.1, "csfr": 0.1, "avg_sdswrf": 0.1,
-                                "avg_snswrf": 0.1, "avg_snlwrf": 0.1, "avg_tprate": 0.1,
-                                "avg_sdswrfcs": 0.1, "sd": 0.1, "t2m": 0.1, "d2m": 0.1},
+            "climate_variables": {
+                "smlt": 0.1,
+                "tp": 0.1,
+                "csfr": 0.1,
+                "avg_sdswrf": 0.1,
+                "avg_snswrf": 0.1,
+                "avg_snlwrf": 0.1,
+                "avg_tprate": 0.1,
+                "avg_sdswrfcs": 0.1,
+                "sd": 0.1,
+                "t2m": 0.1,
+                "d2m": 0.1,
+            },
             "land_variables": {"Land": 0.1},
             "agriculture_variables": {"Agriculture": 0.1, "Arable": 0.1, "Cropland": 0.1},
             "forest_variables": {"Forest": 0.1},
             "redlist_variables": {"RLI": 0.1},
             "misc_variables": {"avg_slhtf": 0.1, "avg_pevr": 0.1},
-            "species_variables": 100.0
+            "species_variables": 100.0,
         }
 
         self.encoder = BFMEncoder(
@@ -303,7 +331,6 @@ class BFM_Forecastinglighting(LightningModule):
         trainable = sum(p.numel() for p in self.parameters() if p.requires_grad)
         print(f"{trainable/1e6:.2f} M / {total/1e6:.2f} M parameters will update")
 
-
     def forward(self, batch, lead_time: int = 1, batch_size: int = 1):
         """
         Forward pass of the model.
@@ -346,12 +373,7 @@ class BFM_Forecastinglighting(LightningModule):
         # print("Decoded output:", output)
         return output
 
-    def rollout_forecast(
-            self,
-            initial_batch,
-            steps: int = 1,
-            batch_size: int = 1,
-            mode: str = "finetune"):
+    def rollout_forecast(self, initial_batch, steps: int = 1, batch_size: int = 1, mode: str = "finetune"):
         """
         If mode == 'finetune' -> pus-forward:
         steps 0 … K-2 run under no_grad (detached)
@@ -367,7 +389,7 @@ class BFM_Forecastinglighting(LightningModule):
         device = next(self.parameters()).device
         curr = batch_to_device(initial_batch, device)
         for k in range(steps):
-            keep_grad = (mode == "finetune" and k == steps - 1)
+            keep_grad = mode == "finetune" and k == steps - 1
             with torch.set_grad_enabled(keep_grad):
                 preds = self(curr, self.lead_time, batch_size=batch_size)
                 # print(preds.keys())
@@ -376,8 +398,7 @@ class BFM_Forecastinglighting(LightningModule):
             else:
                 # break graph but keep on GPU
                 curr_det = detach_graph_batch(curr)
-                preds_det = {g:{v:t.detach() for v,t in grp.items()}
-                            for g,grp in preds.items()}
+                preds_det = {g: {v: t.detach() for v, t in grp.items()} for g, grp in preds.items()}
                 next_batch = build_new_batch_with_prediction(curr_det, preds_det)
             rollout_dict["batches"].append(next_batch)
             rollout_dict["timestamps"].append(next_batch.batch_metadata.timestamp)
@@ -387,7 +408,6 @@ class BFM_Forecastinglighting(LightningModule):
             # inspect_batch_shapes_namedtuple(curr)
 
         return rollout_dict
-
 
     def training_step(self, batch, batch_idx):
         """
@@ -399,27 +419,23 @@ class BFM_Forecastinglighting(LightningModule):
         target_batch = xs[self.rollout_steps]
 
         # push‑forward rollout
-        roll = self.rollout_forecast(
-            init_batch,
-            steps=self.rollout_steps,
-            batch_size=self.batch_size,
-            mode="finetune")
+        roll = self.rollout_forecast(init_batch, steps=self.rollout_steps, batch_size=self.batch_size, mode="finetune")
 
-        pred_last = roll["batches"][-1] # Batch (tK,ŷK+1)
+        pred_last = roll["batches"][-1]  # Batch (tK,ŷK+1)
         loss = self.compute_loss(pred_last, target_batch)
 
         traj_loss = []
         # (optional) statistics on earlier steps without grads
         with torch.no_grad():
             for k in range(self.rollout_steps - 1):
-                traj_loss.append(self.compute_loss(roll["batches"][k], xs[k+1]))
+                traj_loss.append(self.compute_loss(roll["batches"][k], xs[k + 1]))
 
         trajectory_loss = torch.stack(traj_loss).sum()
         self.log("train_loss", loss, batch_size=self.batch_size, sync_dist=True)
         self.log("train_trajectory_loss", trajectory_loss, batch_size=self.batch_size, sync_dist=True)
         print(f"Train Loss: {loss} | {self.rollout_steps}-Step Trajectory Loss {trajectory_loss}")
         return loss
-    
+
     def validation_step(self, batch, batch_idx):
         xs = batch
         init_batch = xs[0]
@@ -428,13 +444,9 @@ class BFM_Forecastinglighting(LightningModule):
         # inspect_batch_shapes_namedtuple(target_batch)
         traj_loss = []
         # push‑forward rollout
-        roll = self.rollout_forecast(
-            init_batch,
-            steps=self.rollout_steps,
-            batch_size=self.batch_size,
-            mode="finetune")
+        roll = self.rollout_forecast(init_batch, steps=self.rollout_steps, batch_size=self.batch_size, mode="finetune")
 
-        pred_last = roll["batches"][-1] # Batch (tK,ŷK+1)
+        pred_last = roll["batches"][-1]  # Batch (tK,ŷK+1)
         inspect_batch_nans(roll["batches"][-1], tag="pred_last")
         inspect_batch_nans(target_batch, tag="gt_last")
 
@@ -442,7 +454,7 @@ class BFM_Forecastinglighting(LightningModule):
         # (optional) statistics on earlier steps without grads
         with torch.no_grad():
             for k in range(self.rollout_steps - 1):
-                traj_loss.append(self.compute_loss(roll["batches"][k], xs[k+1]))
+                traj_loss.append(self.compute_loss(roll["batches"][k], xs[k + 1]))
 
         trajectory_loss = torch.stack(traj_loss).sum()
         self.log("val_loss", loss, batch_size=self.batch_size, sync_dist=True)
@@ -450,58 +462,54 @@ class BFM_Forecastinglighting(LightningModule):
         print(f"Val Loss: {loss} | {self.rollout_steps}-Step Trajectory Loss {trajectory_loss}")
 
         return loss
-    
+
     def test_step(self, batch, batch_idx):
         xs = batch
         init_batch = xs[0]
         target_batch = xs[self.rollout_steps]
         traj_loss = []
         # push‑forward rollout
-        roll = self.rollout_forecast(
-            init_batch,
-            steps=self.rollout_steps,
-            batch_size=self.batch_size,
-            mode="finetune")
+        roll = self.rollout_forecast(init_batch, steps=self.rollout_steps, batch_size=self.batch_size, mode="finetune")
 
-        pred_last = roll["batches"][-1] # Batch (tK,ŷK+1)
+        pred_last = roll["batches"][-1]  # Batch (tK,ŷK+1)
         loss = self.compute_loss(pred_last, target_batch)
 
-        # (optional) statistics on earlier steps without grads 
+        # (optional) statistics on earlier steps without grads
         with torch.no_grad():
             for k in range(self.rollout_steps - 1):
-                traj_loss.append(self.compute_loss(roll["batches"][k], xs[k+1]))
-                
+                traj_loss.append(self.compute_loss(roll["batches"][k], xs[k + 1]))
+
         trajectory_loss = torch.stack(traj_loss).sum()
         self.log("test_loss", loss, batch_size=self.batch_size, sync_dist=True)
         self.log("test_trajectory_loss", trajectory_loss, batch_size=self.batch_size, sync_dist=True)
         print(f"Test Loss: {loss} | {self.rollout_steps}-Step Trajectory Loss {trajectory_loss}")
         return loss
-    
+
     def predict_step(self, batch, batch_idx):
         # batch lives on GPU in fp16/bf16
         init = batch[0]
         init = batch_to_device(init, next(self.parameters()).device)
 
-        rollout = self.rollout_forecast(
-                init,
-                steps=self.rollout_steps,
-                batch_size=self.batch_size,
-                mode="test"
-            )["batches"]  # list of Batches on GPU
+        rollout = self.rollout_forecast(init, steps=self.rollout_steps, batch_size=self.batch_size, mode="test")[
+            "batches"
+        ]  # list of Batches on GPU
 
         records = []
         for k, (pred, gt) in enumerate(zip(rollout, batch[1:]), start=1):
             # detach + clone + move to CPU
             pred_cpu = detach_batch(pred)
             gt_cpu = detach_batch(gt)
-            records.append({
-                "idx":   batch_idx,
-                "step":  k,
-                "pred":  pred_cpu,
-                "gt":    gt_cpu,
-            })
+            records.append(
+                {
+                    "idx": batch_idx,
+                    "step": k,
+                    "pred": pred_cpu,
+                    "gt": gt_cpu,
+                }
+            )
         return records
-    # Will show all the layers we freeze! 
+
+    # Will show all the layers we freeze!
     # def on_after_backward(self):
     #     """
     #     Checker for not learnable parameters -> Should output nothing!
@@ -574,7 +582,9 @@ class BFM_Forecastinglighting(LightningModule):
                 else:
                     w = group_weights
                 # Log each variable's raw loss
-                self.log(f"{var_name} raw loss", loss_var, batch_size=time1.size(0), sync_dist=True) # to accumulate the metric across devices.
+                self.log(
+                    f"{var_name} raw loss", loss_var, batch_size=time1.size(0), sync_dist=True
+                )  # to accumulate the metric across devices.
                 group_loss += w * loss_var
                 var_count += 1
 
@@ -590,11 +600,14 @@ class BFM_Forecastinglighting(LightningModule):
         return total_loss
 
     def configure_optimizers(self):
-        optimizer = torch.optim.AdamW((p for p in self.parameters() if p.requires_grad), lr=self.learning_rate, weight_decay=self.weight_decay)
+        optimizer = torch.optim.AdamW(
+            (p for p in self.parameters() if p.requires_grad), lr=self.learning_rate, weight_decay=self.weight_decay
+        )
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=1000, eta_min=self.learning_rate / 10)
         # scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=self.lr_lambda)
 
         return [optimizer]
+
 
 def freeze_except(model):
     """
@@ -605,13 +618,14 @@ def freeze_except(model):
     """
     trainable = []
     for name, param in model.named_parameters():
-        if 'peft_' in name:
+        if "peft_" in name:
             param.requires_grad = True
             trainable.append(name)
         else:
             param.requires_grad = False
     print(f"PEFT trainable params = {len(trainable)} layers")
     return trainable
+
 
 class RolloutSaveCallback(Callback):
     SAVE_DIR = Path("rollout_exports")
@@ -663,12 +677,18 @@ def main(cfg: DictConfig):
     output_dir = HydraConfig.get().runtime.output_dir
     print(f"Output directory: {output_dir}")
     dataset = LargeClimateDataset(
-        data_dir=cfg.data.data_path, scaling_settings=cfg.data.scaling, num_species=cfg.data.species_number,
-        mode="finetune", atmos_levels=cfg.data.atmos_levels,
+        data_dir=cfg.data.data_path,
+        scaling_settings=cfg.data.scaling,
+        num_species=cfg.data.species_number,
+        mode="finetune",
+        atmos_levels=cfg.data.atmos_levels,
     )
     test_dataset = LargeClimateDataset(
-        data_dir=cfg.data.test_data_path, scaling_settings=cfg.data.scaling, num_species=cfg.data.species_number,
-        mode="finetune", atmos_levels=cfg.data.atmos_levels,
+        data_dir=cfg.data.test_data_path,
+        scaling_settings=cfg.data.scaling,
+        num_species=cfg.data.species_number,
+        mode="finetune",
+        atmos_levels=cfg.data.atmos_levels,
     )
     seq_dataset = SequentialWindowDataset(dataset, cfg.finetune.rollout_steps)
     seq_test_dataset = SequentialWindowDataset(test_dataset, cfg.finetune.rollout_steps)
@@ -702,15 +722,14 @@ def main(cfg: DictConfig):
     if rank == 0 or rank == "0":
         # Use rank in experiment name to avoid conflicts
         mlf_logger = MLFlowLogger(
-            experiment_name=f"BFM_{MODE}_finetune_logs_r{rank}", 
-            run_name=f"BFM_{MODE}_finetune_{current_time}", 
-            save_dir=f"{output_dir}/logs/rank{rank}"
+            experiment_name=f"BFM_{MODE}_finetune_logs_r{rank}",
+            run_name=f"BFM_{MODE}_finetune_{current_time}",
+            save_dir=f"{output_dir}/logs/rank{rank}",
         )
 
     checkpoint_path = cfg.finetune.checkpoint_path
     # Load Model from Checkpoint
     print(f"Loading model from checkpoint: {checkpoint_path}")
-
 
     swin_params = {}
     if cfg.model.backbone == "swin":
@@ -758,7 +777,7 @@ def main(cfg: DictConfig):
         batch_size=cfg.finetune.batch_size,
         td_learning=cfg.finetune.td_learning,
         ground_truth_dataset=test_dataset,
-        strict=False, # False if loading from a pre-trained with PEFT checkpoint
+        strict=False,  # False if loading from a pre-trained with PEFT checkpoint
         peft_r=cfg.finetune.rank,
         lora_alpha=cfg.finetune.lora_alpha,
         d_initial=cfg.finetune.d_initial,
@@ -771,14 +790,9 @@ def main(cfg: DictConfig):
         # lora_steps=cfg.finetune.rollout_steps, # 1 month
         # lora_mode=cfg.finetune.lora_mode, # every step + layers #single
         **swin_params,
-
     )
 
-    apply_activation_checkpointing(
-        BFM, 
-        checkpoint_wrapper_fn=checkpoint_wrapper,
-        check_fn=activation_ckpt_policy
-    )
+    apply_activation_checkpointing(BFM, checkpoint_wrapper_fn=checkpoint_wrapper, check_fn=activation_ckpt_policy)
 
     model_summary = ModelSummary(BFM, max_depth=2)
     print(model_summary)
@@ -786,11 +800,11 @@ def main(cfg: DictConfig):
     checkpoint_callback = ModelCheckpoint(
         dirpath=f"{output_dir}/checkpoints",
         save_top_k=1,
-        monitor="val_loss", #`log('val_loss', value)` in the `LightningModule`
+        monitor="val_loss",  # `log('val_loss', value)` in the `LightningModule`
         mode="min",
         every_n_train_steps=cfg.finetune.checkpoint_every,
         filename="{epoch:02d}-{train_loss}",
-        save_last=True
+        save_last=True,
     )
 
     print(f"Will be saving checkpoints at: {output_dir}/checkpoints")
@@ -854,7 +868,7 @@ def main(cfg: DictConfig):
     else:
         print(f"Starting {MODE} Finetune training from scratch for a horizon of {cfg.finetune.rollout_steps} ")
         trainer.fit(BFM, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader)
-        
+
     if dist.is_initialized():
         dist.barrier()
 

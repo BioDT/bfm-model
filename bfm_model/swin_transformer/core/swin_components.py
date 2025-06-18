@@ -10,9 +10,8 @@ from timm.models.layers import DropPath, to_3tuple
 from bfm_model.swin_transformer.helpers.adaptive_layer_norm import AdaptiveLayerNorm
 from bfm_model.swin_transformer.helpers.fourier_expansion import lead_time_expansion
 from bfm_model.swin_transformer.helpers.low_rank_adaptation import LoRAMode, LoRARollout
-from bfm_model.swin_transformer.helpers.vera import VeRA, VeRAMode, VeRARollout
-
 from bfm_model.swin_transformer.helpers.utilities import adjust_windows, init_weights
+from bfm_model.swin_transformer.helpers.vera import VeRA, VeRAMode, VeRARollout
 from bfm_model.swin_transformer.helpers.window_operations import (
     apply_or_remove_3d_padding,
     compute_3d_shifted_window_mask,
@@ -96,8 +95,8 @@ class WindowMultiHeadSelfAttention(nn.Module):
             qk_scale (float, optional): Override default qk scale of head_dim ** -0.5 if set. Default: None
             attention_dropout_rate (float): Dropout rate for attention weights. Default: 0.0
             proj_dropout (float): Dropout rate for projection output. Default: 0.0
-            peft_r (int): Rank for Parameter Efficient Fine Tuning: 
-                a) Low-Rank Adaptation (LoRA). Default: 8 | 
+            peft_r (int): Rank for Parameter Efficient Fine Tuning:
+                a) Low-Rank Adaptation (LoRA). Default: 8 |
                 b) Vector-based Random-matrix Adaptation. Default: 256
             lora_alpha (int): Scaling factor for LoRA. Default: 8
             d_initial (float): Initialization factor for lamda vector. Default: 0.1
@@ -130,12 +129,10 @@ class WindowMultiHeadSelfAttention(nn.Module):
             self.peft_qkv = LoRARollout(dim, dim * 3, peft_r, lora_alpha, peft_dropout, peft_steps, peft_mode)
         elif use_vera:
             self.peft_qkv = VeRARollout(
-                dim, dim * 3, r=peft_r, dropout=peft_dropout,
-                d_initial=d_initial, max_steps=peft_steps, mode=peft_mode
+                dim, dim * 3, r=peft_r, dropout=peft_dropout, d_initial=d_initial, max_steps=peft_steps, mode=peft_mode
             )
             self.peft_proj = VeRARollout(
-                dim, dim, r=peft_r, dropout=peft_dropout,
-                d_initial=d_initial, max_steps=peft_steps, mode=peft_mode
+                dim, dim, r=peft_r, dropout=peft_dropout, d_initial=d_initial, max_steps=peft_steps, mode=peft_mode
             )
         else:
             # Use lambda functions returning 0 for efficiency when LoRA is disabled
@@ -247,8 +244,8 @@ class Swin3DTransformerBlock(nn.Module):
             drop_path_rate (float): Stochastic depth rate. Default: 0.0
             activation_fn (type): Activation layer type. Default: nn.GELU
             scale_bias (float): Scale bias for AdaptiveLayerNorm. Default: 0.0
-            peft_r (int): Rank for Parameter Efficient Fine Tuning: 
-                a) Low-Rank Adaptation (LoRA). Default: 8 | 
+            peft_r (int): Rank for Parameter Efficient Fine Tuning:
+                a) Low-Rank Adaptation (LoRA). Default: 8 |
                 b) Vector-based Random-matrix Adaptation. Default: 256
             lora_alpha (int): Scaling factor for LoRA. Default: 8
             d_initial (float): Initialization factor for lamda vector. Default: 0.1
@@ -286,7 +283,6 @@ class Swin3DTransformerBlock(nn.Module):
             use_lora=use_lora,
             use_vera=use_vera,
         )
-
 
         # Stochastic Depth
         self.drop_path = DropPath(drop_path_rate) if drop_path_rate > 0.0 else nn.Identity()
