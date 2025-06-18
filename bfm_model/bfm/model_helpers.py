@@ -19,7 +19,7 @@ from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
 )
 from torch.distributed.fsdp.wrap import size_based_auto_wrap_policy
 
-from bfm_model.bfm.model import BFM
+from bfm_model.bfm.model import BFM, BFMRollout
 from bfm_model.mvit.mvit_model import MViT
 from bfm_model.swin_transformer.core.swim_core_v2 import Swin3DTransformer
 
@@ -52,7 +52,7 @@ def get_mlflow_logger(output_dir: str | None = None) -> MLFlowLogger | None:
     return mlflow_logger
 
 
-def setup_bfm_model(cfg, mode: Literal["train", "test"]) -> BFM:
+def setup_bfm_model(cfg, mode: Literal["train", "test", "rollout"], checkpoint_path: str | None = None) -> BFM:
     swin_params = {}
     if cfg.model.backbone == "swin":
         selected_swin_config = cfg.model_swin_backbone[cfg.model.swin_backbone_size]
@@ -134,6 +134,66 @@ def setup_bfm_model(cfg, mode: Literal["train", "test"]) -> BFM:
             batch_size=cfg.evaluation.batch_size,
             **swin_params,
         )
+    elif mode == "rollout":
+        if cfg.model.backbone == "swin":
+            selected_swin_config = cfg.model_swin_backbone[cfg.model.swin_backbone_size]
+            swin_params = {
+                "swin_encoder_depths": tuple(selected_swin_config.encoder_depths),
+                "swin_encoder_num_heads": tuple(selected_swin_config.encoder_num_heads),
+                "swin_decoder_depths": tuple(selected_swin_config.decoder_depths),
+                "swin_decoder_num_heads": tuple(selected_swin_config.decoder_num_heads),
+                "swin_window_size": tuple(selected_swin_config.window_size),
+                "swin_mlp_ratio": selected_swin_config.mlp_ratio,
+                "swin_qkv_bias": selected_swin_config.qkv_bias,
+                "swin_drop_rate": selected_swin_config.drop_rate,
+                "swin_attn_drop_rate": selected_swin_config.attn_drop_rate,
+                "swin_drop_path_rate": selected_swin_config.drop_path_rate,
+            }
+        assert checkpoint_path, "cannot do rollout without starting checkpoint"
+        model = BFMRollout.load_from_checkpoint(
+            checkpoint_path=checkpoint_path,
+            surface_vars=(cfg.model.surface_vars),
+            edaphic_vars=(cfg.model.edaphic_vars),
+            atmos_vars=(cfg.model.atmos_vars),
+            climate_vars=(cfg.model.climate_vars),
+            species_vars=(cfg.model.species_vars),
+            vegetation_vars=(cfg.model.vegetation_vars),
+            land_vars=(cfg.model.land_vars),
+            agriculture_vars=(cfg.model.agriculture_vars),
+            forest_vars=(cfg.model.forest_vars),
+            redlist_vars=(cfg.model.redlist_vars),
+            misc_vars=(cfg.model.misc_vars),
+            atmos_levels=cfg.data.atmos_levels,
+            species_num=cfg.data.species_number,
+            H=cfg.model.H,
+            W=cfg.model.W,
+            num_latent_tokens=cfg.model.num_latent_tokens,
+            backbone_type=cfg.model.backbone,
+            patch_size=cfg.model.patch_size,
+            embed_dim=cfg.model.embed_dim,
+            num_heads=cfg.model.num_heads,
+            head_dim=cfg.model.head_dim,
+            depth=cfg.model.depth,
+            learning_rate=cfg.finetune.lr,
+            weight_decay=cfg.finetune.wd,
+            batch_size=cfg.finetune.batch_size,
+            td_learning=cfg.finetune.td_learning,
+            # ground_truth_dataset=test_dataset,
+            strict=False,  # False if loading from a pre-trained with PEFT checkpoint
+            peft_r=cfg.finetune.rank,
+            lora_alpha=cfg.finetune.lora_alpha,
+            d_initial=cfg.finetune.d_initial,
+            peft_dropout=cfg.finetune.peft_dropout,
+            peft_steps=cfg.finetune.rollout_steps,
+            peft_mode=cfg.finetune.peft_mode,
+            use_lora=cfg.finetune.use_lora,
+            use_vera=cfg.finetune.use_vera,
+            rollout_steps=cfg.finetune.rollout_steps,
+            # lora_steps=cfg.finetune.rollout_steps, # 1 month
+            # lora_mode=cfg.finetune.lora_mode, # every step + layers #single
+            **swin_params,
+        )
+        apply_activation_checkpointing(model, checkpoint_wrapper_fn=checkpoint_wrapper, check_fn=activation_ckpt_policy)
     else:
         raise ValueError(mode)
 
