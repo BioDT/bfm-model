@@ -19,9 +19,7 @@ from bfm_model.bfm.dataloader_monthly import (
     _convert,
     custom_collate,
 )
-from bfm_model.bfm.model import BFM
 from bfm_model.bfm.model_helpers import get_mlflow_logger, get_trainer, setup_bfm_model
-from bfm_model.bfm.test_lighting import BFM_lighting
 
 
 @hydra.main(version_base=None, config_path="configs", config_name="train_config")

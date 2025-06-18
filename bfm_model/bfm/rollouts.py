@@ -18,7 +18,7 @@ from torch.utils.data import DataLoader, Dataset
 
 from bfm_model.bfm.batch_utils import save_batch
 from bfm_model.bfm.dataloader_monthly import LargeClimateDataset, custom_collate
-from bfm_model.bfm.train_lighting import BFM_lighting
+from bfm_model.bfm.model import BFM
 from bfm_model.bfm.utils import compute_next_timestamp, inspect_batch_shapes_namedtuple
 
 
@@ -324,7 +324,7 @@ def main(cfg: DictConfig):
             "swin_use_lora": selected_swin_config.use_lora,
         }
 
-    loaded_model = BFM_lighting.load_from_checkpoint(
+    loaded_model = BFM.load_from_checkpoint(
         checkpoint_path,
         map_location=device,
         surface_vars=(cfg.model.surface_vars),
