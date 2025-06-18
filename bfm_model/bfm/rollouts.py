@@ -21,6 +21,7 @@ from bfm_model.bfm.model import BFM
 from bfm_model.bfm.utils import compute_next_timestamp, inspect_batch_shapes_namedtuple
 
 
+# TODO: the function from BFMRollout.rollout_forecast should be used!!!
 def rollout_forecast(trainer, model, initial_batch, cfg, steps=2, batch_size=1):
 
     # Container for results
@@ -112,7 +113,7 @@ def rollout_forecast(trainer, model, initial_batch, cfg, steps=2, batch_size=1):
         rollout_dict["lead_times"].append(current_batch[0].batch_metadata.lead_time)
 
         # Build a new batch that has (last old time) + (predicted new time).
-        new_batch = build_new_batch_with_prediction(current_batch[0], preds[0])
+        new_batch = build_new_batch_with_prediction(current_batch[0], preds[0][0])
 
         # This new_batch becomes the "current_batch" for the next iteration
         current_batch[0] = new_batch
