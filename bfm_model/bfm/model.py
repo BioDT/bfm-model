@@ -1,7 +1,7 @@
 """
-Copyright (C) 2025 TNO, The Netherlands. All rights reserved.
+Copyright 2025 (C) TNO. Licensed under the MIT license.
 
-BFM (Biodiversity Foundation Model) Main Module.
+BFM (BioAnalyst Foundation Model) Main Module.
 
 This module contains the main BFM architecture, combining encoder, backbone and decoder components
 to process climate and biodiversity-related variables.
@@ -18,34 +18,13 @@ Key Components:
 """
 
 import math
-import os
 import pickle
-from datetime import datetime
-from functools import partial
 from typing import Literal, Tuple
 
-import hydra
-import lightning as L
 import torch
-import torch.distributed as dist
-from hydra.core.hydra_config import HydraConfig
-from lightning.pytorch import LightningModule, seed_everything
-from lightning.pytorch.callbacks import ModelCheckpoint
-from lightning.pytorch.loggers import MLFlowLogger
-from lightning.pytorch.plugins.environments import ClusterEnvironment
-from lightning.pytorch.strategies import DDPStrategy, FSDPStrategy
-from lightning.pytorch.utilities.model_summary import ModelSummary
-from omegaconf import OmegaConf
-from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
-    apply_activation_checkpointing,
-    checkpoint_wrapper,
-)
-from torch.distributed.fsdp.wrap import size_based_auto_wrap_policy
-from torch.utils.data import DataLoader
-
-from bfm_model.bfm.dataloader_monthly import LargeClimateDataset, custom_collate
-from bfm_model.bfm.decoder import BFMDecoder
+from lightning.pytorch import LightningModule
 from bfm_model.bfm.encoder import BFMEncoder
+from bfm_model.bfm.decoder import BFMDecoder
 from bfm_model.mvit.mvit_model import MViT
 from bfm_model.swin_transformer.core.swim_core_v2 import Swin3DTransformer
 

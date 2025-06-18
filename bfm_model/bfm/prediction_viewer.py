@@ -1,5 +1,5 @@
 """
-Copyright (C) 2025 TNO, The Netherlands. All rights reserved.
+Copyright 2025 (C) TNO. Licensed under the MIT license.
 
 Visualise prediction vs ground-truth batches.
 
@@ -20,8 +20,6 @@ import pandas as pd
 import streamlit as st
 import torch
 from cartopy.util import add_cyclic_point
-from matplotlib import axes as maxes
-from mpl_toolkits.axes_grid1 import make_axes_locatable
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 
@@ -73,10 +71,9 @@ def _plot_maps_informative(
 ) -> plt.Figure:
     """High-quality two-panel plot with grid, labels and right-hand colourbar.
 
-    The colourbar axis is created with `axes_grid1.make_axes_locatable`, but we
-    explicitly set `axes_class=plt.Axes` to avoid Cartopy's GeoAxes constructor
-    (which requires a `projection` kwarg and otherwise raises KeyError:
-    'projection').
+    The colourbar axis is created with axes_grid1.make_axes_locatable, but we
+    explicitly set axes_class=plt.Axes to avoid Cartopy's GeoAxes constructor
+    (which requires a projection kwarg and otherwise raises KeyError: 'projection').
     """
     proj = ccrs.PlateCarree()
     fig, ax = plt.subplots(1, 2, figsize=(12, 4), subplot_kw=dict(projection=proj))
@@ -138,7 +135,7 @@ def _compute_metrics(pred: torch.Tensor, gt: torch.Tensor) -> Dict[str, float]:
 
 st.set_page_config(page_title="Prediction evaluation viewer", layout="wide")
 
-st.sidebar.title("Prediction viewer – extended v3")
+st.sidebar.title("Prediction viewer - extended v3")
 files = sorted(DATA_DIR.glob("window_*.pt"))
 if not files:
     st.sidebar.error("No window_*.pt files found")
@@ -193,7 +190,7 @@ with tab_spatial:
 
 # Spatial Maps Informative -----------------------------------------------------
 with tab_spatial_inf:
-    st.info("Download ≥ 300 dpi figures via the buttons below.")
+    st.info("Download >= 300 dpi figures via the buttons below.")
     for v in var_sel:
         ten_pred, ten_gt = pred[slot][v], gt[slot][v][0]
         if ten_pred.ndim == 3:
@@ -243,7 +240,7 @@ with tab_metrics:
 with tab_taylor:
     st.subheader("Taylor diagram — pattern statistics")
     if TAYLOR_BACKEND is None:
-        st.warning("Install either `easy_mpl` (preferred) or `skillmetrics` to enable this plot.")
+        st.warning("Install either easy_mpl (preferred) or skillmetrics to enable this plot.")
     elif TAYLOR_BACKEND == "easy_mpl":
         # Build observation array (first window) and simulations dict
         w0 = torch.load(files[0], map_location="cpu")
@@ -288,7 +285,7 @@ with tab_taylor:
 
 # Error PDF -------------------------------------------------------------------
 with tab_error:
-    st.subheader("Spatial error PDF (Prediction − Observation)")
+    st.subheader("Spatial error PDF (Prediction - Observation)")
     ten_pred, ten_gt = pred[slot][var_sel[0]], gt[slot][var_sel[0]][0]
     if ten_pred.ndim == 4:
         ci = meta["pressure_levels"].index(pl_sel[0]) if pl_sel else 0

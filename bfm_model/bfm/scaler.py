@@ -1,5 +1,5 @@
 """
-Copyright (C) 2025 TNO, The Netherlands. All rights reserved.
+Copyright 2025 (C) TNO. Licensed under the MIT license.
 """
 
 import json
@@ -28,8 +28,6 @@ dimensions_to_keep_monthly = {
         "q": [1],  # [time, t, lat, lon]
     }
 }
-# TODO: this should be saved in the standardization config!!!
-
 
 def _rescale_recursive(
     obj: dict,
@@ -40,9 +38,7 @@ def _rescale_recursive(
     direction: Literal["original", "scaled"] = "scaled",
 ):
     if isinstance(obj, torch.Tensor):
-        # print("prefix", prefix)
         if stats:
-            # print(f"stats: {format_prefix(prefix)}", stats, dimensions_to_keep_by_key)
             mean_val = stats["mean"]
             std_val = stats["std"]
             min_val = stats["min"]
@@ -51,15 +47,13 @@ def _rescale_recursive(
                 assert isinstance(
                     dimensions_to_keep_by_key, list
                 ), f"dimensions_to_keep_by_key should be a list, got {type(dimensions_to_keep_by_key)}, {dimensions_to_keep_by_key}"
-                # print("dimensions_to_keep_by_key:", dimensions_to_keep_by_key)
-                # print("obj.shape:", obj.shape)
+
                 assert (
                     len(dimensions_to_keep_by_key) == 1
                 ), f"dimensions_to_keep_by_key should have length 1, got {len(dimensions_to_keep_by_key)}"
                 dimension_to_keep = dimensions_to_keep_by_key[0]
                 shape_on_splitted_dimension = obj.shape[dimension_to_keep]
                 splitted = torch.chunk(obj, chunks=shape_on_splitted_dimension, dim=dimension_to_keep)
-                # print(format_prefix(prefix), "real mean:", [splitted[i].mean() for i in range(shape_on_splitted_dimension)], "real std:", [splitted[i].std() for i in range(shape_on_splitted_dimension)])
                 if not isinstance(mean_val, (list, tuple)):
                     mean_val = [mean_val] * shape_on_splitted_dimension
                     std_val = [std_val] * shape_on_splitted_dimension
@@ -74,7 +68,6 @@ def _rescale_recursive(
                 elif mode == "normalize":
                     # min-max normalization
                     if direction == "scaled":
-                        # print([min_val[i] for i in range(shape_on_splitted_dimension)])
                         splitted_changed = [
                             (splitted[i] - min_val[i]) / (max_val[i] - min_val[i]) for i in range(shape_on_splitted_dimension)
                         ]
@@ -84,7 +77,6 @@ def _rescale_recursive(
                         ]
                 res = torch.cat(splitted_changed, dim=dimension_to_keep)
             else:
-                # print("mean:", mean, "std:", std)
                 if mode == "standardize":
                     if direction == "scaled":
                         res = torch.add(obj, -mean_val) / std_val  # (obj - mean) / std
@@ -113,7 +105,6 @@ def _rescale_recursive(
                 )
         return obj
     else:
-        # print("type not supported:", type(obj), f"current_key: {current_key}")
         pass
 
 
@@ -157,66 +148,3 @@ def load_stats(path: str):
     with open(path, "r") as f:
         cfg = json.load(f)
     return cfg
-
-
-# # TEST
-# data_path = "/data/projects/biodt/storage/batches/"
-# standardization_path = "/data/projects/biodt/storage/batches/statistics.json"
-# standardization_cfg = load_stats(standardization_path)
-# fpath = f"{data_path}batch_2005-10-14_00-00-00_to_2005-10-14_06-00-00.pt"
-# batch_data = torch.load(fpath, map_location='cpu', weights_only=True)
-# # dataset = LargeClimateDataset(data_dir=data_path, standardization_cfg=standardization_cfg, num_species=2)
-# # batch = dataset[0]
-
-# # print(batch_data["atmospheric_variables"]["z"].mean())
-# # visit_obj(batch_data)
-# # visit_obj(batch_data["atmospheric_variables"]["z"])
-# print("atmospheric_variables.z")
-# visit_obj(batch_data["atmospheric_variables"]["t"])
-# # visit_obj(batch_data["species_variables"]["dynamic"]["Distribution"])
-# _rescale_recursive(batch_data, standardization_cfg, dimensions_to_keep_by_key, mode="standardize", direction="scaled")
-# # _rescale_recursive(batch_data, standardization_cfg, dimensions_to_keep_by_key, mode="normalize", direction="scaled")
-# # print(batch_data["atmospheric_variables"]["z"].mean())
-# # visit_obj(batch_data)
-# # visit_obj(batch_data["atmospheric_variables"]["z"])
-# print("atmospheric_variables.z STANDARDIZED")
-# visit_obj(batch_data["atmospheric_variables"]["t"])
-# # visit_obj(batch_data["species_variables"]["dynamic"]["Distribution"])
-# _rescale_recursive(batch_data, standardization_cfg, dimensions_to_keep_by_key, mode="standardize", direction="original")
-# # _rescale_recursive(batch_data, standardization_cfg, dimensions_to_keep_by_key, mode="normalize", direction="original")
-# # visit_obj(batch_data)
-# # visit_obj(batch_data["atmospheric_variables"]["z"])
-# print("atmospheric_variables.z")
-# visit_obj(batch_data["atmospheric_variables"]["t"])
-# visit_obj(batch_data["species_variables"]["dynamic"]["Distribution"])
-# TODO: should be back to initial point (A->B->A), it is not
-
-
-# debug
-# tensor = batch_data["atmospheric_variables"]["z"]
-# standardization_cfg = {
-#     "std": [0.1, 0.2, 0.3],
-#     "mean": [0.1, 0.2, 0.3],
-# }
-# print(tensor.shape)
-# dimensions_to_keep_by_key = [1]
-# dimension_to_keep = dimensions_to_keep_by_key[0]
-# shape_on_splitted_dimension = tensor.shape[dimension_to_keep]
-
-# # does not work when we don't know where the dimension is (notation)
-# # for i in range(shape_on_splitted_dimension):
-# #     tensor[:, i, :, :] = tensor[:, i, :, :] * standardization_cfg["std"][i] + standardization_cfg["mean"][i]
-
-# splitted = torch.chunk(tensor, chunks=shape_on_splitted_dimension, dim=dimension_to_keep)
-# splitted_changed = [splitted[i] * standardization_cfg["std"][i] + standardization_cfg["mean"][i] for i in range(shape_on_splitted_dimension)]
-# res = torch.cat(splitted_changed, dim=dimension_to_keep)
-
-# monthly batches
-# batches_path = "/projects/prjs1134/data/projects/biodt/storage/monthly_batches"
-# fpath = f"{batches_path}/batches/batch_2000-01-01_to_2000-02-01.pt"
-# standardization_path = f"{batches_path}/statistics/monthly_batches_stats.json"
-# standardization_stats = load_stats(standardization_path)
-# batch_data = torch.load(fpath, map_location="cpu", weights_only=True)
-# visit_obj(batch_data["species_variables"])
-# _ = _rescale_recursive(batch_data, standardization_stats, dimensions_to_keep_by_key={}, mode="standardize", direction="original")
-# visit_obj(batch_data["species_variables"])

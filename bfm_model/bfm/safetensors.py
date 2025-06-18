@@ -1,3 +1,7 @@
+"""
+Copyright 2025 (C) TNO. Licensed under the MIT license.
+"""
+
 from pathlib import Path
 from typing import Union
 

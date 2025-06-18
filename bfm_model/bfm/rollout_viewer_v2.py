@@ -1,4 +1,6 @@
 """
+Copyright 2025 (C) TNO. Licensed under the MIT license.
+
 Batch-comparison viewer for spatiotemporal rollouts
 
 ** UNDER DEVELOPMENT

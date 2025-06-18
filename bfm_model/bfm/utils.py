@@ -1,5 +1,5 @@
 """
-Copyright (C) 2025 TNO, The Netherlands. All rights reserved.
+Copyright 2025 (C) TNO. Licensed under the MIT license.
 """
 
 import glob
@@ -81,7 +81,7 @@ def inspect_batch_shapes_dict(
             return
 
     if not isinstance(batch_dict, dict):
-        print(f"** 'batch_dict' is not a dict after unwrapping: {type(batch_dict)}. Exiting.")
+        print(f"batch_dict is not a dict after unwrapping: {type(batch_dict)}. Exiting.")
         return
 
     print(f"Top-level keys now: {list(batch_dict.keys())}")
