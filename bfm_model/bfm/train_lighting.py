@@ -34,18 +34,22 @@ def main(cfg):
     output_dir = HydraConfig.get().runtime.output_dir
     print(f"Output directory: {output_dir}")
 
+    # dataloaders
     train_dataloader = get_train_dataloader(cfg)
     val_dataloader = get_val_dataloader(cfg)
 
     mlflow_logger = get_mlflow_logger(output_dir)
+    # also log in the ./mlruns folder so that you can run mlflow server and see every run together
+    mlflow_logger_current_folder = get_mlflow_logger()
+    loggers = [l for l in [mlflow_logger, mlflow_logger_current_folder] if l]
 
-    model = setup_bfm_model(cfg)
+    model = setup_bfm_model(cfg, mode="train")
 
     checkpoint_callback = setup_checkpoint_callback(cfg, output_dir)
 
     distr_strategy = setup_fsdp(cfg, model)
 
-    trainer = get_trainer(cfg, mlflow_logger=mlflow_logger, distr_strategy=distr_strategy, callbacks=[checkpoint_callback])
+    trainer = get_trainer(cfg, mlflow_logger=loggers, distr_strategy=distr_strategy, callbacks=[checkpoint_callback])
     # Experimental
     # mlflow.set_tracking_uri(output_dir)
     # Auto log all MLflow entities

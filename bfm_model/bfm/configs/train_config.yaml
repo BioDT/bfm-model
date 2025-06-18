@@ -67,7 +67,6 @@ mlflow:
   port: 8082 # change here port if you get [Errno 98] Address already in use
 
 evaluation:
-  test_data: /projects/prjs1134/data/projects/biodt/storage/final_dataset_monthly/test
   rollout_data: /home/atrantas/bfm-model/rollout_monthly #/home/thanasis.trantas/git_projects/bfm-model/data_small/rollout_monthly # Need to have 2 batch samples for the rollout to work with
   checkpoint_path: /projects/prjs1134/data/projects/biodt/storage/weights/epoch=268-val_loss=0.00493.ckpt # THE BEST PERFORMING /home/thanasis.trantas/git_projects/bfm-model/weights/epoch=268-val_loss=0.00493.ckpt #/home/atrantas/bfm-model/outputs/2025-05-25/12-36-44/checkpoints/epoch=65-val_loss=36.95078.ckpt #/home/atrantas/bfm-model/outputs/2025-05-24/19-55-32/checkpoints/epoch=158-val_loss=0.00413.ckpt #/home/atrantas/bfm-model/outputs/2025-05-24/15-29-50/checkpoints/epoch=26-val_loss=0.00631.ckpt
   batch_size: 1

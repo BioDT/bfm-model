@@ -5,6 +5,7 @@ Copyright (C) 2025 TNO, The Netherlands. All rights reserved.
 import os
 from datetime import datetime
 from functools import partial
+from typing import List, Literal
 
 import lightning as L
 import torch.distributed as dist
@@ -27,24 +28,31 @@ def activation_ckpt_policy(module):
     return isinstance(module, (Swin3DTransformer, MViT))
 
 
-def get_mlflow_logger(output_dir: str) -> MLFlowLogger | None:
+def get_mlflow_logger(output_dir: str | None = None) -> MLFlowLogger | None:
     # Setup logger with rank-specific paths to avoid conflicts
     current_time = datetime.now()
-    rank = int(os.environ.get("RANK", "0"))
+    rank = int(os.environ.get("RANK", 0))
     print(f"Will be using rank {rank} for logging")
     # Single logger approach with rank-specific paths
     mlflow_logger = None
     # if "RANK" not in os.environ or os.environ["RANK"] == "0":
     if rank == 0 or rank == "0":
-        # Use rank in experiment name to avoid conflicts
-        mlflow_path = f"{output_dir}/logs/rank{rank}"
-        mlflow_logger = MLFlowLogger(experiment_name=f"BFM_logs_r{rank}", run_name=f"BFM_{current_time}", save_dir=mlflow_path)
-        print(f"mlflow configured to log to {mlflow_path}")
+        if output_dir:
+            # Use rank in experiment name to avoid conflicts
+            mlflow_path = f"{output_dir}/logs/rank{rank}"
+            mlflow_logger = MLFlowLogger(
+                experiment_name=f"BFM_logs_r{rank}", run_name=f"BFM_{current_time}", save_dir=mlflow_path
+            )
+        else:
+            # this one will create in current directory ./mlruns
+            mlflow_logger = MLFlowLogger(experiment_name=f"BFM_logs_r{rank}", run_name=f"BFM_{current_time}")
+
+        print(f"mlflow configured to log to {mlflow_logger.log_dir}")
 
     return mlflow_logger
 
 
-def setup_bfm_model(cfg) -> BFM:
+def setup_bfm_model(cfg, mode: Literal["train", "test"]) -> BFM:
     swin_params = {}
     if cfg.model.backbone == "swin":
         selected_swin_config = cfg.model_swin_backbone[cfg.model.swin_backbone_size]
@@ -62,40 +70,72 @@ def setup_bfm_model(cfg) -> BFM:
             "swin_use_lora": selected_swin_config.use_lora,
         }
 
-    model = BFM(
-        surface_vars=(cfg.model.surface_vars),
-        edaphic_vars=(cfg.model.edaphic_vars),
-        atmos_vars=(cfg.model.atmos_vars),
-        climate_vars=(cfg.model.climate_vars),
-        species_vars=(cfg.model.species_vars),
-        vegetation_vars=(cfg.model.vegetation_vars),
-        land_vars=(cfg.model.land_vars),
-        agriculture_vars=(cfg.model.agriculture_vars),
-        forest_vars=(cfg.model.forest_vars),
-        redlist_vars=(cfg.model.redlist_vars),
-        misc_vars=(cfg.model.misc_vars),
-        atmos_levels=cfg.data.atmos_levels,
-        species_num=cfg.data.species_number,
-        H=cfg.model.H,
-        W=cfg.model.W,
-        num_latent_tokens=cfg.model.num_latent_tokens,
-        backbone_type=cfg.model.backbone,
-        patch_size=cfg.model.patch_size,
-        embed_dim=cfg.model.embed_dim,
-        num_heads=cfg.model.num_heads,
-        head_dim=cfg.model.head_dim,
-        depth=cfg.model.depth,
-        learning_rate=cfg.training.lr,
-        weight_decay=cfg.training.wd,
-        batch_size=cfg.training.batch_size,
-        td_learning=cfg.training.td_learning,
-        land_mask_path=cfg.data.land_mask_path,
-        use_mask=cfg.training.use_mask,
-        partially_masked_groups=cfg.training.partially_masked_groups,
-        **swin_params,
-    )
-    # BFM = torch.compile(model)
-    apply_activation_checkpointing(model, checkpoint_wrapper_fn=checkpoint_wrapper, check_fn=activation_ckpt_policy)
+    if mode == "train":
+        model = BFM(
+            surface_vars=(cfg.model.surface_vars),
+            edaphic_vars=(cfg.model.edaphic_vars),
+            atmos_vars=(cfg.model.atmos_vars),
+            climate_vars=(cfg.model.climate_vars),
+            species_vars=(cfg.model.species_vars),
+            vegetation_vars=(cfg.model.vegetation_vars),
+            land_vars=(cfg.model.land_vars),
+            agriculture_vars=(cfg.model.agriculture_vars),
+            forest_vars=(cfg.model.forest_vars),
+            redlist_vars=(cfg.model.redlist_vars),
+            misc_vars=(cfg.model.misc_vars),
+            atmos_levels=cfg.data.atmos_levels,
+            species_num=cfg.data.species_number,
+            H=cfg.model.H,
+            W=cfg.model.W,
+            num_latent_tokens=cfg.model.num_latent_tokens,
+            backbone_type=cfg.model.backbone,
+            patch_size=cfg.model.patch_size,
+            embed_dim=cfg.model.embed_dim,
+            num_heads=cfg.model.num_heads,
+            head_dim=cfg.model.head_dim,
+            depth=cfg.model.depth,
+            learning_rate=cfg.training.lr,
+            weight_decay=cfg.training.wd,
+            batch_size=cfg.training.batch_size,
+            td_learning=cfg.training.td_learning,
+            land_mask_path=cfg.data.land_mask_path,
+            use_mask=cfg.training.use_mask,
+            partially_masked_groups=cfg.training.partially_masked_groups,
+            **swin_params,
+        )
+        # BFM = torch.compile(model)
+        apply_activation_checkpointing(model, checkpoint_wrapper_fn=checkpoint_wrapper, check_fn=activation_ckpt_policy)
+
+    elif mode == "test":
+        # force batch_size to 1 in test mode
+        model = BFM(
+            surface_vars=(cfg.model.surface_vars),
+            edaphic_vars=(cfg.model.edaphic_vars),
+            atmos_vars=(cfg.model.atmos_vars),
+            climate_vars=(cfg.model.climate_vars),
+            species_vars=(cfg.model.species_vars),
+            vegetation_vars=(cfg.model.vegetation_vars),
+            land_vars=(cfg.model.land_vars),
+            agriculture_vars=(cfg.model.agriculture_vars),
+            forest_vars=(cfg.model.forest_vars),
+            redlist_vars=(cfg.model.redlist_vars),
+            misc_vars=(cfg.model.misc_vars),
+            atmos_levels=cfg.data.atmos_levels,
+            species_num=cfg.data.species_number,
+            H=cfg.model.H,
+            W=cfg.model.W,
+            num_latent_tokens=cfg.model.num_latent_tokens,
+            backbone_type=cfg.model.backbone,
+            patch_size=cfg.model.patch_size,
+            embed_dim=cfg.model.embed_dim,
+            num_heads=cfg.model.num_heads,
+            head_dim=cfg.model.head_dim,
+            depth=cfg.model.depth,
+            batch_size=cfg.evaluation.batch_size,
+            **swin_params,
+        )
+    else:
+        raise ValueError(mode)
 
     model_summary = ModelSummary(model, max_depth=2)
     print(model_summary)
@@ -137,7 +177,12 @@ def setup_fsdp(cfg, model):
     return distr_strategy
 
 
-def get_trainer(cfg, mlflow_logger: MLFlowLogger | None, distr_strategy, callbacks: list) -> L.Trainer:
+def get_trainer(
+    cfg,
+    mlflow_logger: List[MLFlowLogger],
+    distr_strategy: str | FSDPStrategy | DDPStrategy = "auto",
+    callbacks: list = [],
+) -> L.Trainer:
     trainer = L.Trainer(
         max_epochs=cfg.training.epochs,
         accelerator=cfg.training.accelerator,
@@ -150,6 +195,7 @@ def get_trainer(cfg, mlflow_logger: MLFlowLogger | None, distr_strategy, callbac
         # limit_train_batches=3,  # Process 10 batches per epoch.
         # limit_val_batches=2,
         # limit_test_batches=10,
+        # limit_predict_batches=12,
         val_check_interval=cfg.training.eval_every,  # Run validation every n training batches.
         check_val_every_n_epoch=None,
         # limit_train_batches=1, # For debugging to see what happens at the end of epoch

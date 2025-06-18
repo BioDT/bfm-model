@@ -28,7 +28,10 @@ def get_train_dataloader(cfg):
     return train_dataloader
 
 
-def get_val_dataloader(cfg):
+def get_val_dataloader(cfg, batch_size_override: int | None = None):
+    batch_size = cfg.training.batch_size
+    if batch_size_override:
+        batch_size = batch_size_override
     test_dataset = LargeClimateDataset(
         data_dir=cfg.data.test_data_path,
         scaling_settings=cfg.data.scaling,
@@ -39,7 +42,7 @@ def get_val_dataloader(cfg):
 
     val_dataloader = DataLoader(
         test_dataset,
-        batch_size=cfg.training.batch_size,
+        batch_size=batch_size,
         num_workers=cfg.training.workers,
         collate_fn=custom_collate,
         drop_last=True,

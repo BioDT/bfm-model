@@ -122,6 +122,7 @@ class BFM(LightningModule):
         land_mask_path: str = "",
         use_mask: str = "no",
         partially_masked_groups: list[str] = ["species_variables"],
+        lead_time: int = 2,
         swin_encoder_depths: Tuple[int, ...] = (2, 2, 2),
         swin_encoder_num_heads: Tuple[int, ...] = (8, 16, 32),
         swin_decoder_depths: Tuple[int, ...] = (2, 2, 2),
@@ -200,6 +201,20 @@ class BFM(LightningModule):
             "species_variables": 10.0,
         }
 
+        self.lead_time = lead_time
+
+        self.swin_encoder_depths = swin_encoder_depths
+        self.swin_encoder_num_heads = swin_encoder_num_heads
+        self.swin_decoder_depths = swin_decoder_depths
+        self.swin_decoder_num_heads = swin_decoder_num_heads
+        self.swin_window_size = swin_window_size
+        self.swin_mlp_ratio = swin_mlp_ratio
+        self.swin_qkv_bias = swin_qkv_bias
+        self.swin_drop_rate = swin_drop_rate
+        self.swin_attn_drop_rate = swin_attn_drop_rate
+        self.swin_drop_path_rate = swin_drop_path_rate
+        self.swin_use_lora = swin_use_lora
+
         self.encoder = BFMEncoder(
             surface_vars=surface_vars,
             edaphic_vars=edaphic_vars,
@@ -229,17 +244,17 @@ class BFM(LightningModule):
         if backbone_type == "swin":
             self.backbone = Swin3DTransformer(
                 embed_dim=embed_dim,
-                encoder_depths=swin_encoder_depths,
-                encoder_num_heads=swin_encoder_num_heads,
-                decoder_depths=swin_decoder_depths,
-                decoder_num_heads=swin_decoder_num_heads,
-                window_size=swin_window_size,
-                mlp_ratio=swin_mlp_ratio,
-                qkv_bias=swin_qkv_bias,
-                drop_rate=swin_drop_rate,
-                attn_drop_rate=swin_attn_drop_rate,
-                drop_path_rate=swin_drop_path_rate,
-                use_lora=swin_use_lora,
+                encoder_depths=self.swin_encoder_depths,
+                encoder_num_heads=self.swin_encoder_num_heads,
+                decoder_depths=self.swin_decoder_depths,
+                decoder_num_heads=self.swin_decoder_num_heads,
+                window_size=self.swin_window_size,
+                mlp_ratio=self.swin_mlp_ratio,
+                qkv_bias=self.swin_qkv_bias,
+                drop_rate=self.swin_drop_rate,
+                attn_drop_rate=self.swin_attn_drop_rate,
+                drop_path_rate=self.swin_drop_path_rate,
+                use_lora=self.swin_use_lora,
             )
         elif backbone_type == "mvit":
             self.backbone = MViT(
@@ -291,18 +306,20 @@ class BFM(LightningModule):
             **kwargs,
         )
 
-    def forward(self, batch, lead_time: int = 2, batch_size: int = 1):
+    def forward(self, batch, lead_time: int | None, batch_size: int = 1):
         """
         Forward pass of the model.
 
         Args:
             batch: Batch object containing input variables and metadata
-            lead_time (int): Time difference in months between input and target
+            lead_time (int): Time difference in months between input and target (default=self.lead_time)
 
         Returns:
             dict: Dictionary containing decoded outputs for each variable category
 
         """
+        if not lead_time:
+            lead_time = self.lead_time
         # print(f"BFM batch size: {batch_size}")
         encoded = self.encoder(batch, lead_time, batch_size)
         # print("Encoded shape", encoded.shape)
@@ -333,9 +350,8 @@ class BFM(LightningModule):
         return output
 
     def validation_step(self, batch, batch_idx):
-        lead_time = 2  # fixed lead time (months) for pre-training
         x, y = batch
-        output = self(x, lead_time, batch_size=self.batch_size)
+        output = self(x, self.lead_time, batch_size=self.batch_size)
         print("Validation time!")
         loss = self.compute_loss(output, y)
         self.log(
@@ -344,27 +360,34 @@ class BFM(LightningModule):
         return loss
 
     def training_step(self, batch, batch_idx):
-        lead_time = 2  # fixed lead time (months) for pre-training
         x, y = batch
-        output = self(x, lead_time, batch_size=self.batch_size)
+        output = self(x, self.lead_time, batch_size=self.batch_size)
         loss = self.compute_loss(output, y)
         self.log("train_loss", loss, batch_size=self.batch_size, sync_dist=True)
         return loss
 
     def test_step(self, batch, batch_idx):
-        lead_time = 2  # fixed lead time (months) for pre-training
         x, y = batch
-        output = self(x, lead_time, batch_size=self.batch_size)
+        output = self(x, self.lead_time, batch_size=self.batch_size)
         print("Test time")
         loss = self.compute_loss(output, y)
         self.log("test_loss", loss, batch_size=self.batch_size, sync_dist=True)
         return loss
 
     def predict_step(self, batch, batch_idx):
+        records = []
         x, y = batch
-        lead_time = 2  # fixed lead time (months) for pre-training
-        output = self(x, lead_time, batch_size=self.batch_size)
-        return output
+        output = self(x, self.lead_time, batch_size=self.batch_size)
+        # pred_cpu = detach_output_dict(output) # helper does detach.clone().cpu()
+        # gt_cpu   = detach_batch(y) # The first timestep is the ground truth
+        records.append(
+            {
+                "idx": batch_idx,
+                "pred": output,
+                "gt": y,
+            }
+        )
+        return records
 
     # def on_after_backward(self):
     #     """
