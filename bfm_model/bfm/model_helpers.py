@@ -149,7 +149,7 @@ def setup_bfm_model(cfg, mode: Literal["train", "test", "rollout"], checkpoint_p
                 "swin_attn_drop_rate": selected_swin_config.attn_drop_rate,
                 "swin_drop_path_rate": selected_swin_config.drop_path_rate,
             }
-        assert checkpoint_path, "cannot do rollout without starting checkpoint"
+        assert checkpoint_path, "cannot do rollout without having an initial checkpoint"
         model = BFMRollout.load_from_checkpoint(
             checkpoint_path=checkpoint_path,
             surface_vars=(cfg.model.surface_vars),
@@ -224,7 +224,7 @@ def setup_fsdp(cfg, model):
             sharding_strategy="FULL_SHARD",
             auto_wrap_policy=partial(size_based_auto_wrap_policy, min_num_params=int(1e6)),
             ignored_states=latent_list,
-            # activation_checkpointing_policy=activation_ckpt_policy,
+            activation_checkpointing_policy=activation_ckpt_policy,
         )
 
     elif cfg.training.strategy == "ddp":

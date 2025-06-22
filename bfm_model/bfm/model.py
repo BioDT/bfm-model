@@ -307,7 +307,7 @@ class BFM(LightningModule):
             **kwargs,
         )
 
-    def forward(self, batch, lead_time: int | None, batch_size: int = 1):
+    def forward(self, batch, lead_time: int | None, batch_size: int = 1, rollout_step: int = 0):
         """
         Forward pass of the model.
 
@@ -343,7 +343,7 @@ class BFM(LightningModule):
             encoded = encoded.view(encoded.size(0), -1, self.encoder.embed_dim)
             print(f"Reshaped encoded for MViT: {encoded.shape}")
 
-        backbone_output = self.backbone(encoded, lead_time=lead_time, rollout_step=0, patch_shape=patch_shape)
+        backbone_output = self.backbone(encoded, lead_time=lead_time, rollout_step=rollout_step, patch_shape=patch_shape)
         # print("Backbone output", backbone_output.shape)
         # decode
         output = self.decoder(backbone_output, batch, lead_time)
@@ -448,9 +448,7 @@ class BFM(LightningModule):
                 self.use_mask == "fully" or (self.use_mask == "partially" and (group_name in self.partially_masked_groups))
             )
 
-            print("HERE pred_dict", pred_dict.keys())
             for var_name, pred_tensor in pred_dict.items():
-                print("var_name", var_name, "true_dict", true_dict.keys())
                 if var_name not in true_dict:
                     continue
                 gt_tensor = true_dict[var_name]
@@ -506,9 +504,7 @@ class BFM(LightningModule):
             if count > 0
             else torch.tensor(
                 0.0,
-                device=self.device,
-                # device=output[next(iter(output))][next(iter(output[next(iter(output))]))].device if output else torch.tensor(0.0),
-            )
+                device=self.device)
         )
         print(f"Total loss {final_total_loss}")
         return final_total_loss
@@ -568,7 +564,7 @@ class BFMRollout(BFM):
         trainable = sum(p.numel() for p in self.parameters() if p.requires_grad)
         print(f"{trainable/1e6:.2f} M / {total/1e6:.2f} M parameters will update")
 
-    def rollout_forecast(self, initial_batch, steps: int = 1, batch_size: int = 1, mode: str = "finetune"):
+    def rollout_forecast(self, initial_batch, steps: int = 1, batch_size: int = 1, mode: str = "finetune", steps_keep: int = 1):
         """
         If mode == 'finetune' -> pus-forward:
         steps 0 … K-2 run under no_grad (detached)
@@ -584,25 +580,47 @@ class BFMRollout(BFM):
         device = next(self.parameters()).device
         curr = batch_to_device(initial_batch, device)
         for k in range(steps):
-            keep_grad = mode == "finetune" and k == steps - 1
-            with torch.set_grad_enabled(keep_grad):
-                preds = self(curr, self.lead_time, batch_size=batch_size)
-                # print(preds.keys())
-            if keep_grad:
-                next_batch = build_new_batch_with_prediction(curr, preds)
-            else:
-                # break graph but keep on GPU
-                curr_det = detach_graph_batch(curr)
-                preds_det = {g: {v: t.detach() for v, t in grp.items()} for g, grp in preds.items()}
-                next_batch = build_new_batch_with_prediction(curr_det, preds_det)
+            preds = self(curr, self.lead_time, batch_size, rollout_step=k)
+            next_batch = build_new_batch_with_prediction(curr, preds)
             rollout_dict["batches"].append(next_batch)
             rollout_dict["timestamps"].append(next_batch.batch_metadata.timestamp)
             rollout_dict["lead_times"].append(next_batch.batch_metadata.lead_time)
-            curr = next_batch
-            # print(f"inspecting batch at step: {k}")
-            # inspect_batch_shapes_namedtuple(curr)
-
+            # detach graph only after we saved the batch -> TBPTT-2
+            if k <= steps - steps_keep:
+                curr = detach_graph_batch(next_batch)
+            else:
+                curr = next_batch
+            curr = batch_to_device(curr, device)
         return rollout_dict
+
+
+    def training_step(self, batch, batch_idx):
+        """
+        batch = [ Batch(t0,t1), Batch(t1,t2), … Batch(tK,tK+1) ]
+                length = rollout_steps + 1
+        """
+        xs = batch
+        init_batch = xs[0]
+        target_batch = xs[self.rollout_steps]
+
+        # push‑forward rollout
+        roll = self.rollout_forecast(init_batch, steps=self.rollout_steps, batch_size=self.batch_size, mode="finetune")
+
+        # Single rollout target loss
+        pred_last = roll["batches"][-1]  # Batch (tK,ŷK+1)
+        loss = self.compute_loss(pred_last, target_batch)
+        traj_loss = []
+        # (optional) statistics on earlier steps without grads
+        with torch.no_grad():
+            for k in range(self.rollout_steps - 1):
+                traj_loss.append(self.compute_loss(roll["batches"][k], xs[k + 1]))
+
+        trajectory_loss = torch.stack(traj_loss).mean()
+        self.log("train_loss", loss, batch_size=self.batch_size, sync_dist=True)
+        self.log("train_trajectory_loss", trajectory_loss, batch_size=self.batch_size, sync_dist=True)
+        print(f"Single target Loss: {loss} | {self.rollout_steps}-Step Trajectory Loss {trajectory_loss}")
+        
+        return loss
 
     def validation_step(self, batch, batch_idx):
         xs = batch
@@ -629,33 +647,6 @@ class BFMRollout(BFM):
         self.log("val_trajectory_loss", trajectory_loss, batch_size=self.batch_size, sync_dist=True)
         print(f"Val Loss: {loss} | {self.rollout_steps}-Step Trajectory Loss {trajectory_loss}")
 
-        return loss
-
-    def training_step(self, batch, batch_idx):
-        """
-        batch = [ Batch(t0,t1), Batch(t1,t2), … Batch(tK,tK+1) ]
-                length = rollout_steps + 1
-        """
-        xs = batch
-        init_batch = xs[0]
-        target_batch = xs[self.rollout_steps]
-
-        # push‑forward rollout
-        roll = self.rollout_forecast(init_batch, steps=self.rollout_steps, batch_size=self.batch_size, mode="finetune")
-
-        pred_last = roll["batches"][-1]  # Batch (tK,ŷK+1)
-        loss = self.compute_loss(pred_last, target_batch)
-
-        traj_loss = []
-        # (optional) statistics on earlier steps without grads
-        with torch.no_grad():
-            for k in range(self.rollout_steps - 1):
-                traj_loss.append(self.compute_loss(roll["batches"][k], xs[k + 1]))
-
-        trajectory_loss = torch.stack(traj_loss).sum()
-        self.log("train_loss", loss, batch_size=self.batch_size, sync_dist=True)
-        self.log("train_trajectory_loss", trajectory_loss, batch_size=self.batch_size, sync_dist=True)
-        print(f"Train Loss: {loss} | {self.rollout_steps}-Step Trajectory Loss {trajectory_loss}")
         return loss
 
     def test_step(self, batch, batch_idx):
@@ -787,15 +778,36 @@ class BFMRollout(BFM):
         # print(f"Single step Loss: {total_loss}")
         return total_loss
 
+    def optimizer_step(self, epoch, batch_idx, optimizer, *args, **kwargs):
+        # record parameter norms *before* step
+        pre_norms = {n: p.detach().abs().mean().item()
+                    for n, p in self.named_parameters()
+                    if p.requires_grad}
+        super().optimizer_step(epoch, batch_idx, optimizer, *args, **kwargs)
+        # compare after step (on owning shard)
+        for n, p in self.named_parameters():
+            if p.requires_grad and p.grad is not None:
+                delta = (p.detach().abs().mean() - pre_norms[n]).abs()
+                if delta < 1e-12:   # effectively unchanged
+                    print(f"⚠️  {n} did not update (Δ≈0)")
+
+    def on_after_backward(self):
+        """
+        Checker for not learnable parameters -> Should output nothing!
+        """
+        for name, p in self.named_parameters():
+            if p.requires_grad and p.grad is None:
+                print(f"[no-grad] {name}")
+
+                
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(
             (p for p in self.parameters() if p.requires_grad), lr=self.learning_rate, weight_decay=self.weight_decay
         )
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=1000, eta_min=self.learning_rate / 10)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=2000, eta_min=self.learning_rate / 10)
         # scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=self.lr_lambda)
 
         return [optimizer]
-
 
 def freeze_except(model):
     """

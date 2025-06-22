@@ -21,7 +21,7 @@ from torch.utils.data import DataLoader
 
 from bfm_model.bfm.dataloader_helpers import SequentialWindowDataset
 from bfm_model.bfm.dataloader_monthly import LargeClimateDataset, custom_collate
-from bfm_model.bfm.model_helpers import get_mlflow_logger, setup_bfm_model
+from bfm_model.bfm.model_helpers import get_mlflow_logger, setup_bfm_model, setup_fsdp, get_trainer
 
 
 @hydra.main(version_base=None, config_path="configs", config_name="train_config")
@@ -114,11 +114,14 @@ def main(cfg: DictConfig):
     )
 
     print(f"Will be saving checkpoints at: {output_dir}/checkpoints")
+    
+    # ignored = [p for n,p in model.named_parameters() if "peft_*" in n]
 
     if cfg.training.strategy == "fsdp":
         distr_strategy = FSDPStrategy(
             sharding_strategy="FULL_SHARD",
             auto_wrap_policy=partial(size_based_auto_wrap_policy, min_num_params=1e6),
+            # ignored_states=ignored,
             # activation_checkpointing_policy=activation_ckpt_policy,
         )
         print(f"Using {cfg.training.strategy} strategy: {distr_strategy}")
@@ -127,9 +130,6 @@ def main(cfg: DictConfig):
         print(f"Using {cfg.training.strategy} strategy: {distr_strategy}")
     else:
         distr_strategy = "auto"
-
-    # TODO: If this is not set, it's complaining about unused parameters
-    distr_strategy = "ddp_find_unused_parameters_true"
 
     trainer = L.Trainer(
         max_epochs=cfg.finetune.epochs,
@@ -140,8 +140,8 @@ def main(cfg: DictConfig):
         num_nodes=cfg.training.num_nodes,
         log_every_n_steps=cfg.training.log_steps,
         logger=loggers,  # Only the rank 0 process will have a logger
-        limit_train_batches=4,  # Process 10 batches per epoch.
-        limit_val_batches=4,
+        limit_train_batches=10,  # Process 10 batches per epoch.
+        limit_val_batches=1,
         limit_test_batches=2,
         limit_predict_batches=2,
         val_check_interval=cfg.finetune.eval_every,  # Run validation every n training batches.
@@ -149,10 +149,12 @@ def main(cfg: DictConfig):
         # limit_train_batches=1, # For debugging to see what happens at the end of epoch
         # check_val_every_n_epoch=None,  # Do eval every n epochs
         # val_check_interval=3, # Does not work in Distributed settings | Do eval every 10 training steps => 10 steps x 8 batch_size = Every 80 Batches
-        callbacks=[checkpoint_callback],
+        callbacks=[checkpoint_callback, DeviceSummary(), FSDPShapeGuard()],
         # callbacks=[RolloutSaveCallback()],
         # plugins=[MyClusterEnvironment()],
     )
+
+    # trainer = get_trainer(cfg, mlflow_logger=loggers, distr_strategy=distr_strategy, callbacks=[checkpoint_callback])
 
     if cfg.finetune.prediction:
         print(f"Will be doing {cfg.finetune.rollout_steps} - steps prediction and storing the results")

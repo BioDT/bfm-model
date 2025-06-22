@@ -199,29 +199,34 @@ def build_new_batch_with_prediction(old_batch, prediction_dict, groups=None, tim
 
     return new_batch
 
+    # print("Update batch metadata lead time: ", lt)
+    # print(f"[update_meta] {t_last} -> {t_next} | lead={meta['lead_time']} months")
 
 def update_batch_metadata(batch_metadata, months: int = 1):
     """
-    Normalise metadata for monthly lead-time.
+    Advance monthly timestamps & lead_time for *batched* metadata.
+
+    Handles lead_time encoded as:
+    - scalar int or float
+    - 1-D torch tensor  [B]
+    - list / tuple      [B]
     """
     meta = batch_metadata._asdict()
 
-    ts_field = meta.get("timestamp")
-    if ts_field:
-        t_last = _last_scalar_ts(ts_field)
+    if meta.get("timestamp"):
+        t_last = _last_scalar_ts(meta["timestamp"])
         t_next = _add_months(t_last, months)
         meta["timestamp"] = [(t_last,), (t_next,)]
+        # print(f"[update_meta] {t_last} -> {t_next} | lead={meta['lead_time']} months")
 
     lt = meta.get("lead_time", 0)
-    print("Update batch metadata lead time: ", lt)
-    if hasattr(lt, "cpu"):
-        lt_val = int(lt.cpu().item())
-    if isinstance(lt, list):
-        lt_val = lt[0]
+    # print("Update batch metadata lead time: ", lt)
+    if isinstance(lt, torch.Tensor):
+        meta["lead_time"] = lt + months
+    elif isinstance(lt, (list, tuple)):
+        meta["lead_time"] = [x + months for x in lt]
     else:
-        lt_val = lt
-    meta["lead_time"] = lt_val + months
-    print(f"[update_meta] {t_last} -> {t_next} | lead={meta['lead_time']} months")
+        meta["lead_time"] = lt + months
 
     return batch_metadata._replace(**meta)
 
