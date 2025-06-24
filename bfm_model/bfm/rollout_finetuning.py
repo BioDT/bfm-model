@@ -3,7 +3,6 @@ Copyright (C) 2025 TNO, The Netherlands. All rights reserved.
 """
 
 import os
-from functools import partial
 from pathlib import Path
 
 import hydra
@@ -13,10 +12,8 @@ import torch.distributed as dist
 from hydra.core.hydra_config import HydraConfig
 from lightning.pytorch import seed_everything
 from lightning.pytorch.callbacks import ModelCheckpoint
-from lightning.pytorch.strategies import DDPStrategy, FSDPStrategy
 from lightning.pytorch.utilities.model_summary import ModelSummary
 from omegaconf import DictConfig, OmegaConf
-from torch.distributed.fsdp.wrap import size_based_auto_wrap_policy
 from torch.utils.data import DataLoader
 
 from bfm_model.bfm.dataloader_helpers import SequentialWindowDataset
@@ -24,6 +21,12 @@ from bfm_model.bfm.dataloader_monthly import LargeClimateDataset, custom_collate
 from bfm_model.bfm.model_helpers import get_mlflow_logger, setup_bfm_model, setup_fsdp, get_trainer
 
 
+class DeviceAuditor(L.Callback):
+    def on_fit_start(self, t, m):
+        bad = [n for n,p in m.named_parameters() if p.device != m.device]
+        if bad:
+            print("❌ wrong-device params:", bad[:5]); raise SystemExit
+        
 @hydra.main(version_base=None, config_path="configs", config_name="train_config")
 def main(cfg: DictConfig):
     """
@@ -117,19 +120,8 @@ def main(cfg: DictConfig):
     
     # ignored = [p for n,p in model.named_parameters() if "peft_*" in n]
 
-    if cfg.training.strategy == "fsdp":
-        distr_strategy = FSDPStrategy(
-            sharding_strategy="FULL_SHARD",
-            auto_wrap_policy=partial(size_based_auto_wrap_policy, min_num_params=1e6),
-            # ignored_states=ignored,
-            # activation_checkpointing_policy=activation_ckpt_policy,
-        )
-        print(f"Using {cfg.training.strategy} strategy: {distr_strategy}")
-    elif cfg.training.strategy == "ddp":
-        distr_strategy = DDPStrategy()
-        print(f"Using {cfg.training.strategy} strategy: {distr_strategy}")
-    else:
-        distr_strategy = "auto"
+    distr_strategy = setup_fsdp(cfg, model)
+    # distr_strategy = "auto"
 
     trainer = L.Trainer(
         max_epochs=cfg.finetune.epochs,
@@ -140,16 +132,16 @@ def main(cfg: DictConfig):
         num_nodes=cfg.training.num_nodes,
         log_every_n_steps=cfg.training.log_steps,
         logger=loggers,  # Only the rank 0 process will have a logger
-        limit_train_batches=10,  # Process 10 batches per epoch.
-        limit_val_batches=1,
-        limit_test_batches=2,
-        limit_predict_batches=2,
+        # limit_train_batches=10,  # Process 10 batches per epoch.
+        # limit_val_batches=1,
+        # limit_test_batches=2,
+        # limit_predict_batches=2,
         val_check_interval=cfg.finetune.eval_every,  # Run validation every n training batches.
         check_val_every_n_epoch=None,
         # limit_train_batches=1, # For debugging to see what happens at the end of epoch
         # check_val_every_n_epoch=None,  # Do eval every n epochs
         # val_check_interval=3, # Does not work in Distributed settings | Do eval every 10 training steps => 10 steps x 8 batch_size = Every 80 Batches
-        callbacks=[checkpoint_callback, DeviceSummary(), FSDPShapeGuard()],
+        callbacks=[checkpoint_callback, DeviceAuditor()],
         # callbacks=[RolloutSaveCallback()],
         # plugins=[MyClusterEnvironment()],
     )

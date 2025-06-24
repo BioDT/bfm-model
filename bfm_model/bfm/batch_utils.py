@@ -153,6 +153,7 @@ def build_new_batch_with_prediction(old_batch, prediction_dict, groups=None, tim
             "land_variables",
             "agriculture_variables",
             "forest_variables",
+            "redlist_variables",
             "misc_variables",
         ]
 
