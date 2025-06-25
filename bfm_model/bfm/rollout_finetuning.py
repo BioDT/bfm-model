@@ -103,9 +103,10 @@ def main(cfg: DictConfig):
 
     print(f"Setting up Daloaders with length train: {len(train_dataloader)} and test: {len(val_dataloader)}")
 
-    mlflow_logger = get_mlflow_logger(output_dir)
+    experiment_name = "BFM-rollout-finetuning"
+    mlflow_logger = get_mlflow_logger(output_dir, experiment_name=experiment_name)
     # also log in the ./mlruns folder so that you can run mlflow server and see every run together
-    mlflow_logger_current_folder = get_mlflow_logger()
+    mlflow_logger_current_folder = get_mlflow_logger(experiment_name=experiment_name)
     loggers = [l for l in [mlflow_logger, mlflow_logger_current_folder] if l]
 
     checkpoint_path = cfg.finetune.checkpoint_path

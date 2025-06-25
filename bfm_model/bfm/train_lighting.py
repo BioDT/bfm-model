@@ -38,9 +38,10 @@ def main(cfg):
     train_dataloader = get_train_dataloader(cfg)
     val_dataloader = get_val_dataloader(cfg)
 
-    mlflow_logger = get_mlflow_logger(output_dir)
+    experiment_name = "BFM-train"
+    mlflow_logger = get_mlflow_logger(output_dir, experiment_name=experiment_name)
     # also log in the ./mlruns folder so that you can run mlflow server and see every run together
-    mlflow_logger_current_folder = get_mlflow_logger()
+    mlflow_logger_current_folder = get_mlflow_logger(experiment_name=experiment_name)
     loggers = [l for l in [mlflow_logger, mlflow_logger_current_folder] if l]
 
     model = setup_bfm_model(cfg, mode="train")

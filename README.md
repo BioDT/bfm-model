@@ -83,47 +83,24 @@ We use [Hydra](https://hydra.cc/docs/intro/) to store all the artifacts from all
 There, we can find by date and time all the data from the runs (configs, checkpoints, metrics, ...).
 
 
-### How to use MLflow
+### MLflow
 
 [MLflow](https://mlflow.org/docs/latest/index.html) is used to log all the runs, and we configure it to save its internal files in the `mlruns` folder. The logging is done via filesystem, so that you don't need to have a MLflow server running during the training.
 
-You can run the MLflow server to inspect the runs with the command:
+You can run the MLflow server when you want (after or during training) to inspect the runs with the command:
 
 ```bash
-# you can customize host and port depending on your system
+# run in the root of the repository, where the mlruns folder is located
 mlflow server --host 0.0.0.0 --port 8082
 ```
 
-On snellius, you need to forward the ports to your machine (TODO document commands)
+On snellius:
+- run the `mlflow` command above in the same node where your vscode interface is executing (login node or ondemand)
+- vscode will detect the port and forward a local port to it (popup appearing, or go to the "PORTS" tab to open it)
 
-
-## Connection
-
-```bash
-# start an interactive job
-salloc -p gpu_h100 --gpus-per-node=1 -t 00:10:00
-# ssh to the node with port forwarding
-# ssh gcn140
-
-
-# Forwarding the node mlflow instance to the local machine
-# N.B.: Make sure to specify the host on the local machine, as specifying just the port might results in "Permission denied" errors.
-# N.B.2.: If specifying the host 0.0.0.0 on the local machine, access by using `localhost:<port_id>`.
-ssh -i .ssh/snelius_key -L 0.0.0.0:<desired_port_on_local>:[gcn|tcn]<node_id>:<mlflow_port_on_remote> <user_name>@snellius.surf.nl
-ssh -L 0.0.0.0:8083:gcn112:8082 mmensio1@snellius.surf.nl
-
-```
-
-## Running via scheduled job
-
-```bash
-sbatch job.sh
-```
-
-Then you can observe mlflow with the same bind command:
-```bash
-ssh -i .ssh/snelius_key -L 0.0.0.0:<desired_port_on_local>:gcn<node_id>:<mlflow_port_on_remote> <user_name>@snellius.surf.nl
-```
+If you are not using vscode, or want a manual connection:
+- forward a local port to it: `ssh -L 0.0.0.0:<LOCAL_PORT>:<node_id>:8082 <USER>@snellius.surf.nl` (example: `ssh -L 0.0.0.0:8899:int6:8082 snellius`)
+- open `http://localhost:<LOCAL_PORT>/` (example: `http://localhost:8899/`)
 
 ## Visualisation
 This repository contains various visualisation functions that are applicable for every stage of the workflow. More specific:
