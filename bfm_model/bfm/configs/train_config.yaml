@@ -42,7 +42,7 @@ data:
 training:
   batch_size: 3
   workers: 15
-  epochs: 1000
+  epochs: 1
   accelerator: cuda
   precision: bf16-mixed
   precision_in: "high" # ["medium", "high", "highest"] https://pytorch.org/docs/stable/generated/torch.set_float32_matmul_precision.html#torch.set_float32_matmul_precision

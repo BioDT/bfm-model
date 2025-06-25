@@ -1,8 +1,8 @@
-import pytorch_lightning as pl
+import lightning as pl
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from pytorch_lightning.callbacks import ModelCheckpoint
+from lightning.callbacks import ModelCheckpoint
 from torch.utils.data import DataLoader, random_split
 from torchmetrics.functional import accuracy
 from torchvision import transforms

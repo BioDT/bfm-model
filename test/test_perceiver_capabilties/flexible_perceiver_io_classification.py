@@ -1,9 +1,9 @@
 # TODO: Work in progress..
-import pytorch_lightning as pl
+import lightning as pl
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from pytorch_lightning.callbacks import ModelCheckpoint
+from lightning.callbacks import ModelCheckpoint
 from sklearn.datasets import fetch_20newsgroups
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.model_selection import train_test_split
