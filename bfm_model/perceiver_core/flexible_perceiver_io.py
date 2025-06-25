@@ -9,13 +9,13 @@ import torch.nn as nn
 import torch.optim as optim
 from einops import repeat
 
+from bfm_model.perceiver_components.helpers import PreNorm
 from bfm_model.perceiver_components.helpers_io import (
     Attention,
     FeedForward,
     cache_fn,
     dropout_seq,
 )
-from bfm_model.perceiver_components.helpers import PreNorm
 from bfm_model.perceiver_components.pos_encoder import build_position_encoding
 
 
