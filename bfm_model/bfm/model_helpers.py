@@ -191,6 +191,7 @@ def setup_bfm_model(cfg, mode: Literal["train", "test", "rollout"], checkpoint_p
             use_lora=cfg.finetune.use_lora,
             use_vera=cfg.finetune.use_vera,
             rollout_steps=cfg.finetune.rollout_steps,
+            finetune_mode=cfg.finetune.mode,
             # lora_steps=cfg.finetune.rollout_steps, # 1 month
             # lora_mode=cfg.finetune.lora_mode, # every step + layers #single
             **swin_params,

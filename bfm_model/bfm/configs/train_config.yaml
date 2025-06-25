@@ -78,13 +78,13 @@ finetune:
   batch_size: 1
   eval_every: 5
   checkpoint_every: 51
-  lr: 0.0003  #5e-4
-  wd: 0.00003 #5e-6
+  lr: 0.00001  #5e-4
+  wd: 0.000001 #5e-6
   td_learning: False
   checkpoint_path: /projects/prjs1134/data/projects/biodt/storage/weights/epoch=268-val_loss=0.00493.ckpt #/home/atrantas/bfm-model/outputs/2025-06-03/14-27-12/checkpoints/epoch=340-val_loss=0.00555.ckpt # Add your checkpoint (.pt) path to start fine-tuning
   prediction: False
+  mode: "full" # "full" Finetune the full model or only the peft layers
   peft_mode: "single" # all
-  mode: "short" # weekly # monthly
   rank: 16 # LoRA | 256 VeRA
   peft_dropout: 0.0
   use_lora: True

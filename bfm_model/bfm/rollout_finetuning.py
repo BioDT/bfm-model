@@ -31,10 +31,6 @@ class DeviceAuditor(L.Callback):
         for n, p in m.named_parameters():
             if p.device != m.device:
                 print(f"⚠️ param: {n}: is on {p.device} while model is on {m.device} (are you using FSDP?)")
-        # bad = [n for n, p in m.named_parameters() if p.device != m.device]
-        # if bad:
-        #     print("❌ wrong-device params:", bad[:5])
-        #     raise SystemExit
 
 
 @hydra.main(version_base=None, config_path="configs", config_name="train_config")
@@ -142,10 +138,10 @@ def main(cfg: DictConfig):
         num_nodes=cfg.training.num_nodes,
         log_every_n_steps=cfg.training.log_steps,
         logger=loggers,  # Only the rank 0 process will have a logger
-        # limit_train_batches=10,  # Process 10 batches per epoch.
-        # limit_val_batches=1,
-        # limit_test_batches=2,
-        # limit_predict_batches=2,
+        limit_train_batches=10,  # Process 10 batches per epoch.
+        limit_val_batches=1,
+        limit_test_batches=2,
+        limit_predict_batches=2,
         val_check_interval=cfg.finetune.eval_every,  # Run validation every n training batches.
         check_val_every_n_epoch=None,
         # limit_train_batches=1, # For debugging to see what happens at the end of epoch
@@ -181,7 +177,7 @@ def main(cfg: DictConfig):
             torch.save(recs, path)
             print(f"Saved {path} ({len(recs)} steps)")
     else:
-        print(f"Starting {MODE} Finetune training from scratch for a horizon of {cfg.finetune.rollout_steps} ")
+        print(f"Starting {MODE} Finetune training from checkpoint {checkpoint_path} for a horizon of {cfg.finetune.rollout_steps}")
         trainer.fit(model, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader)
 
     if dist.is_initialized():

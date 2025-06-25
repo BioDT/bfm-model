@@ -532,7 +532,8 @@ class BFMRollout(BFM):
         **kwargs,
     ):
         # get current arguments
-        # all_args = {k: v for k, v in locals().items() if k not in ["self", "kwargs", "__class__"]}
+        self.mode: str = kwargs.pop("finetune_mode", "peft")
+
         all_args = {
             "td_learning": td_learning,
             "lead_time": lead_time,
@@ -544,15 +545,16 @@ class BFMRollout(BFM):
 
         self.rollout_steps = rollout_steps
 
-        # Freeze pretrained parts.
-        for param in self.encoder.parameters():
-            param.requires_grad = False
-        for param in self.backbone.parameters():
-            param.requires_grad = True
-        for param in self.decoder.parameters():
-            param.requires_grad = False
+        if self.mode == "peft":
+            # Freeze pretrained parts.
+            for param in self.encoder.parameters():
+                param.requires_grad = False
+            for param in self.backbone.parameters():
+                param.requires_grad = True
+            for param in self.decoder.parameters():
+                param.requires_grad = False
 
-        freeze_except(self)
+            freeze_except(self)
 
         total = sum(p.numel() for p in self.parameters())
         trainable = sum(p.numel() for p in self.parameters() if p.requires_grad)
@@ -770,30 +772,34 @@ class BFMRollout(BFM):
         # print(f"Single step Loss: {total_loss}")
         return total_loss
 
-    def optimizer_step(self, epoch, batch_idx, optimizer, *args, **kwargs):
-        # record parameter norms *before* step
-        pre_norms = {n: p.detach().abs().mean().item() for n, p in self.named_parameters() if p.requires_grad}
-        super().optimizer_step(epoch, batch_idx, optimizer, *args, **kwargs)
-        # compare after step (on owning shard)
-        for n, p in self.named_parameters():
-            if p.requires_grad and p.grad is not None:
-                delta = (p.detach().abs().mean() - pre_norms[n]).abs()
-                if delta < 1e-12:  # effectively unchanged
-                    print(f"⚠️  {n} did not update (Δ≈0)")
+    # TODO Uncomment and use for debugging
+    # def optimizer_step(self, epoch, batch_idx, optimizer, *args, **kwargs):
+    #     # record parameter norms *before* step
+    #     pre_norms = {n: p.detach().abs().mean().item() for n, p in self.named_parameters() if p.requires_grad}
+    #     super().optimizer_step(epoch, batch_idx, optimizer, *args, **kwargs)
+    #     # compare after step (on owning shard)
+    #     for n, p in self.named_parameters():
+    #         if p.requires_grad and p.grad is not None:
+    #             delta = (p.detach().abs().mean() - pre_norms[n]).abs()
+    #             if delta < 1e-14:  # effectively unchanged
+    #                 print(f"⚠️  {n} did not update (Δ≈0)")
 
-    def on_after_backward(self):
-        """
-        Checker for not learnable parameters -> Should output nothing!
-        """
-        for name, p in self.named_parameters():
-            if p.requires_grad and p.grad is None:
-                print(f"[no-grad] {name}")
+    # TODO Uncomment and use for debugging
+    # DURING FSDP it will print no-grad to all parameters 
+    # Uncomment to use for single GPU debugging
+    # def on_after_backward(self):
+    #     """
+    #     Checker for not learnable parameters -> Should output nothing!
+    #     """
+    #     for name, p in self.named_parameters():
+    #         if p.requires_grad and p.grad is None:
+    #             print(f"[no-grad] {name}")
 
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(
             (p for p in self.parameters() if p.requires_grad), lr=self.learning_rate, weight_decay=self.weight_decay
         )
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=2000, eta_min=self.learning_rate / 10)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=8000, eta_min=self.learning_rate / 10)
         # scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=self.lr_lambda)
 
         return [optimizer]
