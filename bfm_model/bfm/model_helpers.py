@@ -29,7 +29,7 @@ def activation_ckpt_policy(module):
     return isinstance(module, (Swin3DTransformer, MViT))
 
 
-def get_mlflow_logger(output_dir: str | None = None) -> MLFlowLogger | None:
+def get_mlflow_logger(output_dir: str | None = None, experiment_name: str = "BFM") -> MLFlowLogger | None:
     # Setup logger with rank-specific paths to avoid conflicts
     current_time = datetime.now()
     rank = int(os.environ.get("RANK", 0))
@@ -41,12 +41,10 @@ def get_mlflow_logger(output_dir: str | None = None) -> MLFlowLogger | None:
         if output_dir:
             # Use rank in experiment name to avoid conflicts
             mlflow_path = f"{output_dir}/logs/rank{rank}"
-            mlflow_logger = MLFlowLogger(
-                experiment_name=f"BFM_logs_r{rank}", run_name=f"BFM_{current_time}", save_dir=mlflow_path
-            )
+            mlflow_logger = MLFlowLogger(experiment_name=experiment_name, run_name=f"BFM_{current_time}", save_dir=mlflow_path)
         else:
             # this one will create in current directory ./mlruns
-            mlflow_logger = MLFlowLogger(experiment_name=f"BFM_logs_r{rank}", run_name=f"BFM_{current_time}")
+            mlflow_logger = MLFlowLogger(experiment_name=experiment_name, run_name=f"BFM_{current_time}")
 
         print(f"mlflow configured to log to {mlflow_logger.log_dir}")
 
