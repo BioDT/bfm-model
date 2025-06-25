@@ -203,6 +203,7 @@ def build_new_batch_with_prediction(old_batch, prediction_dict, groups=None, tim
     # print("Update batch metadata lead time: ", lt)
     # print(f"[update_meta] {t_last} -> {t_next} | lead={meta['lead_time']} months")
 
+
 def update_batch_metadata(batch_metadata, months: int = 1):
     """
     Advance monthly timestamps & lead_time for *batched* metadata.
