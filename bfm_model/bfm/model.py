@@ -499,13 +499,7 @@ class BFM(LightningModule):
                 total_loss += group_loss
                 count += 1
 
-        final_total_loss = (
-            total_loss / count
-            if count > 0
-            else torch.tensor(
-                0.0,
-                device=self.device)
-        )
+        final_total_loss = total_loss / count if count > 0 else torch.tensor(0.0, device=self.device)
         print(f"Total loss {final_total_loss}")
         return final_total_loss
 
@@ -577,8 +571,7 @@ class BFMRollout(BFM):
             "timestamps": [],
             "lead_times": [],
         }
-        device = next(self.parameters()).device
-        curr = batch_to_device(initial_batch, device)
+        curr = batch_to_device(initial_batch, self.device)
         for k in range(steps):
             preds = self(curr, self.lead_time, batch_size, rollout_step=k)
             next_batch = build_new_batch_with_prediction(curr, preds)
@@ -590,9 +583,8 @@ class BFMRollout(BFM):
                 curr = detach_graph_batch(next_batch)
             else:
                 curr = next_batch
-            curr = batch_to_device(curr, device)
+            curr = batch_to_device(curr, self.device)
         return rollout_dict
-
 
     def training_step(self, batch, batch_idx):
         """
@@ -619,7 +611,7 @@ class BFMRollout(BFM):
         self.log("train_loss", loss, batch_size=self.batch_size, sync_dist=True)
         self.log("train_trajectory_loss", trajectory_loss, batch_size=self.batch_size, sync_dist=True)
         print(f"Single target Loss: {loss} | {self.rollout_steps}-Step Trajectory Loss {trajectory_loss}")
-        
+
         return loss
 
     def validation_step(self, batch, batch_idx):
@@ -674,7 +666,7 @@ class BFMRollout(BFM):
     def predict_step(self, batch, batch_idx):
         # batch lives on GPU in fp16/bf16
         init = batch[0]
-        init = batch_to_device(init, next(self.parameters()).device)
+        init = batch_to_device(init, self.device)
 
         rollout = self.rollout_forecast(init, steps=self.rollout_steps, batch_size=self.batch_size, mode="test")[
             "batches"
@@ -780,15 +772,13 @@ class BFMRollout(BFM):
 
     def optimizer_step(self, epoch, batch_idx, optimizer, *args, **kwargs):
         # record parameter norms *before* step
-        pre_norms = {n: p.detach().abs().mean().item()
-                    for n, p in self.named_parameters()
-                    if p.requires_grad}
+        pre_norms = {n: p.detach().abs().mean().item() for n, p in self.named_parameters() if p.requires_grad}
         super().optimizer_step(epoch, batch_idx, optimizer, *args, **kwargs)
         # compare after step (on owning shard)
         for n, p in self.named_parameters():
             if p.requires_grad and p.grad is not None:
                 delta = (p.detach().abs().mean() - pre_norms[n]).abs()
-                if delta < 1e-12:   # effectively unchanged
+                if delta < 1e-12:  # effectively unchanged
                     print(f"⚠️  {n} did not update (Δ≈0)")
 
     def on_after_backward(self):
@@ -799,7 +789,6 @@ class BFMRollout(BFM):
             if p.requires_grad and p.grad is None:
                 print(f"[no-grad] {name}")
 
-                
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(
             (p for p in self.parameters() if p.requires_grad), lr=self.learning_rate, weight_decay=self.weight_decay
@@ -808,6 +797,7 @@ class BFMRollout(BFM):
         # scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=self.lr_lambda)
 
         return [optimizer]
+
 
 def freeze_except(model):
     """

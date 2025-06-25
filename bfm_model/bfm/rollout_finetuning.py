@@ -18,15 +18,25 @@ from torch.utils.data import DataLoader
 
 from bfm_model.bfm.dataloader_helpers import SequentialWindowDataset
 from bfm_model.bfm.dataloader_monthly import LargeClimateDataset, custom_collate
-from bfm_model.bfm.model_helpers import get_mlflow_logger, setup_bfm_model, setup_fsdp, get_trainer
+from bfm_model.bfm.model_helpers import (
+    get_mlflow_logger,
+    get_trainer,
+    setup_bfm_model,
+    setup_fsdp,
+)
 
 
 class DeviceAuditor(L.Callback):
     def on_fit_start(self, t, m):
-        bad = [n for n,p in m.named_parameters() if p.device != m.device]
-        if bad:
-            print("❌ wrong-device params:", bad[:5]); raise SystemExit
-        
+        for n, p in m.named_parameters():
+            if p.device != m.device:
+                print(f"⚠️ param: {n}: is on {p.device} while model is on {m.device} (are you using FSDP?)")
+        # bad = [n for n, p in m.named_parameters() if p.device != m.device]
+        # if bad:
+        #     print("❌ wrong-device params:", bad[:5])
+        #     raise SystemExit
+
+
 @hydra.main(version_base=None, config_path="configs", config_name="train_config")
 def main(cfg: DictConfig):
     """
@@ -117,11 +127,11 @@ def main(cfg: DictConfig):
     )
 
     print(f"Will be saving checkpoints at: {output_dir}/checkpoints")
-    
+
     # ignored = [p for n,p in model.named_parameters() if "peft_*" in n]
 
     distr_strategy = setup_fsdp(cfg, model)
-    # distr_strategy = "auto"
+    # distr_strategy = "auto" # auto means no FSDP (it's the default value in L.Trainer)
 
     trainer = L.Trainer(
         max_epochs=cfg.finetune.epochs,

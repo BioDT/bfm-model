@@ -8,6 +8,7 @@ from functools import partial
 from typing import List, Literal
 
 import lightning as L
+import torch
 import torch.distributed as dist
 from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import MLFlowLogger
@@ -151,6 +152,7 @@ def setup_bfm_model(cfg, mode: Literal["train", "test", "rollout"], checkpoint_p
             }
         assert checkpoint_path, "cannot do rollout without having an initial checkpoint"
         model = BFMRollout.load_from_checkpoint(
+            map_location=torch.device("cpu"),  # need to go to CPU, FSDP will take care afterwards
             checkpoint_path=checkpoint_path,
             surface_vars=(cfg.model.surface_vars),
             edaphic_vars=(cfg.model.edaphic_vars),
