@@ -146,7 +146,7 @@ This repository contains various visualisation functions that are applicable for
 + Interesting addition for CLI args generation: https://github.com/google/python-fire
 
 ## TODODs
-- [ ] Codebase cleanup
+- [x] Codebase cleanup
 
 - [ ] Hugging Face weights upload, loading and tutorial notebook.
 

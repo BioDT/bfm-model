@@ -70,10 +70,6 @@ def _plot_maps_informative(
     arr_pred: np.ndarray, arr_gt: np.ndarray, lats: np.ndarray, lons: np.ndarray, var_group: str, var_name: str, timestamp: str
 ) -> plt.Figure:
     """High-quality two-panel plot with grid, labels and right-hand colourbar.
-
-    The colourbar axis is created with axes_grid1.make_axes_locatable, but we
-    explicitly set axes_class=plt.Axes to avoid Cartopy's GeoAxes constructor
-    (which requires a projection kwarg and otherwise raises KeyError: 'projection').
     """
     proj = ccrs.PlateCarree()
     fig, ax = plt.subplots(1, 2, figsize=(12, 4), subplot_kw=dict(projection=proj))
@@ -173,8 +169,9 @@ TAB_NAMES = (
     "Taylor Diagram",
     "Error Distribution",
     "Species Time-series",
+    "Spatial Maps Zoom"
 )
-(tab_spatial, tab_spatial_inf, tab_metrics, tab_taylor, tab_error, tab_species) = st.tabs(TAB_NAMES)
+(tab_spatial, tab_spatial_inf, tab_metrics, tab_taylor, tab_error, tab_species, tab_spatial_zoom) = st.tabs(TAB_NAMES)
 
 # Spatial Maps ----------------------------------------------------------------
 with tab_spatial:
@@ -213,7 +210,52 @@ with tab_spatial_inf:
                     "Download PNG (300 dpi)", buf.getvalue(), file_name=f"{slot}_{v}_{pl}hPa_{timestamp}.png", mime="image/png"
                 )
 
-# Metrics Summary -------------------------------------------------------------
+
+with tab_spatial_zoom:
+    st.markdown("### Select geographic window")
+
+    lat_min = st.number_input("Latitude start (°N)", value=float(lats.min()),
+                              min_value=float(lats.min()),
+                              max_value=float(lats.max())-0.25, step=0.25)
+    lat_max = st.number_input("Latitude end  (°N)", value=float(lats.max()),
+                              min_value=lat_min+0.25,
+                              max_value=float(lats.max()), step=0.25)
+    lon_min = st.number_input("Longitude start (°E)", value=float(lons.min()),
+                              min_value=float(lons.min()),
+                              max_value=float(lons.max())-0.25, step=0.25)
+    lon_max = st.number_input("Longitude end   (°E)", value=float(lons.max()),
+                              min_value=lon_min+0.25,
+                              max_value=float(lons.max()), step=0.25)
+
+    lat_mask = (lats >= lat_min) & (lats <= lat_max)
+    lon_mask = (lons >= lon_min) & (lons <= lon_max)
+    if lat_mask.sum() < 2 or lon_mask.sum() < 2:
+        st.warning("Zoom window too small. Increase extent."); st.stop()
+
+    lats_sub = lats[lat_mask]
+    lons_sub = lons[lon_mask]
+
+    for v in var_sel:
+        ten_pred, ten_gt = pred[slot][v], gt[slot][v][0]
+
+        def _crop(tensor):  # helper slices H×W last dims
+            return tensor[..., lat_mask, :][..., lon_mask]
+
+        if ten_pred.ndim == 3:                                   # surface var
+            fig = _plot_maps_informative(
+                _crop(ten_pred[0]), _crop(ten_gt[0]),
+                lats_sub, lons_sub, slot, v, timestamp)
+            st.pyplot(fig)
+        else:                                                    # pressure var
+            assert pl_sel is not None
+            for pl in pl_sel:
+                ci = meta["pressure_levels"].index(pl)
+                fig = _plot_maps_informative(
+                    _crop(ten_pred[0, ci]), _crop(ten_gt[0, ci]),
+                    lats_sub, lons_sub, slot, f"{v}_{pl} hPa", timestamp)
+                st.pyplot(fig)
+
+
 with tab_metrics:
     st.subheader("Deterministic metrics across windows")
     recs: List[Dict[str, float]] = []
