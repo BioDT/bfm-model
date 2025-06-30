@@ -23,8 +23,17 @@ from typing import Literal, Tuple
 
 import torch
 from lightning.pytorch import LightningModule
-from bfm_model.bfm.encoder import BFMEncoder
+from torch.utils.data import DataLoader
+
+from bfm_model.bfm.batch_utils import build_new_batch_with_prediction
+from bfm_model.bfm.dataloader_monthly import (
+    batch_to_device,
+    detach_batch,
+    detach_graph_batch,
+    inspect_batch_nans,
+)
 from bfm_model.bfm.decoder import BFMDecoder
+from bfm_model.bfm.encoder import BFMEncoder
 from bfm_model.mvit.mvit_model import MViT
 from bfm_model.swin_transformer.core.swim_core_v2 import Swin3DTransformer
 
@@ -112,7 +121,14 @@ class BFM(LightningModule):
         swin_drop_rate: float = 0.0,
         swin_attn_drop_rate: float = 0.0,
         swin_drop_path_rate: float = 0.1,
-        swin_use_lora: bool = False,
+        peft_r: int = 8,
+        lora_alpha: int = 8,
+        d_initial: float = 0.1,
+        peft_dropout: float = 0.0,
+        peft_steps: int = 1,
+        peft_mode: str = "single",
+        use_lora: bool = False,
+        use_vera: bool = False,
         **kwargs,
     ):
         super().__init__()
@@ -192,7 +208,6 @@ class BFM(LightningModule):
         self.swin_drop_rate = swin_drop_rate
         self.swin_attn_drop_rate = swin_attn_drop_rate
         self.swin_drop_path_rate = swin_drop_path_rate
-        self.swin_use_lora = swin_use_lora
 
         self.encoder = BFMEncoder(
             surface_vars=surface_vars,
@@ -233,7 +248,14 @@ class BFM(LightningModule):
                 drop_rate=self.swin_drop_rate,
                 attn_drop_rate=self.swin_attn_drop_rate,
                 drop_path_rate=self.swin_drop_path_rate,
-                use_lora=self.swin_use_lora,
+                peft_r=peft_r,
+                lora_alpha=lora_alpha,
+                d_initial=d_initial,
+                peft_dropout=peft_dropout,
+                peft_steps=peft_steps,
+                peft_mode=peft_mode,
+                use_lora=use_lora,
+                use_vera=use_vera,
             )
         elif backbone_type == "mvit":
             self.backbone = MViT(
@@ -285,7 +307,7 @@ class BFM(LightningModule):
             **kwargs,
         )
 
-    def forward(self, batch, lead_time: int | None, batch_size: int = 1):
+    def forward(self, batch, lead_time: int | None, batch_size: int = 1, rollout_step: int = 0):
         """
         Forward pass of the model.
 
@@ -321,7 +343,7 @@ class BFM(LightningModule):
             encoded = encoded.view(encoded.size(0), -1, self.encoder.embed_dim)
             print(f"Reshaped encoded for MViT: {encoded.shape}")
 
-        backbone_output = self.backbone(encoded, lead_time=lead_time, rollout_step=0, patch_shape=patch_shape)
+        backbone_output = self.backbone(encoded, lead_time=lead_time, rollout_step=rollout_step, patch_shape=patch_shape)
         # print("Backbone output", backbone_output.shape)
         # decode
         output = self.decoder(backbone_output, batch, lead_time)
@@ -371,8 +393,6 @@ class BFM(LightningModule):
     # def on_after_backward(self):
     #     """
     #     Checker for not learnable parameters -> Should output nothing!
-    #     Does NOT work with FSDP as it flatts the params and makes proxies
-    #     Use it with single GPU to check the params & grads
     #     """
     #     for name, param in self.named_parameters():
     #         if param.grad is None:
@@ -479,14 +499,7 @@ class BFM(LightningModule):
                 total_loss += group_loss
                 count += 1
 
-        final_total_loss = (
-            total_loss / count
-            if count > 0
-            else torch.tensor(
-                0.0,
-                device=output[next(iter(output))][next(iter(output[next(iter(output))]))].device if output else torch.tensor(0.0),
-            )
-        )
+        final_total_loss = total_loss / count if count > 0 else torch.tensor(0.0, device=self.device)
         print(f"Total loss {final_total_loss}")
         return final_total_loss
 
@@ -507,3 +520,304 @@ class BFM(LightningModule):
         # scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=self.lr_lambda)
 
         return [optimizer], [scheduler]
+
+
+class BFMRollout(BFM):
+
+    def __init__(
+        self,
+        td_learning: bool = False,
+        lead_time: int = 1,  # months
+        rollout_steps: int = 1,
+        **kwargs,
+    ):
+        # get current arguments
+        self.mode: str = kwargs.pop("finetune_mode", "peft")
+
+        all_args = {
+            "td_learning": td_learning,
+            "lead_time": lead_time,
+            # "rollout_steps": rollout_steps,
+        }
+        # merge with kwargs
+        all_args_merged = {**all_args, **kwargs}
+        super().__init__(**all_args_merged)
+
+        self.rollout_steps = rollout_steps
+
+        if self.mode == "peft":
+            # Freeze pretrained parts.
+            for param in self.encoder.parameters():
+                param.requires_grad = False
+            for param in self.backbone.parameters():
+                param.requires_grad = True
+            for param in self.decoder.parameters():
+                param.requires_grad = False
+
+            freeze_except(self)
+
+        total = sum(p.numel() for p in self.parameters())
+        trainable = sum(p.numel() for p in self.parameters() if p.requires_grad)
+        print(f"{trainable/1e6:.2f} M / {total/1e6:.2f} M parameters will update")
+
+    def rollout_forecast(self, initial_batch, steps: int = 1, batch_size: int = 1, mode: str = "finetune", steps_keep: int = 1):
+        """
+        If mode == 'finetune' -> pus-forward:
+        steps 0 … K-2 run under no_grad (detached)
+        step  K-1 keeps grad (memory = single step).
+
+        If mode == 'eval' -> all steps under no_grad.
+        """
+        rollout_dict = {
+            "batches": [],
+            "timestamps": [],
+            "lead_times": [],
+        }
+        curr = batch_to_device(initial_batch, self.device)
+        for k in range(steps):
+            preds = self(curr, self.lead_time, batch_size, rollout_step=k)
+            next_batch = build_new_batch_with_prediction(curr, preds)
+            rollout_dict["batches"].append(next_batch)
+            rollout_dict["timestamps"].append(next_batch.batch_metadata.timestamp)
+            rollout_dict["lead_times"].append(next_batch.batch_metadata.lead_time)
+            # detach graph only after we saved the batch -> TBPTT-2
+            if k <= steps - steps_keep:
+                curr = detach_graph_batch(next_batch)
+            else:
+                curr = next_batch
+            curr = batch_to_device(curr, self.device)
+        return rollout_dict
+
+    def training_step(self, batch, batch_idx):
+        """
+        batch = [ Batch(t0,t1), Batch(t1,t2), … Batch(tK,tK+1) ]
+                length = rollout_steps + 1
+        """
+        xs = batch
+        init_batch = xs[0]
+        target_batch = xs[self.rollout_steps]
+
+        # push‑forward rollout
+        roll = self.rollout_forecast(init_batch, steps=self.rollout_steps, batch_size=self.batch_size, mode="finetune")
+
+        # Single rollout target loss
+        pred_last = roll["batches"][-1]  # Batch (tK,ŷK+1)
+        loss = self.compute_loss(pred_last, target_batch)
+        traj_loss = []
+        # (optional) statistics on earlier steps without grads
+        with torch.no_grad():
+            for k in range(self.rollout_steps - 1):
+                traj_loss.append(self.compute_loss(roll["batches"][k], xs[k + 1]))
+
+        trajectory_loss = torch.stack(traj_loss).mean()
+        self.log("train_loss", loss, batch_size=self.batch_size, sync_dist=True)
+        self.log("train_trajectory_loss", trajectory_loss, batch_size=self.batch_size, sync_dist=True)
+        print(f"Single target Loss: {loss} | {self.rollout_steps}-Step Trajectory Loss {trajectory_loss}")
+
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        xs = batch
+        init_batch = xs[0]
+        target_batch = xs[self.rollout_steps]
+        # inspect_batch_shapes_namedtuple(init_batch)
+        # inspect_batch_shapes_namedtuple(target_batch)
+        traj_loss = []
+        # push‑forward rollout
+        roll = self.rollout_forecast(init_batch, steps=self.rollout_steps, batch_size=self.batch_size, mode="finetune")
+
+        pred_last = roll["batches"][-1]  # Batch (tK,ŷK+1)
+        inspect_batch_nans(roll["batches"][-1], tag="pred_last")
+        inspect_batch_nans(target_batch, tag="gt_last")
+
+        loss = self.compute_loss(pred_last, target_batch)
+        # (optional) statistics on earlier steps without grads
+        with torch.no_grad():
+            for k in range(self.rollout_steps - 1):
+                traj_loss.append(self.compute_loss(roll["batches"][k], xs[k + 1]))
+
+        trajectory_loss = torch.stack(traj_loss).sum()
+        self.log("val_loss", loss, batch_size=self.batch_size, sync_dist=True)
+        self.log("val_trajectory_loss", trajectory_loss, batch_size=self.batch_size, sync_dist=True)
+        print(f"Val Loss: {loss} | {self.rollout_steps}-Step Trajectory Loss {trajectory_loss}")
+
+        return loss
+
+    def test_step(self, batch, batch_idx):
+        xs = batch
+        init_batch = xs[0]
+        target_batch = xs[self.rollout_steps]
+        traj_loss = []
+        # push‑forward rollout
+        roll = self.rollout_forecast(init_batch, steps=self.rollout_steps, batch_size=self.batch_size, mode="finetune")
+
+        pred_last = roll["batches"][-1]  # Batch (tK,ŷK+1)
+        loss = self.compute_loss(pred_last, target_batch)
+
+        # (optional) statistics on earlier steps without grads
+        with torch.no_grad():
+            for k in range(self.rollout_steps - 1):
+                traj_loss.append(self.compute_loss(roll["batches"][k], xs[k + 1]))
+
+        trajectory_loss = torch.stack(traj_loss).sum()
+        self.log("test_loss", loss, batch_size=self.batch_size, sync_dist=True)
+        self.log("test_trajectory_loss", trajectory_loss, batch_size=self.batch_size, sync_dist=True)
+        print(f"Test Loss: {loss} | {self.rollout_steps}-Step Trajectory Loss {trajectory_loss}")
+        return loss
+
+    def predict_step(self, batch, batch_idx):
+        # batch lives on GPU in fp16/bf16
+        init = batch[0]
+        init = batch_to_device(init, self.device)
+
+        rollout = self.rollout_forecast(init, steps=self.rollout_steps, batch_size=self.batch_size, mode="test")[
+            "batches"
+        ]  # list of Batches on GPU
+
+        records = []
+        for k, (pred, gt) in enumerate(zip(rollout, batch[1:]), start=1):
+            # detach + clone + move to CPU
+            pred_cpu = detach_batch(pred)
+            gt_cpu = detach_batch(gt)
+            records.append(
+                {
+                    "idx": batch_idx,
+                    "step": k,
+                    "pred": pred_cpu,
+                    "gt": gt_cpu,
+                }
+            )
+        return records
+
+    # TODO: use the superclass loss, but at the moment is raising
+    # RuntimeError: element 0 of tensors does not require grad and does not have a grad_fn
+    def compute_loss(self, output, batch):
+        # batch = target:      t1, t2
+        # output = prediction: t1, t2
+        total_loss = 0.0
+        count = 0
+
+        groups = [
+            "surface_variables",
+            "edaphic_variables",
+            "atmospheric_variables",
+            "climate_variables",
+            "species_variables",
+            "vegetation_variables",
+            "land_variables",
+            "agriculture_variables",
+            "forest_variables",
+            "redlist_variables",
+            "misc_variables",
+        ]
+        for group_name in groups:
+
+            pred_dict = getattr(output, group_name)
+            true_dict = getattr(batch, group_name)
+            # print(f"pred_dict {pred_dict} \n  TRUE DICT {true_dict}")
+            group_loss = 0.0
+            var_count = 0
+            # inspect_batch_shapes_namedtuple(pred_dict)
+            for var_name, pred_tensor in pred_dict.items():
+                # If var_name not in the ground truth dict, skip
+                if var_name not in true_dict:
+                    print(f"{var_name} not in true_dict")
+                    continue
+                gt_tensor = true_dict[var_name]
+
+                if self.td_learning:
+                    time0 = gt_tensor[:, 0]
+                    time1 = gt_tensor[:, 1]
+
+                    true_diff = time1 - time0
+                    pred_diff = pred_tensor[:, 1] - time0
+                    # print("Pred and true dif shapes", pred_diff.shape, true_diff.shape)
+
+                    loss_var = torch.mean(torch.abs(pred_diff - true_diff))
+                else:
+                    # print(f"prediction tensor shape: {pred_tensor.shape}")
+                    time1 = gt_tensor[:, 1]
+                    pred = pred_tensor[:, 1]
+
+                    # mask out NaN/Inf before loss
+                    mask = torch.isfinite(time1) & torch.isfinite(pred)
+                    if mask.sum() == 0:
+                        continue
+                    p_clean = pred[mask]
+                    t_clean = time1[mask]
+
+                    loss_var = torch.mean(torch.abs(p_clean - t_clean))
+
+                # Determine the weight for this variable.
+                group_weights = self.variable_weights.get(group_name, {})
+                if isinstance(group_weights, dict):
+                    w = group_weights.get(var_name, 1.0)
+                else:
+                    w = group_weights
+                # Log each variable's raw loss
+                self.log(
+                    f"{var_name} raw loss", loss_var, batch_size=time1.size(0), sync_dist=True
+                )  # to accumulate the metric across devices.
+                group_loss += w * loss_var
+                var_count += 1
+
+            if var_count > 0:
+                group_loss /= var_count  # average within group
+                total_loss += group_loss
+                count += 1
+
+        if count > 0:
+            total_loss /= count  # average across groups
+
+        # print(f"Single step Loss: {total_loss}")
+        return total_loss
+
+    # TODO Uncomment and use for debugging
+    # def optimizer_step(self, epoch, batch_idx, optimizer, *args, **kwargs):
+    #     # record parameter norms *before* step
+    #     pre_norms = {n: p.detach().abs().mean().item() for n, p in self.named_parameters() if p.requires_grad}
+    #     super().optimizer_step(epoch, batch_idx, optimizer, *args, **kwargs)
+    #     # compare after step (on owning shard)
+    #     for n, p in self.named_parameters():
+    #         if p.requires_grad and p.grad is not None:
+    #             delta = (p.detach().abs().mean() - pre_norms[n]).abs()
+    #             if delta < 1e-14:  # effectively unchanged
+    #                 print(f"⚠️  {n} did not update (Δ≈0)")
+
+    # TODO Uncomment and use for debugging
+    # DURING FSDP it will print no-grad to all parameters 
+    # Uncomment to use for single GPU debugging
+    # def on_after_backward(self):
+    #     """
+    #     Checker for not learnable parameters -> Should output nothing!
+    #     """
+    #     for name, p in self.named_parameters():
+    #         if p.requires_grad and p.grad is None:
+    #             print(f"[no-grad] {name}")
+
+    def configure_optimizers(self):
+        optimizer = torch.optim.AdamW(
+            (p for p in self.parameters() if p.requires_grad), lr=self.learning_rate, weight_decay=self.weight_decay
+        )
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=8000, eta_min=self.learning_rate / 10)
+        # scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=self.lr_lambda)
+
+        return [optimizer]
+
+
+def freeze_except(model):
+    """
+    - sets requires_grad=True  only for tensors whose name contains PEFT variant
+    e.g. 'lora_' or 'vera_'
+    - everything else is frozen
+    - returns list of trainable parameter names for sanity-check
+    """
+    trainable = []
+    for name, param in model.named_parameters():
+        if "peft_" in name:
+            param.requires_grad = True
+            trainable.append(name)
+        else:
+            param.requires_grad = False
+    print(f"PEFT trainable params = {len(trainable)} layers")
+    return trainable

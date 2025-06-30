@@ -24,4 +24,4 @@ pip install -U pip setuptools wheel poetry
 poetry install
 
 # OPTIONAL: For CUDA capable machines
-pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+# pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124

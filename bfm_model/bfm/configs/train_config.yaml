@@ -21,10 +21,10 @@ model:
   num_latent_tokens: 8 #TODO Check consistensy in name and value
   backbone: "swin" # mvit
   patch_size: 4 #2 # Size of spatial patches.
-  embed_dim: 512 #512 # Embedding dimension.
+  embed_dim: 256 #512 # Embedding dimension.
   num_heads: 16 # Number of attention heads.
   head_dim: 64 # Dimension of each attention head.
-  depth: 6 #6 # Number of transformer layers.
+  depth: 3 #6 # Number of transformer layers.
   swin_backbone_size: "medium" # Can be "medium" or "large"
 
 data:
@@ -42,12 +42,12 @@ data:
 training:
   batch_size: 3
   workers: 15
-  epochs: 1000
+  epochs: 1
   accelerator: cuda
   precision: bf16-mixed
   precision_in: "high" # ["medium", "high", "highest"] https://pytorch.org/docs/stable/generated/torch.set_float32_matmul_precision.html#torch.set_float32_matmul_precision
-  devices: [0, 1]
-  strategy: fsdp #fsdp #ddp
+  devices: [0,1]
+  strategy: fsdp #fsdp #ddp # auto
   num_nodes: 1
   gradient_clip: 1.0
   log_steps: 1
@@ -55,7 +55,7 @@ training:
   wd: 0.000003 #5e-6
   checkpoint_path: #/home/atrantas/bfm-model/outputs/2025-06-03/14-27-12/checkpoints/epoch=340-val_loss=0.00555.ckpt #/home/atrantas/bfm-model/outputs/2025-06-02/10-17-22/checkpoints/epoch=112-val_loss=0.00970.ckpt #/home/atrantas/bfm-model/outputs/2025-05-25/12-39-21/checkpoints/epoch=195-val_loss=0.00404.ckpt #/home/atrantas/bfm-model/outputs/2025-05-24/19-55-32/checkpoints/epoch=158-val_loss=0.00413.ckpt #/home/atrantas/bfm-model/outputs/2025-05-24/15-29-50/checkpoints/epoch=36-val_loss=0.00565.ckpt # Add your checkpoint (.pt) path to continue the pre-training
   checkpoint_every: 31
-  eval_every: 30
+  eval_every: 3
   td_learning: False
   use_mask: "no" # "no", "fully", or "partially"
   partially_masked_groups: ["species_variables"]
@@ -67,28 +67,32 @@ mlflow:
   port: 8082 # change here port if you get [Errno 98] Address already in use
 
 evaluation:
-  rollout_data: /home/atrantas/bfm-model/rollout_monthly #/home/thanasis.trantas/git_projects/bfm-model/data_small/rollout_monthly # Need to have 2 batch samples for the rollout to work with
-  checkpoint_path: /projects/prjs1134/data/projects/biodt/storage/weights/epoch=268-val_loss=0.00493.ckpt # THE BEST PERFORMING /home/thanasis.trantas/git_projects/bfm-model/weights/epoch=268-val_loss=0.00493.ckpt #/home/atrantas/bfm-model/outputs/2025-05-25/12-36-44/checkpoints/epoch=65-val_loss=36.95078.ckpt #/home/atrantas/bfm-model/outputs/2025-05-24/19-55-32/checkpoints/epoch=158-val_loss=0.00413.ckpt #/home/atrantas/bfm-model/outputs/2025-05-24/15-29-50/checkpoints/epoch=26-val_loss=0.00631.ckpt
+  rollout_data: /projects/prjs1134/data/projects/biodt/storage/final_dataset_monthly/rollout # /home/atrantas/bfm-model/rollout_monthly #/home/thanasis.trantas/git_projects/bfm-model/data_small/rollout_monthly # Need to have 2 batch samples for the rollout to work with
+  # checkpoint_path: /projects/prjs1134/data/projects/biodt/storage/weights/epoch=268-val_loss=0.00493.ckpt # THE BEST PERFORMING /home/thanasis.trantas/git_projects/bfm-model/weights/epoch=268-val_loss=0.00493.ckpt #/home/atrantas/bfm-model/outputs/2025-05-25/12-36-44/checkpoints/epoch=65-val_loss=36.95078.ckpt #/home/atrantas/bfm-model/outputs/2025-05-24/19-55-32/checkpoints/epoch=158-val_loss=0.00413.ckpt #/home/atrantas/bfm-model/outputs/2025-05-24/15-29-50/checkpoints/epoch=26-val_loss=0.00631.ckpt
+  # checkpoint_path: /projects/prjs1134/data/projects/biodt/storage/weights/epoch=66-val_loss=0.03095.ckpt # updated, bigger
+  checkpoint_path: /projects/prjs1134/data/projects/biodt/storage/weights/epoch=00-val_loss=0.32124.ckpt # this one has the _latent_parameter_list
   batch_size: 1
   test_device: "cuda:0"
 
 finetune:
-  rollout_steps: 20
-  epochs: 500
+  rollout_steps: 7
+  epochs: 10
   batch_size: 1
-  eval_every: 100
-  checkpoint_every: 101
-  lr: 0.00003  #5e-4
-  wd: 0.000003 #5e-6
+  eval_every: 5
+  checkpoint_every: 51
+  lr: 0.00001  #5e-4
+  wd: 0.000001 #5e-6
   td_learning: False
-  checkpoint_path: /home/atrantas/bfm-model/outputs/2025-06-03/14-27-12/checkpoints/epoch=340-val_loss=0.00555.ckpt # Add your checkpoint (.pt) path to start fine-tuning
+  # checkpoint_path: /projects/prjs1134/data/projects/biodt/storage/weights/epoch=268-val_loss=0.00493.ckpt #/home/atrantas/bfm-model/outputs/2025-06-03/14-27-12/checkpoints/epoch=340-val_loss=0.00555.ckpt # Add your checkpoint (.pt) path to start fine-tuning
+  # checkpoint_path: /projects/prjs1134/data/projects/biodt/storage/weights/epoch=66-val_loss=0.03095.ckpt # updated, bigger
+  checkpoint_path: /projects/prjs1134/data/projects/biodt/storage/weights/epoch=00-val_loss=0.32124.ckpt # this one has the _latent_parameter_list
   prediction: False
-  peft_mode: "all"
-  mode: "short" # weekly # monthly
-  rank: 512 # LoRA | 256 VeRA
+  mode: "full" # "full" Finetune the full model or only the peft layers
+  peft_mode: "single" # all
+  rank: 16 # LoRA | 256 VeRA
   peft_dropout: 0.0
-  use_lora: False
-  use_vera: True
+  use_lora: True
+  use_vera: False
   lora_alpha: 8
   d_initial: 0.1
 

@@ -8,7 +8,7 @@ from datetime import timedelta
 
 import torch
 import torch.nn as nn
-from timm.models.layers import to_3tuple
+from timm.layers import to_3tuple
 
 from bfm_model.swin_transformer.core.swin_components import (
     PatchMerging3D,

@@ -4,24 +4,24 @@ Copyright (C) 2025 TNO, The Netherlands. All rights reserved.
 
 import copy
 import os
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import hydra
 import lightning as L
 import torch
-from dateutil.relativedelta import relativedelta
 from hydra.core.hydra_config import HydraConfig
 from lightning.pytorch import seed_everything
 from lightning.pytorch.loggers import MLFlowLogger
 from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader, Dataset
 
-from bfm_model.bfm.batch_utils import save_batch
+from bfm_model.bfm.batch_utils import build_new_batch_with_prediction, save_batch
 from bfm_model.bfm.dataloader_monthly import LargeClimateDataset, custom_collate
 from bfm_model.bfm.model import BFM
 from bfm_model.bfm.utils import compute_next_timestamp, inspect_batch_shapes_namedtuple
 
 
+# TODO: the function from BFMRollout.rollout_forecast should be used!!!
 def rollout_forecast(trainer, model, initial_batch, cfg, steps=2, batch_size=1):
 
     # Container for results
@@ -113,134 +113,12 @@ def rollout_forecast(trainer, model, initial_batch, cfg, steps=2, batch_size=1):
         rollout_dict["lead_times"].append(current_batch[0].batch_metadata.lead_time)
 
         # Build a new batch that has (last old time) + (predicted new time).
-        new_batch = build_new_batch_with_prediction(current_batch[0], preds[0])
+        new_batch = build_new_batch_with_prediction(current_batch[0], preds[0][0])
 
         # This new_batch becomes the "current_batch" for the next iteration
         current_batch[0] = new_batch
 
     return rollout_dict
-
-
-def _last_scalar_ts(ts):
-    """Return the last scalar timestamp string from (possibly nested) lists."""
-    while isinstance(ts, (list, tuple)):
-        if not ts:
-            return ""
-        ts = ts[-1]
-    return str(ts)
-
-
-def _add_months(ts_str: str, months: int) -> str:
-    """Return ts_str + `months` months, preserving the DT_FORMAT."""
-    DT_FORMAT = "%Y-%m-%d %H:%M:%S"
-    dt = datetime.strptime(ts_str, DT_FORMAT)
-    return (dt + relativedelta(months=months)).strftime(DT_FORMAT)
-
-
-def update_batch_metadata(batch_metadata, months: int = 1):
-    """
-    Normalise metadata for monthly lead-time.
-    """
-    meta = batch_metadata._asdict()
-
-    ts_field = meta.get("timestamp")
-    if ts_field:
-        t_last = _last_scalar_ts(ts_field)
-        t_next = _add_months(t_last, months)
-        meta["timestamp"] = [(t_last,), (t_next,)]
-
-    lt = meta.get("lead_time", 0)
-    print("Update batch metadata lead time: ", lt)
-    if hasattr(lt, "cpu"):
-        lt_val = int(lt.cpu().item())
-    if isinstance(lt, list):
-        lt_val = lt[0]
-    else:
-        lt_val = lt
-    meta["lead_time"] = lt_val + months
-    print(f"[update_meta] {t_last} -> {t_next} | lead={meta['lead_time']} months")
-
-    return batch_metadata._replace(**meta)
-
-
-def build_new_batch_with_prediction(old_batch, prediction_dict, groups=None, time_dim=1, months: int = 1):
-    """
-    Build a new batch from `old_batch` by:
-      - Keeping the last old timestep (since old_batch has T=2)
-      - Appending the newly predicted timestep from `prediction_dict`
-
-    This ensures the new batch again has T=2 time steps:
-       [ (old_batch's last), (model's new prediction) ]
-
-    Args:
-        old_batch (namedtuple `Batch`):
-            A batch with exactly 2 timesteps for each variable group, e.g. shape => [B,2,...].
-        prediction_dict (dict):
-            A dict keyed by group_name, then var_name -> predicted tensor of shape [B, ..., H, W].
-            If it lacks a time dimension, we unsqueeze it so shape => [B,1,...,H,W].
-        groups (list[str]): The variable group names to process. If None, we use a default set.
-        time_dim (int): The dimension index for time, typically 1 if shape => [B,T, ...].
-
-    Returns:
-        new_batch (namedtuple `Batch`):
-            A new batch of identical structure, also with T=2, but the second time is the newly predicted step.
-    """
-    if groups is None:
-        groups = [
-            "surface_variables",
-            "edaphic_variables",
-            "atmospheric_variables",
-            "climate_variables",
-            "species_variables",
-            "vegetation_variables",
-            "land_variables",
-            "agriculture_variables",
-            "forest_variables",
-            "misc_variables",
-        ]
-
-    new_batch = old_batch
-
-    # For each group, unify last old time with predicted new time
-    for group_name in groups:
-        if not hasattr(new_batch, group_name):
-            continue  # skip if group doesn't exist
-        group_vars_old = getattr(new_batch, group_name)
-        if group_vars_old is None:
-            continue
-
-        # predictions for this group
-        group_vars_pred = prediction_dict.get(group_name, {})
-
-        # For each variable in old_batch
-        for var_name, old_tensor in group_vars_old.items():
-            # old_tensor shape => [B, 2, (channels?), H, W], time_dim=1
-            # keep last => [B, 1, ...]
-            last_slice = old_tensor[:, -1:]  # shape => [B,1, ...]
-
-            # find predicted data
-            if var_name in group_vars_pred:
-                pred_tensor = group_vars_pred[var_name]
-                # print(f"var_name {var_name} pred tensor shape: {pred_tensor.shape}")
-                # If missing a time dim, unsqueeze it:
-                if pred_tensor.dim() == last_slice.dim() - 1:
-                    pred_tensor = pred_tensor.unsqueeze(time_dim)
-            else:
-                # If no prediction for var_name, we could replicate last or skip
-                pred_tensor = last_slice.clone()
-
-            # Concat => shape [B,2,...]
-            new_var_tensor = torch.cat([last_slice, pred_tensor], dim=time_dim)
-            group_vars_old[var_name] = new_var_tensor
-
-        new_batch = new_batch._replace(**{group_name: group_vars_old})
-
-    # Update only the timestamp and lead_time in the metadata.
-    new_metadata = update_batch_metadata(new_batch.batch_metadata, months=months)
-    new_batch = new_batch._replace(batch_metadata=new_metadata)
-    # print(f"new batch in creation timestamps: {new_batch.batch_metadata.timestamp}")
-
-    return new_batch
 
 
 @hydra.main(version_base=None, config_path="configs", config_name="train_config")
@@ -321,7 +199,7 @@ def main(cfg: DictConfig):
             "swin_drop_rate": selected_swin_config.drop_rate,
             "swin_attn_drop_rate": selected_swin_config.attn_drop_rate,
             "swin_drop_path_rate": selected_swin_config.drop_path_rate,
-            "swin_use_lora": selected_swin_config.use_lora,
+            "use_lora": selected_swin_config.use_lora,
         }
 
     loaded_model = BFM.load_from_checkpoint(

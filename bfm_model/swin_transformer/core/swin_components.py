@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
-from timm.models.layers import DropPath
+from timm.layers import DropPath
 
 from bfm_model.swin_transformer.helpers.adaptive_layer_norm import AdaptiveLayerNorm
 from bfm_model.swin_transformer.helpers.low_rank_adaptation import LoRAMode, LoRARollout

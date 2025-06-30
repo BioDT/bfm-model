@@ -19,11 +19,11 @@ Key Features:
 
 import math
 from datetime import datetime
-from einops import rearrange
 
 import torch
 import torch.distributed as dist
 import torch.nn as nn
+from einops import rearrange
 from torch.distributed.nn.functional import all_gather
 
 from bfm_model.perceiver_components.pos_encoder import build_position_encoding

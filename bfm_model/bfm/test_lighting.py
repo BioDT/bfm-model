@@ -63,9 +63,10 @@ def main(cfg: DictConfig):
     # override batch_size
     test_dataloader = get_val_dataloader(cfg, batch_size_override=cfg.evaluation.batch_size)
 
-    mlflow_logger = get_mlflow_logger(output_dir)
+    experiment_name = "BFM-testing"
+    mlflow_logger = get_mlflow_logger(output_dir, experiment_name=experiment_name)
     # also log in the ./mlruns folder so that you can run mlflow server and see every run together
-    mlflow_logger_current_folder = get_mlflow_logger()
+    mlflow_logger_current_folder = get_mlflow_logger(experiment_name=experiment_name)
     loggers = [l for l in [mlflow_logger, mlflow_logger_current_folder] if l]
 
     # trainer = L.Trainer(

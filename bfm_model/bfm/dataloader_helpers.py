@@ -2,7 +2,7 @@
 Copyright (C) 2025 TNO, The Netherlands. All rights reserved.
 """
 
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 
 from bfm_model.bfm.dataloader_monthly import LargeClimateDataset, custom_collate
 
@@ -50,3 +50,22 @@ def get_val_dataloader(cfg, batch_size_override: int | None = None):
     )
     print(f"Validation train: {len(val_dataloader)}")
     return val_dataloader
+
+
+class SequentialWindowDataset(Dataset):
+    """
+    Wrap an underlying single-sample dataset so __getitem__(i) returns a list
+    [sample_i, sample_{i+1}, … sample_{i+steps}] where steps is user-defined.
+    """
+
+    def __init__(self, base_ds: Dataset, steps: int):
+        assert steps >= 1, "steps must be ≥ 1"
+        self.base = base_ds  # yields one Batch per index
+        self.steps = steps
+
+    def __len__(self):
+        # last valid start idx is len(base) - steps - 1
+        return len(self.base) - self.steps
+
+    def __getitem__(self, idx):
+        return [self.base[idx + k] for k in range(self.steps + 1)]  # list length = steps+1

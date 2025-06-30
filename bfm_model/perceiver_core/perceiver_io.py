@@ -8,6 +8,7 @@ import torch
 import torch.nn as nn
 from einops import rearrange, repeat
 
+from bfm_model.perceiver_components.helpers import PreNorm
 from bfm_model.perceiver_components.helpers_io import (
     Attention,
     BuiltinGQAttention,
@@ -16,8 +17,6 @@ from bfm_model.perceiver_components.helpers_io import (
     cache_fn,
     dropout_seq,
 )
-from bfm_model.perceiver_components.helpers import PreNorm
-
 from bfm_model.perceiver_components.pos_encoder import build_position_encoding
 
 
