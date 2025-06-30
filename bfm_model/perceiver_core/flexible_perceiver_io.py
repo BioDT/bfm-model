@@ -1,14 +1,18 @@
-from typing import Dict, Optional, Tuple
+"""
+Copyright 2025 (C) TNO. Licensed under the MIT license.
+"""
+
+from typing import Dict, Optional
 
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from einops import repeat
 
+from bfm_model.perceiver_components.helpers import PreNorm
 from bfm_model.perceiver_components.helpers_io import (
     Attention,
     FeedForward,
-    PreNorm,
     cache_fn,
     dropout_seq,
 )

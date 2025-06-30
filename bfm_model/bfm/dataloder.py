@@ -1,15 +1,16 @@
 """
-Copyright (C) 2025 TNO, The Netherlands. All rights reserved.
+Copyright 2025 (C) TNO. Licensed under the MIT license.
 """
+
 import os
 from collections import namedtuple
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Literal
 
 import torch
 from omegaconf.dictconfig import DictConfig
-from torch.utils.data import DataLoader, Dataset, default_collate
-from bfm_model.bfm.utils import DictObj
+from torch.utils.data import Dataset, default_collate
+
 from bfm_model.bfm.dataset_basics import *
 from bfm_model.bfm.scaler import (
     _rescale_recursive,
@@ -205,25 +206,29 @@ class LargeClimateDataset(Dataset):
     }
     """
 
-    def __init__(self, data_dir: str, scaling_settings: DictConfig, num_species: int = 2):
+    def __init__(
+        self, data_dir: str, scaling_settings: DictConfig, num_species: int = 2, mode: str = "pretrain", model_patch_size: int = 4
+    ):
         self.data_dir = data_dir
         self.num_species = num_species
+        self.mode = mode
         self.files = [os.path.join(data_dir, f) for f in os.listdir(data_dir) if f.endswith(".pt")]
         self.files.sort()
+        # print("Files sorted", self.files)
         self.scaling_settings = scaling_settings
         self.scaling_statistics = load_stats(scaling_settings.stats_path)
+        self.model_patch_size = model_patch_size
         print(f"We scale the dataset {scaling_settings.enabled} with {scaling_settings.mode}")
 
     def __len__(self):
-        return len(self.files)
+        return max(0, len(self.files) - 1)
 
-    def __getitem__(self, idx):
-        fpath = self.files[idx]
+    def load_and_process_files(self, fpath: str):
         data = torch.load(fpath, map_location="cpu", weights_only=True)
 
         latitudes = data["batch_metadata"]["latitudes"]
         longitudes = data["batch_metadata"]["longitudes"]
-        timestamps = data["batch_metadata"]["timestamp"]  # If it's a single sample, possibly a single timestamp or a list
+        timestamps = data["batch_metadata"]["timestamp"]
         pressure_levels = data["batch_metadata"]["pressure_levels"]
         species_list = data["batch_metadata"]["species_list"]
 
@@ -251,7 +256,7 @@ class LargeClimateDataset(Dataset):
         # crop metadata dimensions
         latitude_var = torch.tensor(latitudes[:new_H])
         longitude_var = torch.tensor(longitudes[:new_W])
-
+        # print("Latitues in Dataloder",latitude_var.shape, longitude_var.shape)
         # Calculate lead time
         dt_format = "%Y-%m-%dT%H:%M:%S"
         # Convert the two timestamps into datetime objects
@@ -286,6 +291,17 @@ class LargeClimateDataset(Dataset):
             species_variables=species_vars_wanted,
         )
 
+    def __getitem__(self, idx):
+        fpath_x = self.files[idx]
+        fpath_y = self.files[idx + 1]
+        if self.mode == "pretrain":
+            x = self.load_and_process_files(fpath_x)
+            y = self.load_and_process_files(fpath_y)
+            return x, y
+        else:  # finetune
+            x = self.load_and_process_files(fpath_x)
+            return x
+
     def scale_batch(self, batch: dict | Batch, direction: Literal["original", "scaled"] = "scaled"):
         """
         Scale a batch of data back or forward.
@@ -309,131 +325,3 @@ class LargeClimateDataset(Dataset):
             # convert back to NamedTuple
             batch = Batch(**batch)
         return batch
-
-
-def compute_variable_statistics(tensor: torch.Tensor) -> dict:
-    """
-    Compute basic statistics for a given tensor:
-    - min, max, mean, std
-    - nan_count, inf_count
-    - optional: shape, dtype
-
-    Args:
-        tensor (torch.Tensor): The tensor to analyze
-
-    Returns:
-        dict: A dictionary of computed statistics
-    """
-    stats = {}
-    # Ensure float to avoid errors with integer types
-    # (Optional step; .float() is typically safe if you want stats in float precision.)
-    t = tensor.float()
-
-    stats["min"] = float(t.min().item())
-    stats["max"] = float(t.max().item())
-    stats["mean"] = float(t.mean().item())
-    stats["std"] = float(t.std().item())
-
-    # Count special values
-    stats["nan_count"] = int(torch.isnan(t).sum().item())
-    stats["inf_count"] = int(torch.isinf(t).sum().item())
-
-    # (Optional) Add shape and dtype for reference
-    stats["shape"] = list(tensor.shape)
-    stats["dtype"] = str(tensor.dtype)
-
-    return stats
-
-
-def compute_batch_statistics(batch: Batch) -> dict:
-    """
-    Compute statistics for each sub-dictionary in the batch object.
-    The batch object has the following structure:
-        batch_metadata,
-        surface_variables,
-        single_variables,
-        atmospheric_variables,
-        species_extinction_variables,
-        land_variables,
-        agriculture_variables,
-        forest_variables
-
-    Each of those is a dict of name -> tensor, or a namedtuple for metadata.
-    We skip metadata in this function and focus on actual variable tensors.
-
-    Args:
-        batch (Batch): A namedtuple containing sub-dicts of variables.
-
-    Returns:
-        dict: A nested dictionary of stats for each variable group.
-    """
-    stats_result = {}
-
-    # We'll define a helper to process a sub-dictionary
-    def process_var_dict(var_dict: dict, group_name: str):
-        group_stats = {}
-        for var_name, var_data in var_dict.items():
-            if isinstance(var_data, torch.Tensor):
-                # Compute stats
-                group_stats[var_name] = compute_variable_statistics(var_data)
-            else:
-                # Non-tensor data (e.g. lists). Skip or handle differently if needed
-                group_stats[var_name] = {"note": "Not a tensor, skipping stats."}
-        return group_stats
-
-    # For each field in the Batch namedtuple that is a dictionary, compute stats
-    stats_result["surface_variables"] = process_var_dict(batch.surface_variables, "surface_variables")
-    stats_result["single_variables"] = process_var_dict(batch.single_variables, "single_variables")
-    stats_result["atmospheric_variables"] = process_var_dict(batch.atmospheric_variables, "atmospheric_variables")
-    stats_result["species_extinction_variables"] = process_var_dict(
-        batch.species_extinction_variables, "species_extinction_variables"
-    )
-    stats_result["land_variables"] = process_var_dict(batch.land_variables, "land_variables")
-    stats_result["agriculture_variables"] = process_var_dict(batch.agriculture_variables, "agriculture_variables")
-    stats_result["forest_variables"] = process_var_dict(batch.forest_variables, "forest_variables")
-    stats_result["species_variables"] = process_var_dict(batch.species_variables, "species_variables")
-
-    return stats_result
-
-
-scalling_dict = {"enabled": False, "stats_path": "batch_statistics/statistics.json", "mode": "normalize"}
-scaling_object = DictObj(scalling_dict)
-
-def test_dataset_and_dataloader(data_dir):
-    """
-    Test function to inspect correctness.
-    Print distinctive info from a single batch.
-    """
-    dataset = LargeClimateDataset(data_dir, num_species=10, scaling_settings=scaling_object)
-    dataloader = DataLoader(
-        dataset,
-        batch_size=1,  # Fetch two samples for testing
-        num_workers=0,  # For debugging, keep workers=0 to avoid async complexity
-        pin_memory=False,
-        collate_fn=custom_collate,
-        shuffle=False,
-    )
-
-    batch = next(iter(dataloader))
-    # Now compute stats
-    stats = compute_batch_statistics(batch)
-    print("=== Variable Statistics ===")
-    for group_name, group_dict in stats.items():
-        print(f"\nGroup: {group_name}")
-        for var_name, var_stats in group_dict.items():
-            if "min" in var_stats:
-                print(
-                    f"  {var_name} => Min: {var_stats['min']}, Max: {var_stats['max']}, Mean: {var_stats['mean']}, Std: {var_stats['std']}"
-                )
-                print(
-                    f"     NaN: {var_stats['nan_count']}, Inf: {var_stats['inf_count']}, shape: {var_stats['shape']}, dtype: {var_stats['dtype']}"
-                )
-            else:
-                print(f"  {var_name} => {var_stats}")
-
-    print("\nTest completed successfully.")
-
-
-if __name__ == "__main__":
-    data_dir = "data_small/rollout/"  # Replace this with the actual directory path
-    test_dataset_and_dataloader(data_dir)

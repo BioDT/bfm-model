@@ -3,9 +3,9 @@ from test.test_bfm_alternate_version.src.data_set import AirQualityDataset, AQBa
 from test.test_bfm_alternate_version.src.hyperparameter_search import AQFMPredictor
 from test.test_bfm_alternate_version.src.train_baseline import TFTPredictor
 
+import lightning as pl
 import matplotlib.pyplot as plt
 import pandas as pd
-import pytorch_lightning as pl
 import torch
 
 

@@ -1,3 +1,9 @@
+"""
+Copyright 2025 (C) TNO. Licensed under the MIT license.
+
+Code adapted from: https://github.com/microsoft/aurora/blob/main/aurora/area.py
+"""
+
 import torch
 
 EARTH_RADIUS = 6378137 / 1000  # Radius of the earth in KMs

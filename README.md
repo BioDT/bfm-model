@@ -45,6 +45,8 @@ poetry shell
 ### Training
 
 ```bash
+salloc -p gpu_h100 --nodes 1 --gpus-per-node 2 -t 02:00:00
+source venv/bin/activate
 python bfm_model/bfm/train_lighting.py
 ```
 
@@ -54,12 +56,26 @@ python bfm_model/bfm/train_lighting.py
 python bfm_model/bfm/test_lighting.py
 ```
 
-### Rollout
+### Rollout Predictions
 
 ```bash
 python bfm_model/bfm/rollouts.py
 ```
 
+### Rollout Finetuning
+
+We offer 2 Parameter Efficient Finetuning Techniques, namely LoRA and VeRA. They can be configured by enabling and disabling interchangable each of them on the `train_config.yaml` on the `finetune` section.
+
+```bash
+python bfm_model/bfm/rollout_finetuning.py
+```
+
+### In the cluster
+```bash
+sbatch snellius_train.sh
+# or
+sbatch snellius_finetune.sh
+```
 
 ## Analysing results
 
@@ -67,57 +83,36 @@ We use [Hydra](https://hydra.cc/docs/intro/) to store all the artifacts from all
 There, we can find by date and time all the data from the runs (configs, checkpoints, metrics, ...).
 
 
-### How to use MLflow
+### MLflow
 
 [MLflow](https://mlflow.org/docs/latest/index.html) is used to log all the runs, and we configure it to save its internal files in the `mlruns` folder. The logging is done via filesystem, so that you don't need to have a MLflow server running during the training.
 
-You can run the MLflow server to inspect the runs with the command:
+You can run the MLflow server when you want (after or during training) to inspect the runs with the command:
 
 ```bash
-# you can customize host and port depending on your system
+# run in the root of the repository, where the mlruns folder is located
 mlflow server --host 0.0.0.0 --port 8082
 ```
 
-On snellius, you need to forward the ports to your machine (TODO document commands)
+On snellius:
+- run the `mlflow` command above in the same node where your vscode interface is executing (login node or ondemand)
+- vscode will detect the port and forward a local port to it (popup appearing, or go to the "PORTS" tab to open it)
 
+If you are not using vscode, or want a manual connection:
+- forward a local port to it: `ssh -L 0.0.0.0:<LOCAL_PORT>:<node_id>:8082 <USER>@snellius.surf.nl` (example: `ssh -L 0.0.0.0:8899:int6:8082 snellius`)
+- open `http://localhost:<LOCAL_PORT>/` (example: `http://localhost:8899/`)
 
+## Visualisation
+This repository contains various visualisation functions that are applicable for every stage of the workflow. More specific:
 
-## Connection
+- **Batch level:** Inspect and visualise the RAW data (2 timesteps) from the Batches along with their MAE. Run the notebook `documentation/batch_visualisation.ipynb`. You need to change the `DATA_PATH` to the directory you have the batches you want to visualise. The code plots only a single batch but it can be configured to visualise all of them and save them with the appropriate flag.
 
-```bash
-# start an interactive job
-salloc -p gpu_h100 --gpus-per-node=1 -t 01:00:00
-# ssh to the node with port forwarding
-# ssh gcn140
+> [!NOTE]
+> You need to produce predictions either by running `bfm_model/bfm/test_lighting.py` or by `bfm_model/bfm/rollout_finetuning.py` and enabling the **finetune.prediction: True** on the train_config. These will create export folders with the predictions and the ground truths in a compact tensor format.
 
+- **Prediction level:** To visualise them simply run `streamlit run prediction_viewer.py`. You can navigate the different tabs and variable groups to inspect each and every one of them.
 
-# Forwarding the node mlflow instance to the local machine
-# N.B.: Make sure to specify the host on the local machine, as specifying just the port might results in "Permission denied" errors.
-# N.B.2.: If specifying the host 0.0.0.0 on the local machine, access by using `localhost:<port_id>`.
-ssh -i .ssh/snelius_key -L 0.0.0.0:<desired_port_on_local>:[gcn|tcn]<node_id>:<mlflow_port_on_remote> <user_name>@snellius.surf.nl
-ssh -L 0.0.0.0:8083:gcn112:8082 mmensio1@snellius.surf.nl
-
-```
-
-## Running via scheduled job
-
-```bash
-sbatch job.sh
-```
-
-Then you can observe mlflow with the same bind command:
-```bash
-ssh -i .ssh/snelius_key -L 0.0.0.0:<desired_port_on_local>:gcn<node_id>:<mlflow_port_on_remote> <user_name>@snellius.surf.nl
-```
-
-
-## OOM Errors:
-
-If experience any, use: `export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`
-
-An interesting discussion: https://github.com/pytorch/pytorch/issues/122057
-
-Issue PyTorch 2.1.2 vs 2.2.0
+- **Rollout level:** To visualise them simply run `streamlit run rollout_viewer.py ` and visit the localhost. There you can inspect the different Variable Groups with their respective Variables and Levels.
 
 ## Resources
 
@@ -128,14 +123,22 @@ Issue PyTorch 2.1.2 vs 2.2.0
 + Interesting addition for CLI args generation: https://github.com/google/python-fire
 
 ## TODODs
-[ ] Finetune routine implementation with LoRA and optinally VeRA
+- [x] Codebase cleanup
 
-[ ] Finetune dataset setup
+- [ ] Hugging Face weights upload, loading and tutorial notebook.
 
-a) Presence and absence of species: [Geolifeclef](https://www.kaggle.com/competitions/geolifeclef-2023-lifeclef-2023-x-fgvc10/data
-)
-b) Invasive species [flavonge](https://floraveg.eu/) & [opendap](http://opendap.biodt.eu/ias-pdt/0/outputs/)
+- [ ] Make clear the data structure throughout the whole codebase. Currently we have interchanged dicts & Batch Tuples
 
-[ ] Validate distributed training strategy
+- [x] Finetune routine implementation with LoRA and optinally VeRA DONE
 
-[ ]
+- [x] Finetune dataset setup
+
+- [x] Rollout Finetune modes: Monthly (x1), Yearly (x12)
+
+- [x] Investigate if a (Prioritized) Buffer for Rollout Finetune is required - No need
+
+- [x] Investigate effect of batch_size on finetuning - currently low memory usage but slow execution
+
+- [x] Safe tensors storage
+
+- [x] Validate distributed training strategy

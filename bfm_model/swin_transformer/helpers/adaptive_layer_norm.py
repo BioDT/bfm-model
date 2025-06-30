@@ -1,3 +1,7 @@
+"""
+Copyright 2025 (C) TNO. Licensed under the MIT license.
+"""
+
 import torch
 from torch import nn
 
