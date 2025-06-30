@@ -2,7 +2,6 @@
 Copyright (C) 2025 TNO, The Netherlands. All rights reserved.
 """
 
-import os
 from collections import defaultdict
 from pathlib import Path
 
@@ -17,7 +16,6 @@ from bfm_model.bfm.dataloader_helpers import get_val_dataloader
 from bfm_model.bfm.dataloader_monthly import (
     LargeClimateDataset,
     _convert,
-    custom_collate,
 )
 from bfm_model.bfm.model_helpers import get_mlflow_logger, get_trainer, setup_bfm_model
 

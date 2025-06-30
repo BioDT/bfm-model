@@ -206,12 +206,12 @@ def build_new_batch_with_prediction(old_batch, prediction_dict, groups=None, tim
 
 def update_batch_metadata(batch_metadata, months: int = 1):
     """
-    Advance monthly timestamps & lead_time for *batched* metadata.
+    Advance monthly timestamps & lead_time for batched metadata.
 
     Handles lead_time encoded as:
     - scalar int or float
-    - 1-D torch tensor  [B]
-    - list / tuple      [B]
+    - 1-D torch tensor [B]
+    - list / tuple [B]
     """
     meta = batch_metadata._asdict()
 

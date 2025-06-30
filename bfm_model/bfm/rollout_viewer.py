@@ -27,7 +27,6 @@ import torch
 from cartopy.util import add_cyclic_point
 from hydra.core.global_hydra import GlobalHydra
 from mpl_toolkits.axes_grid1 import make_axes_locatable
-from omegaconf import OmegaConf
 from scipy.spatial import ConvexHull
 import scipy.ndimage as ndi
 

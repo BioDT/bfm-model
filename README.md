@@ -112,7 +112,7 @@ This repository contains various visualisation functions that are applicable for
 
 - **Prediction level:** To visualise them simply run `streamlit run prediction_viewer.py`. You can navigate the different tabs and variable groups to inspect each and every one of them.
 
-- **Rollout level:** To visualise them simply run `streamlit run documentation/rollout_visualisation.py ` and visit the localhost. There you can inspect the different Variable Groups with their respective Variables and Levels.
+- **Rollout level:** To visualise them simply run `streamlit run rollout_viewer.py ` and visit the localhost. There you can inspect the different Variable Groups with their respective Variables and Levels.
 
 ## Resources
 
