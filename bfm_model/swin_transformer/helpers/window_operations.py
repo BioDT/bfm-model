@@ -147,7 +147,10 @@ def apply_or_remove_3d_padding(
 
     if mode == "apply":
         # Apply padding to the input tensor
-        return F.pad(x, (0, 0, *padding[::-1]), value=pad_value)  # shape: [B, C+C_pad, H+H_pad, W+W_pad, D]
+        # F.pad for 5D tensor [B, C, H, W, D] expects (pad_D_left, pad_D_right, pad_W_left, pad_W_right, pad_H_left, pad_H_right, pad_C_left, pad_C_right)
+        # since D dimension doesn't need padding, we use (0, 0, pad_W_left, pad_W_right, pad_H_left, pad_H_right, pad_C_left, pad_C_right)
+        pad_left, pad_right, pad_top, pad_bottom, pad_front, pad_back = padding
+        return F.pad(x, (0, 0, pad_left, pad_right, pad_top, pad_bottom, pad_front, pad_back), value=pad_value)  # shape: [B, C+C_pad, H+H_pad, W+W_pad, D]
     else:  # mode == 'remove'
         # Remove padding from the input tensor
         B, C, H, W, D = x.shape

@@ -354,6 +354,9 @@ class Swin3DTransformerBlock(nn.Module):
         pad_size = tuple(-dim % w for dim, w in zip((C, H, W), adjusted_window_size))
         shifted_input = apply_or_remove_3d_padding(shifted_input, pad_size, mode="apply")  # shape: [B, C', H', W', D]
 
+        # Get padded dimensions for the reverse operation
+        padded_C, padded_H, padded_W = shifted_input.shape[1], shifted_input.shape[2], shifted_input.shape[3]
+
         # Partition patches/tokens into windows
         windows = window_partition_and_reverse_3d(
             shifted_input, adjusted_window_size, mode="partition"
@@ -372,7 +375,7 @@ class Swin3DTransformerBlock(nn.Module):
             -1, adjusted_window_size[0], adjusted_window_size[1], adjusted_window_size[2], D
         )  # shape: [nW*B, ws[0], ws[1], ws[2], D]
         shifted_input = window_partition_and_reverse_3d(
-            attention_windows, adjusted_window_size, mode="reverse", total_channels=C, total_height=H, total_width=W
+            attention_windows, adjusted_window_size, mode="reverse", total_channels=padded_C, total_height=padded_H, total_width=padded_W
         )  # shape: [B, C', H', W', D]
 
         # Remove padding
@@ -414,6 +417,10 @@ class PatchMerging3D(nn.Module):
         self.input_dim = input_dim
         self.reduction = nn.Linear(4 * input_dim, 2 * input_dim, bias=False)
         self.norm = nn.LayerNorm(4 * input_dim)
+        
+        # For cases where merging is not possible (dimensions too small)
+        self.identity_norm = nn.LayerNorm(input_dim)
+        self.identity_expansion = nn.Linear(input_dim, 2 * input_dim, bias=False)
 
     def _merge_patches(self, x: torch.Tensor, res: tuple[int, int, int]) -> torch.Tensor:
         """
@@ -437,14 +444,17 @@ class PatchMerging3D(nn.Module):
         # Reshape input to [B, C, H, W, D]
         x = x.view(B, C, H, W, D)
 
-        # Apply custom padding to ensure height and width are even
-        x = apply_or_remove_3d_padding(x, (0, H % 2, W % 2), mode="apply")  # shape: [B, C, H', W', D]
+        # Calculate padding to ensure height and width are even
+        pad_C, pad_H, pad_W = 0, H % 2, W % 2
 
-        new_H, new_W = x.shape[2], x.shape[3]
+        # Apply custom padding to ensure height and width are even
+        x = apply_or_remove_3d_padding(x, (pad_C, pad_H, pad_W), mode="apply")  # shape: [B, C, H', W', D]
+
+        new_C, new_H, new_W = x.shape[1], x.shape[2], x.shape[3]
         assert new_H % 2 == 0 and new_W % 2 == 0, f"Padded dimensions must be even: H={new_H}, W={new_W}"
 
         # Merge patches using reshape and rearrange operations
-        x = x.reshape(B, C, new_H // 2, 2, new_W // 2, 2, D)
+        x = x.reshape(B, new_C, new_H // 2, 2, new_W // 2, 2, D)
         x = rearrange(x, "B C H h W w D -> B (C H W) (h w D)")  # shape: [B, C*(H//2)*(W//2), 4D]
 
         return x
@@ -458,6 +468,17 @@ class PatchMerging3D(nn.Module):
         Returns:
             torch.Tensor: Merged tokens. Shape: [B, C*(H//2)*(W//2), 2D]
         """
+        C, H, W = input_resolution
+        
+        # Check if dimensions are too small for merging
+        if H <= 1 or W <= 1:
+            # When dimensions are too small, we can't merge patches, so return input with doubled channels to maintain architecture expectations
+            # apply identity normalization and channel doubling
+            normalized_patches = self.identity_norm(x)
+            doubled_patches = self.identity_expansion(normalized_patches)
+            return doubled_patches
+        
+        # Normal merging case
         # Merge patches
         merged_patches = self._merge_patches(x, input_resolution)  # shape: [B, L/4, 4D]
 
