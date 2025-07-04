@@ -207,7 +207,7 @@ def setup_bfm_model(cfg, mode: Literal["train", "test", "rollout"], checkpoint_p
 def setup_checkpoint_callback(cfg, output_dir: str) -> ModelCheckpoint:
     checkpoint_callback = ModelCheckpoint(
         dirpath=f"{output_dir}/checkpoints",
-        save_top_k=3,
+        save_top_k=1,
         monitor="val_loss",  # `log('val_loss', value)` in the `LightningModule`
         mode="min",
         every_n_train_steps=cfg.training.checkpoint_every,
