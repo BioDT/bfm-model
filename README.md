@@ -114,6 +114,14 @@ This repository contains various visualisation functions that are applicable for
 
 - **Rollout level:** To visualise them simply run `streamlit run rollout_viewer.py ` and visit the localhost. There you can inspect the different Variable Groups with their respective Variables and Levels.
 
+
+## Prepare and upload model weights
+First you need to make the weights **safe** by using `safetensors`. 
+
+Use the notebook `documentation/prepare_checkpoint.ipynb` to do so.
+
+Then just follow the Model card tab and upload the weights either with CLI or with a short python script.
+
 ## Resources
 
 + [FSDP Lighting](https://lightning.ai/docs/pytorch/stable/advanced/model_parallel/fsdp.html)
