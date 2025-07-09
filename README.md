@@ -115,6 +115,14 @@ This repository contains various visualisation functions that are applicable for
 - **Rollout level:** To visualise them simply run `streamlit run rollout_viewer.py ` and visit the localhost. There you can inspect the different Variable Groups with their respective Variables and Levels.
 
 
+## Examples
+
+Inside the `documentation` folder you can find various notebooks that inspect and interact with BioAnalyst for different tasks.
+The most straight-forward is the `example_prediction.ipynb` where you can run one timestep ahead prediction. 
+
+> [!NOTE]
+> It requires the production of at least one Batch and supply it via the dataloder!
+
 ## Prepare and upload model weights
 First you need to make the weights **safe** by using `safetensors`. 
 
