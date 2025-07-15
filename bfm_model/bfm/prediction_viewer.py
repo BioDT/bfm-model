@@ -43,7 +43,7 @@ GRID_LON = np.round(np.arange(LON_START, LON_END + 1e-6, 0.25), 3)
 
 def _get_dir() -> Path:
     p = argparse.ArgumentParser(add_help=False)
-    p.add_argument("--data_dir", default="pre_train_exports-0.00493-weightedspecies", type=Path)
+    p.add_argument("--data_dir", default="/folder_with_the_produced_windows", type=Path)
     ns, _ = p.parse_known_args()
     return ns.data_dir.resolve()
 
@@ -73,7 +73,6 @@ def _plot_maps_informative(
     """
     proj = ccrs.PlateCarree()
     fig, ax = plt.subplots(1, 2, figsize=(12, 4), subplot_kw=dict(projection=proj))
-    # Draw panels and keep last mesh for colourbar
     mesh = None
     for i, (a, dat, lbl) in enumerate(zip(ax, (arr_pred.squeeze(), arr_gt.squeeze()), ("Prediction", "Ground Truth"))):
 
@@ -103,7 +102,6 @@ def _plot_maps_informative(
         borderpad=0,
     )
     fig.colorbar(mesh, cax=cax, label="Distribution density")
-    # Super‑title
     fig.suptitle(f"Variable Group: {var_group} | Variable: {var_name} — Timestamp: {timestamp}", fontsize=12)
     fig.tight_layout(rect=[0, 0.03, 1, 0.95])
     return fig
@@ -131,7 +129,7 @@ def _compute_metrics(pred: torch.Tensor, gt: torch.Tensor) -> Dict[str, float]:
 
 st.set_page_config(page_title="Prediction evaluation viewer", layout="wide")
 
-st.sidebar.title("Prediction viewer - extended v3")
+st.sidebar.title("Prediction viewer - extended v4")
 files = sorted(DATA_DIR.glob("window_*.pt"))
 if not files:
     st.sidebar.error("No window_*.pt files found")
@@ -202,7 +200,7 @@ with tab_spatial_inf:
             assert pl_sel is not None
             for pl in pl_sel:
                 ci = meta["pressure_levels"].index(pl)
-                fig = _plot_maps_informative(ten_pred[0, ci], ten_gt[0, ci], lats, lons, slot, f"{v}_{pl} hPa", timestamp)
+                fig = _plot_maps_informative(ten_pred[0, ci], ten_gt[0, ci], lats, lons, slot, f"{v}_{pl} hPa", timestamp)
                 st.pyplot(fig)
                 buf = io.BytesIO()
                 fig.savefig(buf, dpi=300, format="png", bbox_inches="tight")
@@ -238,15 +236,15 @@ with tab_spatial_zoom:
     for v in var_sel:
         ten_pred, ten_gt = pred[slot][v], gt[slot][v][0]
 
-        def _crop(tensor):  # helper slices H×W last dims
+        def _crop(tensor):
             return tensor[..., lat_mask, :][..., lon_mask]
 
-        if ten_pred.ndim == 3:                                   # surface var
+        if ten_pred.ndim == 3: # surface var
             fig = _plot_maps_informative(
                 _crop(ten_pred[0]), _crop(ten_gt[0]),
                 lats_sub, lons_sub, slot, v, timestamp)
             st.pyplot(fig)
-        else:                                                    # pressure var
+        else:  # pressure var
             assert pl_sel is not None
             for pl in pl_sel:
                 ci = meta["pressure_levels"].index(pl)
@@ -284,7 +282,6 @@ with tab_taylor:
     if TAYLOR_BACKEND is None:
         st.warning("Install either easy_mpl (preferred) or skillmetrics to enable this plot.")
     elif TAYLOR_BACKEND == "easy_mpl":
-        # Build observation array (first window) and simulations dict
         w0 = torch.load(files[0], map_location="cpu")
         obs = w0["gt"][slot][var_sel[0]][0]
         if obs.ndim == 4:
@@ -379,9 +376,9 @@ with tab_species:
             df = pd.DataFrame(recs).set_index("timestamp").astype(float).sort_index()
             df[["GT_ma", "PRED_ma"]] = df[["GT", "PRED"]].expanding().mean()
             fig_ts = plt.figure(figsize=(8, 3))
-            plt.plot(df.index, df["GT_ma"], lw=2, label="GT")
-            plt.plot(df.index, df["PRED_ma"], lw=2, label="PRED")
-            plt.title(f"Cumulative mean — species {species_id}")
+            plt.plot(df.index, df["GT_ma"], lw=2, label="Ground truth")
+            plt.plot(df.index, df["PRED_ma"], lw=2, label="Prediction")
+            plt.title(f"Cumulative mean")
             plt.ylabel("Distribution mean")
             plt.grid(True)
             plt.legend()

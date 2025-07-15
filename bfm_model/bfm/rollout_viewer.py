@@ -13,7 +13,7 @@ from math import atan2, cos, radians, sin, sqrt
 from pathlib import Path
 from types import SimpleNamespace
 from typing import DefaultDict, Dict, List
-
+import pandas as pd
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 import cartopy.io.shapereader as shpreader
@@ -29,7 +29,6 @@ from hydra.core.global_hydra import GlobalHydra
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from scipy.spatial import ConvexHull
 import scipy.ndimage as ndi
-
 from bfm_model.bfm.dataloader_monthly import LargeClimateDataset
 
 GlobalHydra.instance().clear()
@@ -41,12 +40,13 @@ cfg = hydra.compose(config_name="configs/train_config.yaml", overrides=["+data.s
 
 scaling = SimpleNamespace(
     enabled=True,
-    stats_path="/Users/azd/Desktop/git_projects/bfm/bfm-model/batch_statistics/monthly_batches_stats_splitted_channels.json",
+    stats_path="/bfm/bfm-model/batch_statistics/monthly_batches_stats_splitted_channels.json",
     mode="normalize",
 )
 print(scaling.stats_path)
-data_dir = "/Users/azd/Desktop/git_projects/bfm/bfm-model/rollout_monthly"
 
+# TODO ADD: Manual input
+data_dir = "/Users/azd/Desktop/git_projects/bfm/bfm-model/rollout_monthly"
 
 def crop_variables(variables, new_H, new_W, **kwargs):
     """Fallback: crop tensors or dicts to (new_H,new_W)."""
@@ -60,13 +60,8 @@ test_dataset = LargeClimateDataset(data_dir=data_dir, scaling_settings=scaling)
 
 def _parse_args():
     p = argparse.ArgumentParser(add_help=False)
-    p.add_argument("--gt_dir", type=Path, default="/Users/azd/Desktop/git_projects/bfm/bfm-model/rollout_monthly")
-    # p.add_argument(
-    #     "--rollout_dir", type=Path, default="/Users/azd/Desktop/git_projects/bfm/bfm-model/rollout_batches_test-5-0044loss"
-    # )
-    p.add_argument(
-        "--rollout_dir", type=Path, default="/Users/azd/Desktop/git_projects/bfm/bfm-model/bfm_batches_30-6-2025-0177loss"
-    )
+    # OrIGINAL
+    p.add_argument("--gt_dir", type=Path, default="/folder_with_the_produced_rollouts")
     p.add_argument("--crop", nargs=2, type=int, default=[160, 280], metavar=("H", "W"))
     return p.parse_known_args()[0]
 
@@ -75,7 +70,6 @@ ARGS = _parse_args()
 GT_DIR, RO_DIR = ARGS.gt_dir.resolve(), ARGS.rollout_dir.resolve()
 NEW_H, NEW_W = ARGS.crop
 
-# -----------------------------------------------------------------------------
 # File matching
 # -----------------------------------------------------------------------------
 DATE_RE = re.compile(r"(\d{4}-\d{2}-\d{2})")
@@ -97,17 +91,13 @@ if not PAIRS:
     st.error("No matching files.")
     st.stop()
 
-# ----------------------------------------------------------------------------
 # Sidebar global settings
 # ----------------------------------------------------------------------------
 st.sidebar.title("Batch comparison - timeline mode")
 metric_choice = st.sidebar.radio("Error metric", ["RMSE", "MAE"], index=0)
 
-# ----------------------------------------------------------------------------
 # Helpers
 # ----------------------------------------------------------------------------
-
-
 @st.cache_data(show_spinner=False)
 def build_land_mask(lon_grid: np.ndarray, lat_grid: np.ndarray) -> np.ndarray:
     """
@@ -163,7 +153,6 @@ def _spatial_mean_error(pred: torch.Tensor, obs: torch.Tensor) -> torch.Tensor:
     err = torch.abs(pred - obs) if metric_choice == "MAE" else (pred - obs) ** 2
     if metric_choice == "RMSE":
         err = torch.sqrt(err)
-    # spatial mean first
     err = err.mean(dim=(-2, -1))
     if err.ndim == 3:
         err = err.mean(dim=(0, 2))
@@ -200,7 +189,6 @@ def monthly_acc(pred: torch.Tensor,
         acc.append(float(num / (den + 1e-12)))
     return np.asarray(acc)
 
-# ----------------------------------------------------------------------------
 # Load and process all matched file pairs
 # ----------------------------------------------------------------------------
 var_groups: Dict[str, List[str]] = {}
@@ -236,9 +224,7 @@ for idx, (gt_path, ro_path) in enumerate(PAIRS):
 
     PRED = _intify_species_keys(test_dataset.scale_batch(PRED_dict, direction="original"))
     if not var_groups:
-        var_groups = {
-            slot: sorted(vdict.keys()) for slot, vdict in GT.items() if slot.endswith("surface_variables")
-        }  # TODO Change this to view the groups
+        var_groups = {slot: sorted(vdict.keys()) for slot, vdict in GT.items() if slot.endswith("species_variables")} #TODO Change the variabler group here!!!
     test_var = list(var_groups[next(iter(var_groups))])[0]
     for slot, vars_ in var_groups.items():
         for v in vars_:
@@ -269,8 +255,7 @@ for idx, (gt_path, ro_path) in enumerate(PAIRS):
 
     if "species_variables" in GT:
         for sp, gt_ten in GT["species_variables"].items():
-            # if sp not in PRED["species_variables"]:
-            #     continue            # rollout lacks this species
+
             pr_ten = PRED["species_variables"][sp]
             pr_ten, gt_ten = _align(pr_ten, gt_ten)
 
@@ -284,8 +269,6 @@ for idx, (gt_path, ro_path) in enumerate(PAIRS):
             print(f"GT SHAPE AND PRED SHAPE{gt_ten.shape} | {pr_ten.shape}")
             spec_ts_gt[sp].append(gt_ten.float().mean(dim=(-2, -1)).squeeze(0).cpu().numpy())
             spec_ts_pr[sp].append(pr_ten.float().mean(dim=(-2, -1)).squeeze(0).cpu().numpy())
-            # spec_ts_gt[sp].append(gt_ten.float().sum().squeeze(0).cpu().numpy())
-            # spec_ts_pr[sp].append(pr_ten.float().sum().squeeze(0).cpu().numpy())
             print(f"Occurances GT {gt_ten.shape} | Occurances Pred {pr_ten.shape}")
             print(
                 f"Occurance value: {gt_ten.float().mean(dim=(-2, -1)).squeeze(0).cpu().numpy()} | Prediction Value: {pr_ten.float().mean(dim=(-2, -1)).squeeze(0).cpu().numpy()}"
@@ -305,7 +288,6 @@ print(PAIRS)
 # Total number of timesteps across all files (for Hovmöller)
 T_total = next(iter(err_full.values())).shape[0] if err_full else 0
 
-# ---------------- File‑wise aggregate (one value per pair) -------------------
 err_pair: DefaultDict[str, List[float]] = defaultdict(list)
 for idx, (gt_path, _) in enumerate(PAIRS):
     for slot, vars_ in var_groups.items():
@@ -313,7 +295,6 @@ for idx, (gt_path, _) in enumerate(PAIRS):
             pair_err = float(series_err[v][idx][-1])
             err_pair[v].append(pair_err)
 
-# -----------------------------------------------------------------------------
 # UI Tabs
 # -----------------------------------------------------------------------------
 TAB_SCORE, TAB_OCC, TAB_HOV, TAB_SPEC, TAB_FACET, TAB_TRAJ, TAB_COMM = st.tabs(
@@ -329,14 +310,9 @@ TAB_SCORE, TAB_OCC, TAB_HOV, TAB_SPEC, TAB_FACET, TAB_TRAJ, TAB_COMM = st.tabs(
 )
 
 
-# ─────────────────────────── NEW TAB : Community Metrics ────────────────────
-# TAB_COMM = st.tabs(["Community Metrics"])[0]
-
 with TAB_COMM:
     st.markdown("### Assemblage-level accuracy")
 
-    # 1️⃣ --- build incidence tensors ---------------------------------------
-    # Stack all species across all months and batches: shape (S, T, H, W)
     gt_stack, pr_stack = [], []
     for gt_path, pr_path in PAIRS:
         GTb = _crop_batch(torch.load(gt_path, map_location="cpu"))
@@ -346,11 +322,10 @@ with TAB_COMM:
         for sp in sorted(GTb["species_variables"]):
             gt_stack.append(GTb["species_variables"][sp].squeeze())  # (T,H,W)
             pr_stack.append(PRb["species_variables"][sp].squeeze())
-    gt_arr = torch.stack(gt_stack) > 0       # (S,T,H,W)  binary
+    gt_arr = torch.stack(gt_stack) > 0 # (S,T,H,W)  binary
     pr_arr = torch.stack(pr_stack) > 0
 
-    # collapse time with logical OR  -> incidence per species per cell
-    inc_gt = gt_arr.any(dim=1)               # (S,H,W)
+    inc_gt = gt_arr.any(dim=1) # (S,H,W)
     inc_pr = pr_arr.any(dim=1)
 
     S, H, W = inc_gt.shape
@@ -382,17 +357,30 @@ with TAB_COMM:
              transform=ax1.transAxes, fontsize=8, color="darkred")
     st.pyplot(fig1)
 
-    # --- Sørensen similarity map ----------------------------------------
+    # --- Sørensen similarity map
     sor_map = sor.reshape(H, W)
-    fig2, ax2 = plt.subplots(figsize=(6,3), subplot_kw=dict(projection=ccrs.PlateCarree()))
-    mesh = ax2.pcolormesh(lons, lats, sor_map, vmin=0, vmax=1, cmap="tab20c",
-                          transform=ccrs.PlateCarree())
-    ax2.add_feature(cfeature.COASTLINE, lw=.3)
+
+    proj = ccrs.PlateCarree()
+    fig2, ax2 = plt.subplots(figsize=(8, 3), subplot_kw=dict(projection=proj))
+
+    mesh = ax2.pcolormesh(lons, lats, sor_map,
+                        vmin=0, vmax=1,
+                        cmap="RdYlBu_r",
+                        transform=proj)
+
+    # coastlines & grid ---------------------------------------------------------
+    ax2.add_feature(cfeature.COASTLINE, lw=0.4)
+    gl = ax2.gridlines(draw_labels=True,
+                    linewidth=0.5, color="gray", linestyle="--")
+    gl.top_labels = gl.right_labels = False
+    ax2.set_xlabel("Longitude (°E)")
+    ax2.set_ylabel("Latitude (°N)")
+
+    # colour-bar ---------------------------------------------------------------
     cbar = plt.colorbar(mesh, ax=ax2, orientation="vertical", pad=0.02)
     cbar.set_label("Sørensen similarity")
-    # ax2.set_title(f"Sørensen map (mean = {mean_sor:.2f})")
+    ax2.set_title(f"Sørensen map")
     st.pyplot(fig2)
-
 
 # ==================== SCORECARD ============================================
 with TAB_SCORE:
@@ -418,7 +406,7 @@ with TAB_SCORE:
     ax.set_xticklabels(date_labels, rotation=45, ha="right")
     ax.set_yticks(range(len(vars_sel)))
     ax.set_yticklabels(vars_sel)
-    ax.set_xlabel("Batch start date (≈ month)")
+    ax.set_xlabel("Batch start date")
     ax.set_title(f"{metric_choice} - domain mean per batch")
     cax = make_axes_locatable(ax).append_axes("right", size="3%", pad=0.15)
     plt.colorbar(im, cax=cax)
@@ -450,14 +438,8 @@ with TAB_HOV:
         hov_var = st.selectbox("Variable", list(hov_full.keys()))
         hov = torch.sqrt(hov_full[hov_var]) if metric_choice == "RMSE" else hov_full[hov_var]
         hov_np = hov.cpu().numpy()  # shape (T_total , W)
-
-        # --- x-axis coordinate labels ---------------------------------------
-        # lon_ticks  = np.arange(0, hov_np.shape[1], 10)         # every 40 columns
-        # lontitudes = np.arange(-25, 45, 0.25)
-        # lon_labels = (lontitudes[lon_ticks] % 360).astype(int)       # wrap & intcast
-
         lon_deg = (lons % 360).round(1)  # 0–360°, 0.25° spacing
-        step = 20  # every 5° (= 0.25x20)
+        step = 20  # every 5degs (= 0.25x20)
         lon_ticks = np.arange(0, len(lon_deg), step)
         lon_labels = lon_deg[lon_ticks]
 
@@ -467,34 +449,13 @@ with TAB_HOV:
         ax3.set_xlabel("Longitude (°E)")
         ax3.set_ylabel("Lead-time index (months)")
         ax3.set_title(f"Hovmöller error - {hov_var}")
-
         ax3.set_xticks(lon_ticks)
         ax3.set_xticklabels(lon_labels)
 
         cax3 = make_axes_locatable(ax3).append_axes("right", size="3%", pad=0.15)
         plt.colorbar(mesh, cax=cax3, label=metric_choice)
         st.pyplot(fig3)
-# with TAB_SPEC:
 
-#     if not spec_ts_full_gt:
-#         st.info("No species time-series data.")
-#     else:
-#         sp_sel = st.selectbox("Species ID", list(spec_ts_full_gt.keys()), key="spec_ts")
-#         ts_gt  = spec_ts_full_gt[sp_sel]
-#         ts_pr  = spec_ts_full_pr[sp_sel]
-
-#         fig_spec, ax_spec = plt.subplots(figsize=(9, 3))
-#         ax_spec.plot(np.arange(1, len(ts_gt) + 1), ts_gt, label="GT", lw=2)
-#         ax_spec.plot(np.arange(1, len(ts_pr) + 1), ts_pr, label="Rollout", lw=2)
-#         ax_spec.set_xlabel("Timestep")
-#         ax_spec.set_ylabel("Domain-mean concentration")
-#         ax_spec.set_title(f"Species distribution — {sp_sel}")
-#         ax_spec.grid(True); ax_spec.legend()
-#         st.pyplot(fig_spec)
-
-# ─────────────────────────────────────────────────────────────────────────────
-# SPECIES DISTRIBUTION TIME-SERIES TAB
-# ─────────────────────────────────────────────────────────────────────────────
 # ─────────────────────────── SPECIES TIME-SERIES TAB ──────────────────────
 with TAB_SPEC:
     if not spec_ts_full_gt:
@@ -507,17 +468,14 @@ with TAB_SPEC:
     ts_gt = np.asarray(spec_ts_full_gt[sp_sel], dtype=float)
     ts_pr = np.asarray(spec_ts_full_pr[sp_sel], dtype=float)
 
-    # --- align length (drop extra preds or pad GT with NaN) ----------------
     T = min(len(ts_gt), len(ts_pr))
     ts_gt, ts_pr = ts_gt[:T], ts_pr[:T]
     x = np.arange(1, T + 1)
 
-    # --- sidebar scaling controls -----------------------------------------
     col1, col2 = st.columns(2)
     use_log  = col1.checkbox("Log scale", value=False)
     use_dual = col2.checkbox("Dual axis", value=False)
 
-    # --- epsilon to protect log(0) -----------------------------------------
     eps = 0.05 * np.nanmin(ts_gt[ts_gt > 0]) if use_log else 0.0
 
     fig, ax = plt.subplots(figsize=(9, 3))
@@ -553,54 +511,6 @@ with TAB_SPEC:
     ax.set_title(f"Domain-mean distribution — species {sp_sel}")
     ax.grid(True, which="both", ls=":")
     st.pyplot(fig)
-
-#  with TAB_SPEC:
-#     if not spec_ts_full_gt:
-#         st.info("No species time-series data.")
-#     else:
-#         sp_sel = st.selectbox("Species ID", list(spec_ts_full_gt.keys()), key="spec_ts")
-#         ts_gt = spec_ts_full_gt[sp_sel]
-#         ts_pr = spec_ts_full_pr[sp_sel]
-#         x = np.arange(1, ts_gt.size + 1)
-
-#         # decide default display mode
-#         amp_ratio = (ts_pr.max() + 1e-12) / (ts_gt.max() + 1e-12)
-#         use_dual = amp_ratio > 100  # rollout dominates -> dual axis
-#         use_log = st.checkbox("Log-scale (shared axis)", value=False)
-
-#         fig, ax = plt.subplots(figsize=(9, 3))
-
-#         # ---------- shared log axis -----------------------------------------
-#         if use_log:
-#             # prevent log(0) -> add e that is 10 % of the smallest positive value
-#             pos_vals = np.r_[ts_gt[ts_gt > 0], ts_pr[ts_pr > 0]]
-#             eps = 0.1 * pos_vals.min() if pos_vals.size else 1e-12
-#             ax.set_yscale("log")
-#             ax.plot(x, ts_gt + eps, label="GT", lw=2)
-#             ax.plot(x, ts_pr + eps, label="Rollout", lw=2, ls="--")
-#             ax.set_ylabel("Concentration (log scale)")
-#             ax.legend()
-
-#         # ---------- dual linear axes ----------------------------------------
-#         else:
-#             ax.plot(x, ts_gt, color="C0", lw=2, label="GT")
-#             ax.set_ylabel("GT conc.", color="C0")
-#             ax.tick_params(axis="y", colors="C0")
-
-#             ax2 = ax.twinx()
-#             ax2.plot(x, ts_pr, color="C3", lw=2, ls="--", label="Rollout")
-#             ax2.set_ylabel("Rollout conc.", color="C3")
-#             ax2.tick_params(axis="y", colors="C3")
-
-#             # combine legends
-#             lines = ax.get_lines() + ax2.get_lines()
-#             labels = [ln.get_label() for ln in lines]
-#             ax.legend(lines, labels, loc="upper right")
-
-#         ax.set_xlabel("Timestep")
-#         ax.set_title(f"Species distribution — {sp_sel}")
-#         ax.grid(True, which="both", ls=":")
-#         st.pyplot(fig)
 
 
 with TAB_FACET:
@@ -642,39 +552,15 @@ with TAB_FACET:
         ax.add_feature(cfeature.COASTLINE, lw=0.4)
         ax.set_title(f"t{t}", fontsize=8)
         gl = ax.gridlines(draw_labels=False, linewidth=0.3, color="gray", linestyle="--")
-    # hide unused sub-axes
     for t in range(Tm, nrows * ncols):
         axes.ravel()[t].axis("off")
 
-    # shared colour-bar
     cax = fig.add_axes([0.92, 0.15, 0.02, 0.7])
     fig.colorbar(mesh, cax=cax, label="Distribution density")
     fig.suptitle(f"{source}: species {sp_id} — batch {win}", y=0.97)
     st.pyplot(fig)
 
     overlay_mode = st.checkbox("Overlay all timesteps on one map", value=True)
-
-    # if overlay_mode:
-    #     # make one map only
-    #     proj = ccrs.PlateCarree()
-    #     fig_ov, ax_ov = plt.subplots(figsize=(6, 4), subplot_kw=dict(projection=proj))
-
-    #     # colour list long enough for 12+ timesteps
-    #     colors = plt.cm.get_cmap("tab10", tensor.shape[0])
-
-    #     for t in range(tensor.shape[0]):
-    #         cyc, lon_cyc = add_cyclic_point(tensor[t], coord=lons)
-    #         ax_ov.contourf(lon_cyc, lats, cyc > 0,           # simple presence mask
-    #                     levels=[0.5, 1],
-    #                     colors=[colors(t)],
-    #                     alpha=0.4,
-    #                     transform=proj)
-
-    #     ax_ov.add_feature(cfeature.COASTLINE, lw=.5)
-    #     ax_ov.set_title(f"{source}: species {sp_id} — batch {win}\n(colours = timesteps)")
-    #     ax_ov.set_xlabel("Longitude (°E)")
-    #     ax_ov.set_ylabel("Latitude (°N)")
-    #     st.pyplot(fig_ov)
 
 
 with TAB_TRAJ:
@@ -693,7 +579,6 @@ with TAB_TRAJ:
                             help="Keep only pixels above this abundance quantile")
     clean  = st.sidebar.checkbox("Morphological clean (3x3)", value=True,
                                 help="Remove isolated pixels")
-    # ---------- concatenate all batches for this species --------------------
     full_ts = []
     for gt_p, pr_p in PAIRS:
         batch = torch.load(gt_p if source == "Ground Truth" else pr_p, map_location="cpu")
@@ -702,7 +587,7 @@ with TAB_TRAJ:
 
         batch = _crop_batch(batch)
         full_ts.append(batch["species_variables"][sp_id].squeeze())  # (T,H,W)
-    full_ts = torch.cat(full_ts, dim=0)  # (T_total,H,W)
+    full_ts = torch.cat(full_ts, dim=0)# (T_total,H,W)
 
     proj = ccrs.PlateCarree()
 
@@ -716,27 +601,18 @@ with TAB_TRAJ:
 
     slice_t = full_ts[t].cpu().numpy()
 
-    if source == "Rollout":                       # <-- apply filters only here
-        # 1 · quantile threshold
-        q_val = np.quantile(slice_t, thresh)      # thresh from sidebar (e.g. 0.70)
+    if source == "Rollout":
+        q_val = np.quantile(slice_t, thresh)
         mask  = slice_t > q_val
-        # 2 · morphological clean (optional)
         if clean:
             mask = ndi.binary_opening(mask, structure=np.ones((3, 3)))
-    else:                                         # <-- ground-truth stays raw
+    else:
         mask = (full_ts > 0).float()    
 
-    # 3. skip empty frames
-    # if not mask.any():  
-    #     continue
-
-    # ---------- overlay monthly masks --------------------------------------
     for t in range(full_ts.shape[0]):
         cyc, lon_c = add_cyclic_point((full_ts[t] > 0).float(), coord=lons)
-        # cyc, lon_c = add_cyclic_point(mask, coord=lons)
         ax.contourf(lon_c, lats, cyc, levels=[0.5, 1], colors=[cmap(norm(t))], alpha=0.4, transform=proj)
 
-    # ---------- build presence / abundance tensor -------------------------------
     lon_grid, lat_grid = np.meshgrid(lons, lats)
     base = full_ts.float() if weight_by_abund else (full_ts > 0).float()
 
@@ -747,55 +623,12 @@ with TAB_TRAJ:
         pres = base  # no masking
 
     w = pres.sum(dim=(-2, -1))  # (T,)
-
-    # V4
-    # -- flat indices of occupied land cells for each month ------------------
-    # lon_flat = torch.tensor(lon_grid)
-    # lat_flat = torch.tensor(lat_grid)
-
-    # lon_cent, lat_cent = [], []
-    # for t in range(pres.shape[0]):
-    #     m = pres[t] > 0
-    #     if m.any():
-    #         lon_cent.append(torch.median(lon_flat[m]).item())
-    #         lat_cent.append(torch.median(lat_flat[m]).item())
-    #     else:
-    #         # skip month t if no land cells are occupied
-    #         continue
-
-    # lon_cent = np.array(lon_cent)
-    # lat_cent = np.array(lat_cent)
-
-    # V3
-    # where w==0 -> centroid = NaN so it is excluded downstream
     lon_cent = torch.where(w > 0, (pres * torch.tensor(lon_grid)).sum((-2, -1)) / w, torch.nan)
     lat_cent = torch.where(w > 0, (pres * torch.tensor(lat_grid)).sum((-2, -1)) / w, torch.nan)
 
-    # drop NaN months for plotting and analytics -------------------------------
     valid = ~torch.isnan(lon_cent)
     lon_cent = lon_cent[valid].cpu().numpy()
     lat_cent = lat_cent[valid].cpu().numpy()
-    # V2
-    # weight & centroid ---------------------------------------------------------
-    # weight   = pres.sum(dim=(-2, -1))                       # shape (T,)
-    # valid    = weight > 0                                   # boolean vector
-
-    # lon_sum  = (pres * torch.tensor(lon_grid)).sum(dim=(-2, -1))
-    # lat_sum  = (pres * torch.tensor(lat_grid)).sum(dim=(-2, -1))
-
-    # # only compute where weight>0
-    # lon_cent_np = torch.where(valid, lon_sum / weight, torch.nan)
-    # lat_cent_np = torch.where(valid, lat_sum / weight, torch.nan)
-
-    # # drop invalid (all-sea) months for plotting & analytics
-    # lon_cent = lon_cent_np[valid].cpu().numpy()
-    # lat_cent = lat_cent_np[valid].cpu().numpy()
-    # T_valid = len(lon_cent_np)
-    # V1
-    # # ---------- centroid coordinates --------------------------------------------
-    # weight   = pres.sum(dim=(-2, -1)) + 1e-9
-    # lon_cent = (pres * torch.tensor(lon_grid)).sum(dim=(-2, -1)) / weight
-    # lat_cent = (pres * torch.tensor(lat_grid)).sum(dim=(-2, -1)) / weight
 
     if show_mask:
         mask_alpha = 0.25
@@ -833,7 +666,7 @@ with TAB_TRAJ:
     mean_speed = np.mean(dists)  # km per month
     st.markdown(f"**Mean centroid drift:** {mean_speed:.1f} km mo⁻¹")
 
-    # ---------- map cosmetics ----------------------------------------------
+    # map cosmetics
     ax.add_feature(cfeature.COASTLINE, lw=0.4)
     gl = ax.gridlines(draw_labels=True, linewidth=0.5, color="gray", linestyle="--")
     gl.top_labels = gl.right_labels = False
@@ -856,7 +689,6 @@ with TAB_TRAJ:
     )
     st.pyplot(fig)
 
-    # ---------- distances & areas --------------------------------------------------
     dists = np.array([_haversine(lon_cent[i], lat_cent[i], lon_cent[i + 1], lat_cent[i + 1]) for i in range(len(lon_cent) - 1)])
 
     lon_grid, lat_grid = np.meshgrid(lons, lats)
@@ -865,36 +697,31 @@ with TAB_TRAJ:
         yy, xx = np.where(full_ts[t] > 0)
         if len(xx) > 2:
             pts = np.column_stack((lon_grid[yy, xx], lat_grid[yy, xx]))
-            hull = ConvexHull(pts).volume  # deg²
+            hull = ConvexHull(pts).volume  # deg^2
             lat_bar = np.deg2rad(pts[:, 1].mean())
-            areas.append(hull * (111.32 * cos(lat_bar)) * 110.57)  # km²
+            areas.append(hull * (111.32 * cos(lat_bar)) * 110.57)  # km^2
         else:
             areas.append(0.0)
     areas = np.asarray(areas)
     cumdist = np.concatenate(([0], np.cumsum(dists)))  # km
 
-    # ---------- build figure & axes ------------------------------------------------
     fig = plt.figure(figsize=(6, 8))
     gs = fig.add_gridspec(4, 1, height_ratios=[3, 1, 1, 1], hspace=0.35)
 
-    # ax_map  = fig.add_subplot(gs[0, 0], projection=proj)
     ax_dist = fig.add_subplot(gs[1, 0])
     ax_area = fig.add_subplot(gs[2, 0])
     ax_cum = fig.add_subplot(gs[3, 0])
 
-    # ---------- displacement per month --------------------------------------------
     ax_dist.step(np.arange(1, len(dists) + 1), dists, where="mid", color="k")
     ax_dist.axhline(dists.mean(), ls="--", lw=0.8, color="grey")
     ax_dist.set_ylabel("km month$^{-1}$")
     ax_dist.set_title("Centroid displacement")
 
-    # ---------- hull-area timeline -------------------------------------------------
     ax_area.fill_between(np.arange(1, len(areas) + 1), areas, step="mid", alpha=0.4, color="C2")
     ax_area.axhline(areas.mean(), ls="--", lw=0.8, color="grey")
     ax_area.set_ylabel("Hull km$^{2}$")
     ax_area.set_title("Occupied-area timeline")
 
-    # ---------- cumulative distance -----------------------------------------------
     ax_cum.plot(np.arange(len(cumdist)), cumdist, color="purple")
     ax_cum.set_xlabel("Timestep")
     ax_cum.set_ylabel("km")
@@ -902,7 +729,6 @@ with TAB_TRAJ:
 
     st.pyplot(fig)
 
-# ─────────────────────────── TAB : Monthly ACC ─────────────────────────────
 TAB_ACC = st.tabs(["Monthly ACC"])[0]
 
 def _ensure_time_axis(t: torch.Tensor) -> torch.Tensor:
@@ -910,16 +736,13 @@ def _ensure_time_axis(t: torch.Tensor) -> torch.Tensor:
     Ensure tensor has shape (T, H, W).  If shape is (H, W) add T=1 dim.
     If shape is (L, H, W) treat L as time.  If shape is (T, L, H, W) leave unchanged.
     """
-    if t.ndim == 2:          # (H, W)
+    if t.ndim == 2:
         return t.unsqueeze(0)
-    if t.ndim == 3:          # could be (T,H,W) OR (L,H,W)
-        # we consider any size ≤ 50 a level count, else it's time
+    if t.ndim == 3:
         return t.unsqueeze(0) if t.shape[0] <= 50 else t
-    return t                 # already (T,L,H,W) or (T,H,W)
-
+    return t
 
 with TAB_ACC:
-    # pick any continuous variable (skip species slots) ---------------------
     phys_vars = []
     for slot, vlist in var_groups.items():
         if not slot.startswith("species"):
@@ -931,11 +754,9 @@ with TAB_ACC:
     sel = st.selectbox("Variable", [f"{s} / {v}" for s, v in phys_vars])
     slot, v_name = sel.split(" / ")
 
-    # wrap in try–except so tab never crashes -------------------------------
     try:
-        # ─── build concatenated series & month index ──────────────────────
         gt_seq, pr_seq, month_idx = [], [], []
-        pressure_levels = None            # will fill if 4-D field
+        pressure_levels = None # will fill if 4-D field
 
         for gt_path, pr_path in PAIRS:
             GTb = _crop_batch(torch.load(gt_path, map_location="cpu"))
@@ -943,19 +764,15 @@ with TAB_ACC:
                               torch.load(pr_path, map_location="cpu")[0]._asdict(),
                               direction="original"))
 
-            # fetch pressure levels on first loop (if present)
             if pressure_levels is None and "pressure_levels" in GTb["batch_metadata"]:
                 pressure_levels = GTb["batch_metadata"]["pressure_levels"]
 
-            ten_gt = _ensure_time_axis(GTb[slot][v_name])        # shapes: (T,H,W) or (T,L,H,W)
+            ten_gt = _ensure_time_axis(GTb[slot][v_name])# shapes: (T,H,W) or (T,L,H,W)
             ten_pr = _ensure_time_axis(PRb[slot][v_name])
 
-            # calendar month for each frame
-            import pandas as pd
             months = [pd.Timestamp(ts).month - 1
                       for ts in GTb["batch_metadata"]["timestamp"]]
 
-            # handle pressure-level variable
             if ten_gt.ndim == 4:
                 levs = pressure_levels
                 lev = st.selectbox("Pressure level (hPa)", levs, key=f"pl_{v_name}")
@@ -966,22 +783,19 @@ with TAB_ACC:
             gt_seq.append(ten_gt);  pr_seq.append(ten_pr)
             month_idx.extend(months)
 
-        obs_full  = torch.cat(gt_seq,  dim=0)       # (T,H,W)
+        obs_full  = torch.cat(gt_seq,  dim=0)
         pred_full = torch.cat(pr_seq,  dim=0)
         months_arr = np.asarray(month_idx, dtype=int)
 
-        # ─── build 12-month climatology from OBS --------------------------
         clim = torch.zeros(12, *obs_full.shape[-2:])
         for m in range(12):
             clim[m] = obs_full[months_arr == m].mean(dim=0)
 
-        # ─── compute ACC ---------------------------------------------------
         acc = monthly_acc(pred_full, obs_full, clim, months_arr)
         mean_acc = np.nanmean(acc)
 
         st.markdown(f"**Mean ACC:** {mean_acc:.2f}")
 
-        # ─── bar-plot ------------------------------------------------------
         fig, ax = plt.subplots(figsize=(8, 3))
         ax.bar(np.arange(1, len(acc)+1), acc, color="C0")
         ax.axhline(0.60, ls="--", color="red", lw=1,
