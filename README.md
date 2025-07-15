@@ -1,8 +1,11 @@
-# Biodiversity Foundation Model (BFM)
+# BioAnalyst: A Foundation Model for Biodiversity
 
-First steps towards developing an Artificial Intelligence Foundation Model for Biodiversity research and conservation.
+BioAnalyst Foundation Model (BFM) for biodiversity dynamics forecasting.
 
-This repository contains a self-contained implementation of the underlying architecture of the BFM.
+This repository contains the implementation of the architecture, training, evaluation and finetuning workflows of the BFM.
+
+[Link to our paper.](https://arxiv.org/pdf/2507.09080)
+
 
 ## Installation
 
@@ -122,6 +125,7 @@ The most straight-forward is the `example_prediction.ipynb` where you can run on
 
 > [!NOTE]
 > It requires the production of at least one Batch and supply it via the dataloder!
+> The model weights available are from the Small model. We will update the scripts and the results with the Medium model weights when they become available.
 
 ## Prepare and upload model weights
 First you need to make the weights **safe** by using `safetensors`. 
@@ -129,6 +133,23 @@ First you need to make the weights **safe** by using `safetensors`.
 Use the notebook `documentation/prepare_checkpoint.ipynb` to do so.
 
 Then just follow the Model card tab and upload the weights either with CLI or with a short python script.
+
+
+## Citation
+
+If you like our work, please consider citing us as follows:
+
+```
+@misc{trantas2025bioanalystfoundationmodelbiodiversity,
+      title={BioAnalyst: A Foundation Model for Biodiversity}, 
+      author={Athanasios Trantas and Martino Mensio and Stylianos Stasinos and Sebastian Gribincea and Taimur Khan and Damian Podareanu and Aliene van der Veen},
+      year={2025},
+      eprint={2507.09080},
+      archivePrefix={arXiv},
+      primaryClass={cs.AI},
+      url={https://arxiv.org/abs/2507.09080}, 
+}
+```
 
 ## Resources
 
@@ -138,12 +159,12 @@ Then just follow the Model card tab and upload the weights either with CLI or wi
 
 + Interesting addition for CLI args generation: https://github.com/google/python-fire
 
+
+
 ## TODODs
 - [x] Codebase cleanup
 
-- [ ] Hugging Face weights upload, loading and tutorial notebook.
-
-- [ ] Make clear the data structure throughout the whole codebase. Currently we have interchanged dicts & Batch Tuples
+- [x] Hugging Face weights upload, loading and tutorial notebook.
 
 - [x] Finetune routine implementation with LoRA and optinally VeRA DONE
 
@@ -158,3 +179,5 @@ Then just follow the Model card tab and upload the weights either with CLI or wi
 - [x] Safe tensors storage
 
 - [x] Validate distributed training strategy
+
+- [ ] Make clear the data structure throughout the whole codebase. Currently we have interchanged dicts & Batch Tuples
