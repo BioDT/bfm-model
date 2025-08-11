@@ -62,8 +62,9 @@ def main(cfg):
     checkpoint_path = find_checkpoint_to_resume_from(cfg)
     
     # model.load_state_dict(cfg.training.checkpoint_path, strict=True)
-    state = torch.load(checkpoint_path, map_location="cpu")["state_dict"]
-    model.load_state_dict(state)
+    # Load only the weights 
+    # state = torch.load(checkpoint_path, map_location="cpu")["state_dict"]
+    # model.load_state_dict(state)
     # do the actual training
     # This
     # trainer.fit(model, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader, ckpt_path=checkpoint_path)

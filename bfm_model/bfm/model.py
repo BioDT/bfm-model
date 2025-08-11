@@ -193,7 +193,7 @@ class BFM(LightningModule):
             "forest_variables": {"Forest": 1.2},
             "redlist_variables": {"RLI": 1.3},
             "misc_variables": {"avg_slhtf": 1.2, "avg_pevr": 1.0},
-            "species_variables": 15.0,
+            "species_variables": 4.0,
         }
 
         self.lead_time = lead_time

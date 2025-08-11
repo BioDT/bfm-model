@@ -1,15 +1,17 @@
 model:
   T: 2   # Time steps
-  surface_vars: ["t2m", "msl", "slt", "z", "u10", "v10", "lsm"] # Surface variables
+  # surface_vars: ["t2m", "msl", "slt", "z", "u10", "v10", "lsm"] # Surface variables
+  surface_vars: ["t2m", "msl", "u10", "v10", "lsm"]
   edaphic_vars: ["swvl1", "swvl2", "stl1", "stl2"] # Edaphic variables
   atmos_vars: ["z", "t", "u", "v", "q"]  # Atmospheric variables
   climate_vars: ["smlt", "tp", "csfr", "avg_sdswrf", "avg_snswrf", "avg_snlwrf",
                   "avg_tprate", "avg_sdswrfcs", "sd", "t2m", "d2m"] # Climate variables
-  species_vars: ["1340361", "1340503", "1536449", "1898286", "1920506", "2430567",
-                       "2431885", "2433433", "2434779", "2435240", "2435261", "2437394",
-                       "2441454", "2473958", "2491534", "2891770", "3034825", "4408498",
-                        "5218786", "5219073", "5219173", "5219219", "5844449", "8002952",
-                        "8077224", "8894817", "8909809", "9809229"]  # Species variables
+  # species_vars: ["1340361", "1340503", "1536449", "1898286", "1920506", "2430567",
+  #                      "2431885", "2433433", "2434779", "2435240", "2435261", "2437394",
+  #                      "2441454", "2473958", "2491534", "2891770", "3034825", "4408498",
+  #                       "5218786", "5219073", "5219173", "5219219", "5844449", "8002952",
+  #                       "8077224", "8894817", "8909809", "9809229"]  # Species variables
+  species_vars: ["8077224", "1898286", "2435261", "2437394", "9809229"]
   vegetation_vars: ["NDVI"] # Vegetation variables
   land_vars: ["Land"] # Land variables
   agriculture_vars: ["Agriculture", "Arable", "Cropland"] # Agriculture variables
@@ -21,15 +23,15 @@ model:
   num_latent_tokens: 8 #TODO Check consistensy in name and value
   backbone: "swin" # mvit
   patch_size: 4 #2 # Size of spatial patches.
-  embed_dim: 512 #512 # Embedding dimension.
-  num_heads: 16 # Number of attention heads.
+  embed_dim: 128 #512 # Embedding dimension.
+  num_heads: 8 # Number of attention heads.
   head_dim: 64 # Dimension of each attention head.
-  depth: 10 #6 # Number of transformer layers.
-  swin_backbone_size: "large" # Can be "medium" or "large"
+  depth: 6 #6 # Number of transformer layers.
+  swin_backbone_size: "medium" # Can be "medium" or "large"
 
 data:
-  atmos_levels: [1000, 925, 850, 700, 600, 500, 400, 300, 250, 200, 150, 100, 50]
-  species_number: 28 # available species
+  atmos_levels: [1000, 500, 250, 100, 50] #[1000, 925, 850, 700, 600, 500, 400, 300, 250, 200, 150, 100, 50]
+  species_number: 5 #28 # available species
   data_path: /projects/prjs1134/data/projects/biodt/storage/final_dataset_monthly/train
   test_data_path: /projects/prjs1134/data/projects/biodt/storage/final_dataset_monthly/test
   land_mask_path: batch_statistics/europe_Land_2020_grid.pkl
@@ -41,20 +43,20 @@ data:
 
 training:
   seed: 0
-  batch_size: 1
+  batch_size: 13
   workers: 15
   epochs: 500
   accelerator: cuda
   precision: bf16-mixed
   precision_in: "high" # ["medium", "high", "highest"] https://pytorch.org/docs/stable/generated/torch.set_float32_matmul_precision.html#torch.set_float32_matmul_precision
   devices: [0]
-  strategy: fsdp #fsdp #ddp # auto
+  strategy: #fsdp #fsdp #ddp # auto
   num_nodes: 1
   gradient_clip: 1.0
   log_steps: 1
-  lr: 0.00001  #5e-4
+  lr: 0.003  #5e-4
   wd: 0.00003 #5e-6
-  checkpoint_path: /projects/prjs1134/data/projects/biodt/storage/weights/big_model/epoch=53-val_loss=0.00177.ckpt #/home/atrantas/production/bfm-model/outputs/2025-07-11/11-04-38/checkpoints/epoch=29-val_loss=0.00179.ckpt #/home/atrantas/production/bfm-model/outputs/2025-07-11/00-26-33/checkpoints/epoch=06-val_loss=0.00408.ckpt #/projects/prjs1134/data/projects/biodt/storage/runs_storage/bfm_big/09-55-39/checkpoints/epoch=470-val_loss=0.01705.ckpt  #/projects/prjs1134/data/projects/biodt/storage/weights/epoch=268-val_loss=0.00493.ckpt # /projects/prjs1134/data/projects/biodt/storage/runs_storage/10_July_2025_runs/2025-07-09/21-45-02/checkpoints/epoch=654-val_loss=0.01822.ckpt #/projects/prjs1134/data/projects/biodt/storage/weights/big_model/epoch=470-val_loss=0.01705_clean.ckpt #/home/atrantas/production/bfm-model/outputs/2025-07-07/09-55-39/checkpoints/epoch=470-val_loss=0.01705.ckpt #/home/atrantas/production/bfm-model/outputs/2025-07-04/18-09-46/checkpoints/epoch=101-val_loss=0.01934.ckpt #/home/atrantas/production/bfm-model/outputs/2025-07-04/12-57-55/checkpoints/epoch=38-val_loss=0.02872.ckpt #/home/atrantas/bfm-model/outputs/2025-06-03/14-27-12/checkpoints/epoch=340-val_loss=0.00555.ckpt #/home/atrantas/bfm-model/outputs/2025-06-02/10-17-22/checkpoints/epoch=112-val_loss=0.00970.ckpt #/home/atrantas/bfm-model/outputs/2025-05-25/12-39-21/checkpoints/epoch=195-val_loss=0.00404.ckpt #/home/atrantas/bfm-model/outputs/2025-05-24/19-55-32/checkpoints/epoch=158-val_loss=0.00413.ckpt #/home/atrantas/bfm-model/outputs/2025-05-24/15-29-50/checkpoints/epoch=36-val_loss=0.00565.ckpt # Add your checkpoint (.pt) path to continue the pre-training
+  checkpoint_path: #/projects/prjs1134/data/projects/biodt/storage/weights/big_model/epoch=53-val_loss=0.00177.ckpt #/home/atrantas/production/bfm-model/outputs/2025-07-11/11-04-38/checkpoints/epoch=29-val_loss=0.00179.ckpt #/home/atrantas/production/bfm-model/outputs/2025-07-11/00-26-33/checkpoints/epoch=06-val_loss=0.00408.ckpt #/projects/prjs1134/data/projects/biodt/storage/runs_storage/bfm_big/09-55-39/checkpoints/epoch=470-val_loss=0.01705.ckpt  #/projects/prjs1134/data/projects/biodt/storage/weights/epoch=268-val_loss=0.00493.ckpt # /projects/prjs1134/data/projects/biodt/storage/runs_storage/10_July_2025_runs/2025-07-09/21-45-02/checkpoints/epoch=654-val_loss=0.01822.ckpt #/projects/prjs1134/data/projects/biodt/storage/weights/big_model/epoch=470-val_loss=0.01705_clean.ckpt #/home/atrantas/production/bfm-model/outputs/2025-07-07/09-55-39/checkpoints/epoch=470-val_loss=0.01705.ckpt #/home/atrantas/production/bfm-model/outputs/2025-07-04/18-09-46/checkpoints/epoch=101-val_loss=0.01934.ckpt #/home/atrantas/production/bfm-model/outputs/2025-07-04/12-57-55/checkpoints/epoch=38-val_loss=0.02872.ckpt #/home/atrantas/bfm-model/outputs/2025-06-03/14-27-12/checkpoints/epoch=340-val_loss=0.00555.ckpt #/home/atrantas/bfm-model/outputs/2025-06-02/10-17-22/checkpoints/epoch=112-val_loss=0.00970.ckpt #/home/atrantas/bfm-model/outputs/2025-05-25/12-39-21/checkpoints/epoch=195-val_loss=0.00404.ckpt #/home/atrantas/bfm-model/outputs/2025-05-24/19-55-32/checkpoints/epoch=158-val_loss=0.00413.ckpt #/home/atrantas/bfm-model/outputs/2025-05-24/15-29-50/checkpoints/epoch=36-val_loss=0.00565.ckpt # Add your checkpoint (.pt) path to continue the pre-training
   checkpoint_every: 151
   eval_every: 150
   td_learning: False

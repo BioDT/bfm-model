@@ -121,32 +121,32 @@ class BFMEncoder(nn.Module):
 
         # variable names
         self.surface_vars = surface_vars
-        self.edaphic_vars = edaphic_vars
+        # self.edaphic_vars = edaphic_vars
         self.atmos_vars = atmos_vars
-        self.climate_vars = climate_vars
+        # self.climate_vars = climate_vars
         self.species_vars = species_vars
-        self.vegetation_vars = vegetation_vars
-        self.land_vars = land_vars
-        self.agriculture_vars = agriculture_vars
-        self.forest_vars = forest_vars
-        self.redlist_vars = redlist_vars
-        self.misc_vars = misc_vars
+        # self.vegetation_vars = vegetation_vars
+        # self.land_vars = land_vars
+        # self.agriculture_vars = agriculture_vars
+        # self.forest_vars = forest_vars
+        # self.redlist_vars = redlist_vars
+        # self.misc_vars = misc_vars
         self.atmos_levels = atmos_levels
         self.species_num = species_num
 
         # variable mappings
         self.var_maps = {
             "surface": {v: i for i, v in enumerate(surface_vars)},
-            "edaphic": {v: i for i, v in enumerate(edaphic_vars)},
+            # "edaphic": {v: i for i, v in enumerate(edaphic_vars)},
             "atmos": {v: i for i, v in enumerate(atmos_vars)},
-            "climate": {v: i for i, v in enumerate(climate_vars)},
+            # "climate": {v: i for i, v in enumerate(climate_vars)},
             "species": {v: i for i, v in enumerate(species_vars)},
-            "vegetation": {v: i for i, v in enumerate(vegetation_vars)},
-            "land": {v: i for i, v in enumerate(land_vars)},
-            "agriculture": {v: i for i, v in enumerate(agriculture_vars)},
-            "forest": {v: i for i, v in enumerate(forest_vars)},
-            "redlist": {v: i for i, v in enumerate(redlist_vars)},
-            "misc": {v: i for i, v in enumerate(misc_vars)},
+            # "vegetation": {v: i for i, v in enumerate(vegetation_vars)},
+            # "land": {v: i for i, v in enumerate(land_vars)},
+            # "agriculture": {v: i for i, v in enumerate(agriculture_vars)},
+            # "forest": {v: i for i, v in enumerate(forest_vars)},
+            # "redlist": {v: i for i, v in enumerate(redlist_vars)},
+            # "misc": {v: i for i, v in enumerate(misc_vars)},
         }
 
         # init embeddings
@@ -163,16 +163,16 @@ class BFMEncoder(nn.Module):
 
         # token embeddings for each variable type
         self.surface_token_embeds = self._create_patch_embed(len(surface_vars), patch_size, embed_dim, max_history_size)
-        self.edaphic_token_embeds = self._create_patch_embed(len(edaphic_vars), patch_size, embed_dim, max_history_size)
+        # self.edaphic_token_embeds = self._create_patch_embed(len(edaphic_vars), patch_size, embed_dim, max_history_size)
         self.atmos_token_embeds = self._create_patch_embed(len(atmos_vars), patch_size, embed_dim, max_history_size)
-        self.climate_token_embeds = self._create_patch_embed(len(climate_vars), patch_size, embed_dim, max_history_size)
+        # self.climate_token_embeds = self._create_patch_embed(len(climate_vars), patch_size, embed_dim, max_history_size)
         self.species_token_embeds = self._create_patch_embed(len(species_vars), patch_size, embed_dim, max_history_size)
-        self.vegetation_token_embeds = self._create_patch_embed(len(vegetation_vars), patch_size, embed_dim, max_history_size)
-        self.land_token_embeds = self._create_patch_embed(len(land_vars), patch_size, embed_dim, max_history_size)
-        self.agriculture_token_embeds = self._create_patch_embed(len(agriculture_vars), patch_size, embed_dim, max_history_size)
-        self.forest_token_embeds = self._create_patch_embed(len(forest_vars), patch_size, embed_dim, max_history_size)
-        self.redlist_token_embeds = self._create_patch_embed(len(redlist_vars), patch_size, embed_dim, max_history_size)
-        self.misc_token_embeds = self._create_patch_embed(len(misc_vars), patch_size, embed_dim, max_history_size)
+        # self.vegetation_token_embeds = self._create_patch_embed(len(vegetation_vars), patch_size, embed_dim, max_history_size)
+        # self.land_token_embeds = self._create_patch_embed(len(land_vars), patch_size, embed_dim, max_history_size)
+        # self.agriculture_token_embeds = self._create_patch_embed(len(agriculture_vars), patch_size, embed_dim, max_history_size)
+        # self.forest_token_embeds = self._create_patch_embed(len(forest_vars), patch_size, embed_dim, max_history_size)
+        # self.redlist_token_embeds = self._create_patch_embed(len(redlist_vars), patch_size, embed_dim, max_history_size)
+        # self.misc_token_embeds = self._create_patch_embed(len(misc_vars), patch_size, embed_dim, max_history_size)
 
         # dropout
         self.pos_drop = nn.Dropout(p=drop_rate)
@@ -259,30 +259,30 @@ class BFMEncoder(nn.Module):
 
         # Calculate structured latent tokens
         surface_latents = num_patches if self.surface_vars else 0
-        edaphic_latents = num_patches if self.edaphic_vars else 0
+        # edaphic_latents = num_patches if self.edaphic_vars else 0
         atmos_latents = num_patches * len(self.atmos_levels) if self.atmos_vars else 0
-        climate_latents = num_patches if self.climate_vars else 0
+        # climate_latents = num_patches if self.climate_vars else 0
         species_latents = num_patches if self.species_vars else 0
-        vegetation_latents = num_patches if self.vegetation_vars else 0
-        land_latents = num_patches if self.land_vars else 0
-        agri_latents = num_patches if self.agriculture_vars else 0
-        forest_latents = num_patches if self.forest_vars else 0
-        redlist_latents = num_patches if self.redlist_vars else 0
-        misc_latents = num_patches if self.misc_vars else 0
+        # vegetation_latents = num_patches if self.vegetation_vars else 0
+        # land_latents = num_patches if self.land_vars else 0
+        # agri_latents = num_patches if self.agriculture_vars else 0
+        # forest_latents = num_patches if self.forest_vars else 0
+        # redlist_latents = num_patches if self.redlist_vars else 0
+        # misc_latents = num_patches if self.misc_vars else 0
 
         # store latent sizes for forward pass
         self.latent_sizes = {
             "surface": surface_latents,
-            "edaphic": edaphic_latents,
+            # "edaphic": edaphic_latents,
             "atmos": atmos_latents,
-            "climate": climate_latents,
+            # "climate": climate_latents,
             "species": species_latents,
-            "vegetation": vegetation_latents,
-            "land": land_latents,
-            "agriculture": agri_latents,
-            "forest": forest_latents,
-            "redlist": redlist_latents,
-            "misc": misc_latents,
+            # "vegetation": vegetation_latents,
+            # "land": land_latents,
+            # "agriculture": agri_latents,
+            # "forest": forest_latents,
+            # "redlist": redlist_latents,
+            # "misc": misc_latents,
         }
 
         # initialize structured latents only if needed
@@ -290,36 +290,36 @@ class BFMEncoder(nn.Module):
         if surface_latents > 0:
             self.surface_latents = nn.Parameter(torch.randn(surface_latents, self.embed_dim, device=device))
             latent_list.append(self.surface_latents)
-        if edaphic_latents > 0:
-            self.edaphic_latents = nn.Parameter(torch.randn(edaphic_latents, self.embed_dim, device=device))
-            latent_list.append(self.edaphic_latents)
+        # if edaphic_latents > 0:
+        #     self.edaphic_latents = nn.Parameter(torch.randn(edaphic_latents, self.embed_dim, device=device))
+        #     latent_list.append(self.edaphic_latents)
         if atmos_latents > 0:
             self.atmos_latents = nn.Parameter(torch.randn(atmos_latents, self.embed_dim, device=device))
             latent_list.append(self.atmos_latents)
-        if climate_latents > 0:
-            self.climate_latents = nn.Parameter(torch.randn(climate_latents, self.embed_dim, device=device))
-            latent_list.append(self.climate_latents)
+        # if climate_latents > 0:
+        #     self.climate_latents = nn.Parameter(torch.randn(climate_latents, self.embed_dim, device=device))
+        #     latent_list.append(self.climate_latents)
         if species_latents > 0:
             self.species_latents = nn.Parameter(torch.randn(species_latents, self.embed_dim, device=device))
             latent_list.append(self.species_latents)
-        if vegetation_latents > 0:
-            self.vegetation_latents = nn.Parameter(torch.randn(vegetation_latents, self.embed_dim, device=device))
-            latent_list.append(self.vegetation_latents)
-        if land_latents > 0:
-            self.land_latents = nn.Parameter(torch.randn(land_latents, self.embed_dim, device=device))
-            latent_list.append(self.land_latents)
-        if agri_latents > 0:
-            self.agri_latents = nn.Parameter(torch.randn(agri_latents, self.embed_dim, device=device))
-            latent_list.append(self.agri_latents)
-        if forest_latents > 0:
-            self.forest_latents = nn.Parameter(torch.randn(forest_latents, self.embed_dim, device=device))
-            latent_list.append(self.forest_latents)
-        if redlist_latents > 0:
-            self.redlist_latents = nn.Parameter(torch.randn(redlist_latents, self.embed_dim, device=device))
-            latent_list.append(self.redlist_latents)
-        if misc_latents > 0:
-            self.misc_latents = nn.Parameter(torch.randn(misc_latents, self.embed_dim, device=device))
-            latent_list.append(self.misc_latents)
+        # if vegetation_latents > 0:
+        #     self.vegetation_latents = nn.Parameter(torch.randn(vegetation_latents, self.embed_dim, device=device))
+        #     latent_list.append(self.vegetation_latents)
+        # if land_latents > 0:
+        #     self.land_latents = nn.Parameter(torch.randn(land_latents, self.embed_dim, device=device))
+        #     latent_list.append(self.land_latents)
+        # if agri_latents > 0:
+        #     self.agri_latents = nn.Parameter(torch.randn(agri_latents, self.embed_dim, device=device))
+        #     latent_list.append(self.agri_latents)
+        # if forest_latents > 0:
+        #     self.forest_latents = nn.Parameter(torch.randn(forest_latents, self.embed_dim, device=device))
+        #     latent_list.append(self.forest_latents)
+        # if redlist_latents > 0:
+        #     self.redlist_latents = nn.Parameter(torch.randn(redlist_latents, self.embed_dim, device=device))
+        #     latent_list.append(self.redlist_latents)
+        # if misc_latents > 0:
+        #     self.misc_latents = nn.Parameter(torch.randn(misc_latents, self.embed_dim, device=device))
+        #     latent_list.append(self.misc_latents)
 
         # initialize Perceiver IO with total latents
         self.total_latents = sum(self.latent_sizes.values())
@@ -447,8 +447,10 @@ class BFMEncoder(nn.Module):
         if not variables:
             print(f"\n{group_name}: No variables found")
             return None
+        # print(f"Init values shape {variables.shape}")
         values = list(variables.values())
         x = torch.stack(values, dim=0)
+        # print(f"Init stack shape {x.shape}")
         if x.dim() == 4:
             x = x.permute(1, 0, 2, 3)  # => [B, V, H, W]
         elif x.dim() == 5:
@@ -456,6 +458,7 @@ class BFMEncoder(nn.Module):
             x = x.permute(1, 0, 2, 3, 4)  # => [B, V, T, H, W]
         else:
             raise ValueError(f"Unsupported shape {x.shape} in {group_name}")
+        # print(f"Second stack shape {x.shape}")
 
         if x.dim() == 4:
             B, V, H, W = x.shape
@@ -466,9 +469,12 @@ class BFMEncoder(nn.Module):
             B, V, T, H, W = x.shape
             x = x.reshape(B, V * T, H, W)
             channel_dim = V * T
+        # print(f"Third stack shape {x.shape}")
 
         # Now do patchify:
         x = rearrange(x, "b c (h p1) (w p2) -> b (h w) (c p1 p2)", p1=self.patch_size, p2=self.patch_size)
+        # print(f"Rearange shape {x.shape}")
+
         x = token_embeds(x)  # => [B, num_patches, embed_dim]
 
         return x
@@ -496,17 +502,17 @@ class BFMEncoder(nn.Module):
         surface_embed = self.process_variable_group(
             batch.surface_variables, self.surface_token_embeds, "Surface Variables"
         )  # shape: [num_patches, embed_dim]
-
         if surface_embed is not None:
             embeddings.append(surface_embed)
             embedding_groups["surface"] = surface_embed
-        edaphic_embed = self.process_variable_group(
-            batch.edaphic_variables, self.edaphic_token_embeds, "Edaphic Variables"
-        )  # shape: [num_patches, embed_dim]
 
-        if edaphic_embed is not None:
-            embeddings.append(edaphic_embed)
-            embedding_groups["edaphic"] = edaphic_embed
+
+        # edaphic_embed = self.process_variable_group(
+        #     batch.edaphic_variables, self.edaphic_token_embeds, "Edaphic Variables"
+        # )  # shape: [num_patches, embed_dim]
+        # if edaphic_embed is not None:
+        #     embeddings.append(edaphic_embed)
+        #     embedding_groups["edaphic"] = edaphic_embed
 
         if batch.atmospheric_variables:
             for level_idx, level in enumerate(self.atmos_levels):
@@ -532,12 +538,12 @@ class BFMEncoder(nn.Module):
                     embeddings.append(level_embed)
                     embedding_groups["atmos"] = level_embed
 
-        climate_embed = self.process_variable_group(
-            batch.climate_variables, self.climate_token_embeds, "Climate Variables"
-        )  # shape: [num_patches, embed_dim]
-        if climate_embed is not None:
-            embeddings.append(climate_embed)
-            embedding_groups["climate"] = climate_embed
+        # climate_embed = self.process_variable_group(
+        #     batch.climate_variables, self.climate_token_embeds, "Climate Variables"
+        # )  # shape: [num_patches, embed_dim]
+        # if climate_embed is not None:
+        #     embeddings.append(climate_embed)
+        #     embedding_groups["climate"] = climate_embed
 
         species_embed = self.process_variable_group(
             batch.species_variables, self.species_token_embeds, "Species Variables"
@@ -546,48 +552,49 @@ class BFMEncoder(nn.Module):
             embeddings.append(species_embed)
             embedding_groups["species"] = species_embed
 
-        vegetation_embed = self.process_variable_group(
-            batch.vegetation_variables, self.vegetation_token_embeds, "Vegetation Variables"
-        )  # shape: [num_patches, embed_dim]
-        if vegetation_embed is not None:
-            embeddings.append(vegetation_embed)
-            embedding_groups["vegetation"] = vegetation_embed
+        # vegetation_embed = self.process_variable_group(
+        #     batch.vegetation_variables, self.vegetation_token_embeds, "Vegetation Variables"
+        # )  # shape: [num_patches, embed_dim]
+        # if vegetation_embed is not None:
+        #     embeddings.append(vegetation_embed)
+        #     embedding_groups["vegetation"] = vegetation_embed
 
-        land_embed = self.process_variable_group(
-            batch.land_variables, self.land_token_embeds, "Land Variables"
-        )  # shape: [num_patches, embed_dim]
-        if land_embed is not None:
-            embeddings.append(land_embed)
-            embedding_groups["land"] = land_embed
+        # land_embed = self.process_variable_group(
+        #     batch.land_variables, self.land_token_embeds, "Land Variables"
+        # )  # shape: [num_patches, embed_dim]
+        # if land_embed is not None:
+        #     embeddings.append(land_embed)
+        #     embedding_groups["land"] = land_embed
 
-        agriculture_embed = self.process_variable_group(
-            batch.agriculture_variables, self.agriculture_token_embeds, "Agriculture Variables"
-        )  # shape: [num_patches, embed_dim]
-        if agriculture_embed is not None:
-            embeddings.append(agriculture_embed)
-            embedding_groups["agriculture"] = agriculture_embed
+        # agriculture_embed = self.process_variable_group(
+        #     batch.agriculture_variables, self.agriculture_token_embeds, "Agriculture Variables"
+        # )  # shape: [num_patches, embed_dim]
+        # if agriculture_embed is not None:
+        #     embeddings.append(agriculture_embed)
+        #     embedding_groups["agriculture"] = agriculture_embed
 
-        forest_embed = self.process_variable_group(
-            batch.forest_variables, self.forest_token_embeds, "Forest Variables"
-        )  # shape: [num_patches, embed_dim]
-        if forest_embed is not None:
-            embeddings.append(forest_embed)
-            embedding_groups["forest"] = forest_embed
+        # forest_embed = self.process_variable_group(
+        #     batch.forest_variables, self.forest_token_embeds, "Forest Variables"
+        # )  # shape: [num_patches, embed_dim]
+        # if forest_embed is not None:
+        #     embeddings.append(forest_embed)
+        #     embedding_groups["forest"] = forest_embed
 
-        redlist_embed = self.process_variable_group(
-            batch.forest_variables, self.redlist_token_embeds, "Redlist Variables"
-        )  # shape: [num_patches, embed_dim]
-        if redlist_embed is not None:
-            embeddings.append(redlist_embed)
-            embedding_groups["forest"] = redlist_embed
+        # redlist_embed = self.process_variable_group(
+        #     batch.forest_variables, self.redlist_token_embeds, "Redlist Variables"
+        # )  # shape: [num_patches, embed_dim]
+        # if redlist_embed is not None:
+        #     embeddings.append(redlist_embed)
+        #     embedding_groups["forest"] = redlist_embed
 
-        misc_embed = self.process_variable_group(
-            batch.misc_variables, self.misc_token_embeds, "Misc Variables"
-        )  # shape: [num_patches, embed_dim]
-        if misc_embed is not None:
-            embeddings.append(misc_embed)
-            embedding_groups["misc"] = misc_embed
-
+        # misc_embed = self.process_variable_group(
+        #     batch.misc_variables, self.misc_token_embeds, "Misc Variables"
+        # )  # shape: [num_patches, embed_dim]
+        # if misc_embed is not None:
+        #     embeddings.append(misc_embed)
+        #     embedding_groups["misc"] = misc_embed
+            
+        # ---------------------------------------
         # Combine embeddings while maintaining group structure
         # x = torch.cat(
         #     [emb.view(1, -1, self.embed_dim) for emb in embeddings], dim=1

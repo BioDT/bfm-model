@@ -7,24 +7,39 @@ from torch.utils.data import DataLoader, Dataset
 from bfm_model.bfm.dataloader_monthly import LargeClimateDataset, custom_collate
 
 
+variable_selection = {
+    "species_variables": [8077224, 1898286, 2435261, 2437394, 9809229],
+    "surface_variables": ["t2m", "msl", "u10", "v10", "lsm"],
+    # omit other groups or use "*" to keep all
+    }
+
 def get_train_dataloader(cfg):
+   
     dataset = LargeClimateDataset(
         data_dir=cfg.data.data_path,
         scaling_settings=cfg.data.scaling,
         num_species=cfg.data.species_number,
         atmos_levels=cfg.data.atmos_levels,
         model_patch_size=cfg.model.patch_size,
+        variable_selection=variable_selection,
     )
+    
+    xb = dataset[0] if dataset.mode != "pretrain" else dataset[0][0]
+    print(sorted(xb.surface_variables.keys()))
+    print(len(xb.species_variables))
+    print(sorted(xb.atmospheric_variables.keys()))
+    print(xb.batch_metadata.species_list)
+
     train_dataloader = DataLoader(
         dataset,
-        shuffle=True,  # keep shuffle=True here
+        shuffle=True,
         batch_size=cfg.training.batch_size,
         num_workers=cfg.training.workers,
         collate_fn=custom_collate,
         drop_last=True,
         pin_memory=True,
     )
-    print(f"Dataloader train: {len(train_dataloader)}")
+    print(f"Dataloader Train length: {len(train_dataloader)}")
     return train_dataloader
 
 
@@ -38,6 +53,8 @@ def get_val_dataloader(cfg, batch_size_override: int | None = None):
         num_species=cfg.data.species_number,
         atmos_levels=cfg.data.atmos_levels,
         model_patch_size=cfg.model.patch_size,
+        variable_selection=variable_selection,
+
     )
 
     val_dataloader = DataLoader(
@@ -48,7 +65,7 @@ def get_val_dataloader(cfg, batch_size_override: int | None = None):
         drop_last=True,
         shuffle=False,
     )
-    print(f"Validation train: {len(val_dataloader)}")
+    print(f"Dataloder Validation length: {len(val_dataloader)}")
     return val_dataloader
 
 
@@ -59,7 +76,7 @@ class SequentialWindowDataset(Dataset):
     """
 
     def __init__(self, base_ds: Dataset, steps: int):
-        assert steps >= 1, "steps must be ≥ 1"
+        assert steps >= 1, "steps must be >= 1"
         self.base = base_ds  # yields one Batch per index
         self.steps = steps
 

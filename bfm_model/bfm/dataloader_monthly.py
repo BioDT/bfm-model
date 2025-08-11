@@ -6,8 +6,8 @@ import os
 from collections import namedtuple
 from copy import deepcopy
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Literal, Union
-
+from typing import Mapping, Sequence, Union, Optional, Dict, Literal, List, Any, MutableMapping
+import logging
 import torch
 from omegaconf.dictconfig import DictConfig
 from torch.utils.data import DataLoader, Dataset, default_collate
@@ -42,11 +42,86 @@ Batch = namedtuple(
 Metadata = namedtuple("Metadata", ["latitudes", "longitudes", "timestamp", "lead_time", "pressure_levels", "species_list"])
 
 
-def normalize_keys(d: Dict[Union[int, str], torch.Tensor]) -> Dict[str, torch.Tensor]:
+
+Key = Union[str, int]
+Selection = Union[Sequence[Key], Literal["*"], None]
+VarDict = Dict[Key, torch.Tensor]
+
+def _filter_group(
+    group_vars: Mapping[Key, torch.Tensor],
+    keep: Selection,
+    *,
+    group_name: str,
+    on_missing: Literal["error", "warn", "ignore"] = "warn",
+) -> VarDict:
+    """Return only requested keys from a variable group. Never adds keys."""
+    if keep is None or keep == "*":
+        return dict(group_vars)
+    out: VarDict = {}
+    missing: List[Key] = []
+    for k in keep:
+        if k in group_vars:
+            out[k] = group_vars[k]
+        else:
+            missing.append(k)
+    if missing:
+        msg = f"[select] group={group_name} missing {len(missing)} keys: {missing[:8]}{' ...' if len(missing) > 8 else ''}"
+        if on_missing == "error":
+            raise KeyError(msg)
+        elif on_missing == "warn":
+            import logging
+            logging.getLogger(__name__).warning(msg)
+    return out
+
+def _apply_selection_inplace_on_raw_sample(
+    data: MutableMapping[str, object],
+    variable_selection: Optional[Mapping[str, Selection]],
+    *,
+    on_missing: Literal["error", "warn", "ignore"] = "warn",
+) -> None:
     """
-    Turn any int or mixed keys into strings.
+    Prune variable groups directly on the raw sample dict loaded from torch.load BEFORE
+    any scaling/cropping/normalization. Also sync species_list if needed.
     """
-    return {str(k): v for k, v in d.items()}
+    if not variable_selection:
+        return
+
+    for group_name, keep in variable_selection.items():
+        if keep is None or keep == "*":
+            continue
+        if group_name not in data:
+            if on_missing != "ignore":
+                logging.getLogger(__name__).warning("[select] unknown group in selection: %s", group_name)
+            continue
+        group_vars = data[group_name]
+        if not isinstance(group_vars, dict):
+            continue
+        data[group_name] = _filter_group(group_vars, keep, group_name=group_name, on_missing=on_missing)
+
+    # Keep metadata species_list aligned if species_variables filtered
+    if "species_variables" in variable_selection and variable_selection["species_variables"] not in (None, "*"):
+        sv = data.get("species_variables", {})
+        if isinstance(sv, dict):
+            keep_set = set(sv.keys())
+            md = data.get("batch_metadata", {})
+            if isinstance(md, dict) and "species_list" in md and isinstance(md["species_list"], list):
+                md["species_list"] = [s for s in md["species_list"] if s in keep_set]
+
+def normalize_species_keys_strict(species_vars: Mapping[Key, torch.Tensor],
+                                  ordered_species_list: Sequence[Key]) -> VarDict:
+    """
+    Reorders species keys to match ordered_species_list without adding missing species.
+    If a species in ordered_species_list is absent in species_vars, it is simply skipped.
+    """
+    out: VarDict = {}
+    for sp in ordered_species_list:
+        if sp in species_vars:
+            out[sp] = species_vars[sp]
+    for k, v in species_vars.items():
+        if k not in out:
+            out[k] = v
+    return out
+
 
 
 def custom_collate(batch_list):
@@ -226,16 +301,17 @@ class LargeClimateDataset(Dataset):
         "misc_variables" {...},
     }
     """
-
     def __init__(
         self,
         data_dir: str,
-        scaling_settings: DictConfig,
+        scaling_settings,
         num_species: int = 2,
         atmos_levels: list = [50],
         mode: str = "pretrain",
         model_patch_size: int = 4,
-        max_files: int | None = None,
+        max_files: Optional[int] = None,
+        variable_selection: Optional[Mapping[str, Selection]] = None,
+        on_missing: Literal["error", "warn", "ignore"] = "warn",
     ):
         self.data_dir = data_dir
         self.num_species = num_species
@@ -249,16 +325,18 @@ class LargeClimateDataset(Dataset):
         self.scaling_settings = scaling_settings
         self.scaling_statistics = load_stats(scaling_settings.stats_path)
         self.model_patch_size = model_patch_size
+        self.variable_selection = dict(variable_selection) if variable_selection else None
+        self.on_missing = on_missing
+
         print(f"We scale the dataset {scaling_settings.enabled} with {scaling_settings.mode}")
 
     def __len__(self):
-        if self.mode == "pretrain":
-            return max(0, len(self.files) - 1)
-        else:
-            return len(self.files)
+        return max(0, len(self.files) - 1) if self.mode == "pretrain" else len(self.files)
 
     def load_and_process_files(self, fpath: str):
         data = torch.load(fpath, map_location="cpu", weights_only=False)
+
+        _apply_selection_inplace_on_raw_sample(data, self.variable_selection, on_missing=self.on_missing)
 
         latitudes = data["batch_metadata"]["latitudes"]
         longitudes = data["batch_metadata"]["longitudes"]
@@ -266,14 +344,11 @@ class LargeClimateDataset(Dataset):
         pressure_levels = data["batch_metadata"]["pressure_levels"]
         species_list = data["batch_metadata"]["species_list"]
 
-        # Determine original spatial dimensions from metadata lists
-        H = len(data["batch_metadata"]["latitudes"])
-        W = len(data["batch_metadata"]["longitudes"])
-
-        # crop dimensions to be divisible by patch size
+        H = len(latitudes)
+        W = len(longitudes)
         new_H = (H // self.model_patch_size) * self.model_patch_size
         new_W = (W // self.model_patch_size) * self.model_patch_size
-        # normalize or standardize variables
+
         data = self.scale_batch(data, direction="scaled")
 
         surface_vars = crop_variables(data["surface_variables"], new_H, new_W)
@@ -284,23 +359,19 @@ class LargeClimateDataset(Dataset):
         land_vars = crop_variables(data["land_variables"], new_H, new_W)
         agriculture_vars = crop_variables(data["agriculture_variables"], new_H, new_W)
         forest_vars = crop_variables(data["forest_variables"], new_H, new_W)
-        # For NDVI Nans due to snow/clouds => putting 0 = Values close to zero (-0.1 to 0.1) generally correspond to barren areas of rock, sand, or snow
         vegetation_vars = crop_variables(data["vegetation_variables"], new_H, new_W, handle_nans=True, nan_mode="zero")
         redlist_vars = crop_variables(data["redlist_variables"], new_H, new_W)
         misc_vars = crop_variables(data["misc_variables"], new_H, new_W)
-        # crop metadata dimensions
+
+        start = datetime.strptime(timestamps[0], "%Y-%m-%d %H:%M:%S")
+        end = datetime.strptime(timestamps[1], "%Y-%m-%d %H:%M:%S")
+        atmospheric_vars = extract_atmospheric_levels(atmospheric_vars, pressure_levels, self.atmos_levels, level_dim=1)
+        lead_months = (end.year - start.year) * 12 + (end.month - start.month) + 1
+
+        species_vars = normalize_species_keys_strict(species_vars, species_list)
+
         latitude_var = torch.tensor(latitudes[:new_H])
         longitude_var = torch.tensor(longitudes[:new_W])
-        # Calculate lead time
-        dt_format = "%Y-%m-%d %H:%M:%S"
-        # Convert the two timestamps into datetime objects
-        start = datetime.strptime(timestamps[0], dt_format)
-        end = datetime.strptime(timestamps[1], dt_format)
-        atmospheric_vars = extract_atmospheric_levels(atmospheric_vars, pressure_levels, self.atmos_levels, level_dim=1)
-        # Compute lead time in hours
-        # lead_time_hours = (end - start).total_seconds() / 86400.0 # Its days now
-        # Compute lead time in months
-        lead_months = (end.year - start.year) * 12 + (end.month - start.month) + 1
 
         metadata = Metadata(
             latitudes=latitude_var,
@@ -310,8 +381,6 @@ class LargeClimateDataset(Dataset):
             pressure_levels=pressure_levels,
             species_list=species_list,
         )
-
-        species_vars = normalize_keys(species_vars)
 
         return Batch(
             batch_metadata=metadata,
@@ -335,21 +404,19 @@ class LargeClimateDataset(Dataset):
             x = self.load_and_process_files(fpath_x)
             y = self.load_and_process_files(fpath_y)
             return x, y
-        else:  # finetune
-            x = self.load_and_process_files(fpath_x)
-            return x
+        else:
+            return self.load_and_process_files(fpath_x)
 
     def scale_batch(self, batch: dict | Batch, direction: Literal["original", "scaled"] = "scaled"):
         """
-        Scale a batch of data back or forward.
+        Scale a batch forward/back. With selection applied up-front, any scaler that
+        iterates dicts will naturally only process kept keys.
         """
         if not self.scaling_settings.enabled:
             return batch
-        convert_to_batch = False
-        if isinstance(batch, Batch):
-            # convert from NamedTuple to dict
+        convert_to_batch = isinstance(batch, Batch)
+        if convert_to_batch:
             batch = batch._asdict()
-            convert_to_batch = True
         _rescale_recursive(
             batch,
             self.scaling_statistics,
@@ -357,10 +424,8 @@ class LargeClimateDataset(Dataset):
             mode=self.scaling_settings.mode,
             direction=direction,
         )
-        if convert_to_batch:
-            # convert back to NamedTuple
-            batch = Batch(**batch)
-        return batch
+        return Batch(**batch) if convert_to_batch else batch
+
 
 
 def extract_atmospheric_levels(

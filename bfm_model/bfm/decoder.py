@@ -142,16 +142,16 @@ class BFMDecoder(nn.Module):
         # Create variable mappings for each category
         self.var_maps = {
             "surface": {v: i for i, v in enumerate(surface_vars)},
-            "edaphic": {v: i for i, v in enumerate(edaphic_vars)},
+            # "edaphic": {v: i for i, v in enumerate(edaphic_vars)},
             "atmos": {v: i for i, v in enumerate(atmos_vars)},
-            "climate": {v: i for i, v in enumerate(climate_vars)},
+            # "climate": {v: i for i, v in enumerate(climate_vars)},
             "species": {v: i for i, v in enumerate(species_vars)},
-            "species_distr": {v: i for i, v in enumerate(vegetation_vars)},
-            "land": {v: i for i, v in enumerate(land_vars)},
-            "agriculture": {v: i for i, v in enumerate(agriculture_vars)},
-            "forest": {v: i for i, v in enumerate(forest_vars)},
-            "redlist": {v: i for i, v in enumerate(redlist_vars)},
-            "misc": {v: i for i, v in enumerate(misc_vars)},
+            # "species_distr": {v: i for i, v in enumerate(vegetation_vars)}, # TODO check naming
+            # "land": {v: i for i, v in enumerate(land_vars)},
+            # "agriculture": {v: i for i, v in enumerate(agriculture_vars)},
+            # "forest": {v: i for i, v in enumerate(forest_vars)},
+            # "redlist": {v: i for i, v in enumerate(redlist_vars)},
+            # "misc": {v: i for i, v in enumerate(misc_vars)},
         }
 
         pos_encoding_dim = self._calculate_pos_encoding_dim()
@@ -163,30 +163,30 @@ class BFMDecoder(nn.Module):
 
         # token projections for each variable type
         self.surface_token_proj = nn.Linear(embed_dim, H * W)
-        self.edaphic_token_proj = nn.Linear(embed_dim, H * W)
+        # self.edaphic_token_proj = nn.Linear(embed_dim, H * W)
         self.atmos_token_proj = nn.Linear(embed_dim, H * W)
-        self.climate_token_proj = nn.Linear(embed_dim, H * W)
+        # self.climate_token_proj = nn.Linear(embed_dim, H * W)
         self.species_token_proj = nn.Linear(embed_dim, H * W)
-        self.vegetation_token_proj = nn.Linear(embed_dim, H * W)
-        self.land_token_proj = nn.Linear(embed_dim, H * W)
-        self.agriculture_token_proj = nn.Linear(embed_dim, H * W)
-        self.forest_token_proj = nn.Linear(embed_dim, H * W)
-        self.redlist_token_proj = nn.Linear(embed_dim, H * W)
-        self.misc_token_proj = nn.Linear(embed_dim, H * W)
+        # self.vegetation_token_proj = nn.Linear(embed_dim, H * W)
+        # self.land_token_proj = nn.Linear(embed_dim, H * W)
+        # self.agriculture_token_proj = nn.Linear(embed_dim, H * W)
+        # self.forest_token_proj = nn.Linear(embed_dim, H * W)
+        # self.redlist_token_proj = nn.Linear(embed_dim, H * W)
+        # self.misc_token_proj = nn.Linear(embed_dim, H * W)
 
         # total number of tokens needed for all variables
         total_tokens = (
             len(surface_vars)
-            + len(edaphic_vars)
+            # + len(edaphic_vars)
             + len(atmos_vars) * len(atmos_levels)
-            + len(climate_vars)
+            # + len(climate_vars)
             + len(species_vars)
-            + len(vegetation_vars)
-            + len(land_vars)
-            + len(agriculture_vars)
-            + len(forest_vars)
-            + len(redlist_vars)
-            + len(misc_vars)
+            # + len(vegetation_vars)
+            # + len(land_vars)
+            # + len(agriculture_vars)
+            # + len(forest_vars)
+            # + len(redlist_vars)
+            # + len(misc_vars)
         )
         print("Total query tokens for Decoder: ", total_tokens)
 
@@ -310,16 +310,16 @@ class BFMDecoder(nn.Module):
         # counting the number of queries for Perceiver IO
         total_queries = (
             len(self.surface_vars)
-            + len(self.edaphic_vars)
+            # + len(self.edaphic_vars)
             + len(self.atmos_vars) * len(self.atmos_levels)
-            + len(self.climate_vars)
+            # + len(self.climate_vars)
             + len(self.species_vars)
-            + len(self.vegetation_vars)
-            + len(self.land_vars)
-            + len(self.agriculture_vars)
-            + len(self.forest_vars)
-            + len(self.redlist_vars)
-            + len(self.misc_vars)
+            # + len(self.vegetation_vars)
+            # + len(self.land_vars)
+            # + len(self.agriculture_vars)
+            # + len(self.forest_vars)
+            # + len(self.redlist_vars)
+            # + len(self.misc_vars)
         )
         # the queries used to ask Perceiver IO for values of all variables (the main reason of the decoder flexibility in processing the embeddings lies in these)
         queries = torch.zeros(B, total_queries, D, device=x.device)
@@ -377,14 +377,14 @@ class BFMDecoder(nn.Module):
             output["surface_vars"] = {var: surf_output[:, i] for i, var in enumerate(self.surface_vars)}
             current_idx = next_idx
 
-        # edaphic variables
-        if len(self.edaphic_vars) > 0:
-            next_idx = current_idx + len(self.edaphic_vars)
-            edaphic_decoded = decoded[:, current_idx:next_idx]
-            edaphic_output = self.edaphic_token_proj(edaphic_decoded)
-            edaphic_output = edaphic_output.view(B, len(self.edaphic_vars), H, W)
-            output["edaphic_vars"] = {var: edaphic_output[:, i] for i, var in enumerate(self.edaphic_vars)}
-            current_idx = next_idx
+        # # edaphic variables
+        # if len(self.edaphic_vars) > 0:
+        #     next_idx = current_idx + len(self.edaphic_vars)
+        #     edaphic_decoded = decoded[:, current_idx:next_idx]
+        #     edaphic_output = self.edaphic_token_proj(edaphic_decoded)
+        #     edaphic_output = edaphic_output.view(B, len(self.edaphic_vars), H, W)
+        #     output["edaphic_vars"] = {var: edaphic_output[:, i] for i, var in enumerate(self.edaphic_vars)}
+        #     current_idx = next_idx
 
         # atmospheric variables
         if len(self.atmos_vars) > 0:
@@ -395,14 +395,14 @@ class BFMDecoder(nn.Module):
             output["atmos_vars"] = {var: atmos_output[:, i] for i, var in enumerate(self.atmos_vars)}
             current_idx = next_idx
 
-        # climate variables
-        if len(self.climate_vars) > 0:
-            next_idx = current_idx + len(self.climate_vars)
-            climate_decoded = decoded[:, current_idx:next_idx]
-            climate_output = self.climate_token_proj(climate_decoded)
-            climate_output = climate_output.view(B, len(self.climate_vars), H, W)
-            output["climate_vars"] = {var: climate_output[:, i] for i, var in enumerate(self.climate_vars)}
-            current_idx = next_idx
+        # # climate variables
+        # if len(self.climate_vars) > 0:
+        #     next_idx = current_idx + len(self.climate_vars)
+        #     climate_decoded = decoded[:, current_idx:next_idx]
+        #     climate_output = self.climate_token_proj(climate_decoded)
+        #     climate_output = climate_output.view(B, len(self.climate_vars), H, W)
+        #     output["climate_vars"] = {var: climate_output[:, i] for i, var in enumerate(self.climate_vars)}
+        #     current_idx = next_idx
 
         # species variables
         if len(self.species_vars) > 0:
@@ -413,68 +413,68 @@ class BFMDecoder(nn.Module):
             output["species_vars"] = {var: species_output[:, i] for i, var in enumerate(self.species_vars)}
             current_idx = next_idx
 
-        # vegetation variables
-        if len(self.vegetation_vars) > 0:
-            next_idx = current_idx + len(self.vegetation_vars)
-            vegetation_decoded = decoded[:, current_idx:next_idx]
-            vegetation_output = self.vegetation_token_proj(vegetation_decoded)
-            vegetation_output = vegetation_output.view(B, len(self.vegetation_vars), H, W)
-            output["vegetation_vars"] = {var: vegetation_output[:, i] for i, var in enumerate(self.vegetation_vars)}
-            current_idx = next_idx
+        # # vegetation variables
+        # if len(self.vegetation_vars) > 0:
+        #     next_idx = current_idx + len(self.vegetation_vars)
+        #     vegetation_decoded = decoded[:, current_idx:next_idx]
+        #     vegetation_output = self.vegetation_token_proj(vegetation_decoded)
+        #     vegetation_output = vegetation_output.view(B, len(self.vegetation_vars), H, W)
+        #     output["vegetation_vars"] = {var: vegetation_output[:, i] for i, var in enumerate(self.vegetation_vars)}
+        #     current_idx = next_idx
 
-        # land variables
-        if len(self.land_vars) > 0:
-            next_idx = current_idx + len(self.land_vars)
-            land_decoded = decoded[:, current_idx:next_idx]
-            land_output = self.land_token_proj(land_decoded)
-            land_output = land_output.view(B, len(self.land_vars), H, W)
-            output["land_vars"] = {var: land_output[:, i] for i, var in enumerate(self.land_vars)}
-            current_idx = next_idx
+        # # land variables
+        # if len(self.land_vars) > 0:
+        #     next_idx = current_idx + len(self.land_vars)
+        #     land_decoded = decoded[:, current_idx:next_idx]
+        #     land_output = self.land_token_proj(land_decoded)
+        #     land_output = land_output.view(B, len(self.land_vars), H, W)
+        #     output["land_vars"] = {var: land_output[:, i] for i, var in enumerate(self.land_vars)}
+        #     current_idx = next_idx
 
-        # agriculture variables
-        if len(self.agriculture_vars) > 0:
-            next_idx = current_idx + len(self.agriculture_vars)
-            agri_decoded = decoded[:, current_idx:next_idx]
-            agri_output = self.agriculture_token_proj(agri_decoded)
-            agri_output = agri_output.view(B, len(self.agriculture_vars), H, W)
-            output["agriculture_vars"] = {var: agri_output[:, i] for i, var in enumerate(self.agriculture_vars)}
-            current_idx = next_idx
+        # # agriculture variables
+        # if len(self.agriculture_vars) > 0:
+        #     next_idx = current_idx + len(self.agriculture_vars)
+        #     agri_decoded = decoded[:, current_idx:next_idx]
+        #     agri_output = self.agriculture_token_proj(agri_decoded)
+        #     agri_output = agri_output.view(B, len(self.agriculture_vars), H, W)
+        #     output["agriculture_vars"] = {var: agri_output[:, i] for i, var in enumerate(self.agriculture_vars)}
+        #     current_idx = next_idx
 
-        # forest variables
-        if len(self.forest_vars) > 0:
-            next_idx = current_idx + len(self.forest_vars)
-            forest_decoded = decoded[:, current_idx:next_idx]
-            forest_output = self.forest_token_proj(forest_decoded)
-            forest_output = forest_output.view(B, len(self.forest_vars), H, W)
-            output["forest_vars"] = {var: forest_output[:, i] for i, var in enumerate(self.forest_vars)}
+        # # forest variables
+        # if len(self.forest_vars) > 0:
+        #     next_idx = current_idx + len(self.forest_vars)
+        #     forest_decoded = decoded[:, current_idx:next_idx]
+        #     forest_output = self.forest_token_proj(forest_decoded)
+        #     forest_output = forest_output.view(B, len(self.forest_vars), H, W)
+        #     output["forest_vars"] = {var: forest_output[:, i] for i, var in enumerate(self.forest_vars)}
 
-        # redlist variables
-        if len(self.redlist_vars) > 0:
-            next_idx = current_idx + len(self.redlist_vars)
-            redlist_decoded = decoded[:, current_idx:next_idx]
-            redlist_output = self.redlist_token_proj(redlist_decoded)
-            redlist_output = redlist_output.view(B, len(self.redlist_vars), H, W)
-            output["redlist_vars"] = {var: redlist_output[:, i] for i, var in enumerate(self.redlist_vars)}
+        # # redlist variables
+        # if len(self.redlist_vars) > 0:
+        #     next_idx = current_idx + len(self.redlist_vars)
+        #     redlist_decoded = decoded[:, current_idx:next_idx]
+        #     redlist_output = self.redlist_token_proj(redlist_decoded)
+        #     redlist_output = redlist_output.view(B, len(self.redlist_vars), H, W)
+        #     output["redlist_vars"] = {var: redlist_output[:, i] for i, var in enumerate(self.redlist_vars)}
 
-        # misc variables
-        if len(self.misc_vars) > 0:
-            next_idx = current_idx + len(self.misc_vars)
-            misc_decoded = decoded[:, current_idx:next_idx]
-            misc_output = self.misc_token_proj(misc_decoded)
-            misc_output = misc_output.view(B, len(self.misc_vars), H, W)
-            output["misc_vars"] = {var: misc_output[:, i] for i, var in enumerate(self.misc_vars)}
+        # # misc variables
+        # if len(self.misc_vars) > 0:
+        #     next_idx = current_idx + len(self.misc_vars)
+        #     misc_decoded = decoded[:, current_idx:next_idx]
+        #     misc_output = self.misc_token_proj(misc_decoded)
+        #     misc_output = misc_output.view(B, len(self.misc_vars), H, W)
+        #     output["misc_vars"] = {var: misc_output[:, i] for i, var in enumerate(self.misc_vars)}
 
         output = {
             "surface_variables": output.pop("surface_vars"),
-            "edaphic_variables": output.pop("edaphic_vars"),
+            # "edaphic_variables": output.pop("edaphic_vars"),
             "atmospheric_variables": output.pop("atmos_vars"),
-            "climate_variables": output.pop("climate_vars"),
+            # "climate_variables": output.pop("climate_vars"),
             "species_variables": output.pop("species_vars"),
-            "vegetation_variables": output.pop("vegetation_vars"),
-            "land_variables": output.pop("land_vars"),
-            "agriculture_variables": output.pop("agriculture_vars"),
-            "forest_variables": output.pop("forest_vars"),
-            "redlist_variables": output.pop("redlist_vars"),
-            "misc_variables": output.pop("misc_vars"),
+            # "vegetation_variables": output.pop("vegetation_vars"),
+            # "land_variables": output.pop("land_vars"),
+            # "agriculture_variables": output.pop("agriculture_vars"),
+            # "forest_variables": output.pop("forest_vars"),
+            # "redlist_variables": output.pop("redlist_vars"),
+            # "misc_variables": output.pop("misc_vars"),
         }
         return output
