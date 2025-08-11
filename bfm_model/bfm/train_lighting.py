@@ -18,6 +18,7 @@ from bfm_model.bfm.model_helpers import (
     setup_bfm_model,
     setup_checkpoint_callback,
     setup_fsdp,
+    OverwriteLR,
 )
 
 
@@ -29,7 +30,7 @@ def main(cfg):
     torch.set_float32_matmul_precision(cfg.training.precision_in)
 
     # Seed the experiment for numpy, torch and python.random.
-    seed_everything(42, workers=True)
+    seed_everything(cfg.training.seed, workers=True)
 
     output_dir = HydraConfig.get().runtime.output_dir
     print(f"Output directory: {output_dir}")
@@ -41,26 +42,32 @@ def main(cfg):
     experiment_name = "BFM-train"
     mlflow_logger = get_mlflow_logger(output_dir, experiment_name=experiment_name)
     # also log in the ./mlruns folder so that you can run mlflow server and see every run together
-    mlflow_logger_current_folder = get_mlflow_logger(experiment_name=experiment_name)
+    mlflow_logger_current_folder = get_mlflow_logger(output_dir=None, experiment_name=experiment_name)
     loggers = [l for l in [mlflow_logger, mlflow_logger_current_folder] if l]
 
     model = setup_bfm_model(cfg, mode="train")
-
     checkpoint_callback = setup_checkpoint_callback(cfg, output_dir)
-
     distr_strategy = setup_fsdp(cfg, model)
 
+    # trainer = get_trainer(cfg, mlflow_logger=loggers, distr_strategy=distr_strategy, callbacks=[checkpoint_callback, OverwriteLR(new_lr=3e-5)])
     trainer = get_trainer(cfg, mlflow_logger=loggers, distr_strategy=distr_strategy, callbacks=[checkpoint_callback])
+
     # Experimental
     # mlflow.set_tracking_uri(output_dir)
     # Auto log all MLflow entities
     # mlflow.pytorch.autolog()
 
     # with mlflow.start_run() as run:
+    # TODO This is with loading the complete checkpoint from Lighting
     checkpoint_path = find_checkpoint_to_resume_from(cfg)
-
+    
+    # model.load_state_dict(cfg.training.checkpoint_path, strict=True)
+    state = torch.load(checkpoint_path, map_location="cpu")["state_dict"]
+    model.load_state_dict(state)
     # do the actual training
-    trainer.fit(model, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader, ckpt_path=checkpoint_path)
+    # This
+    # trainer.fit(model, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader, ckpt_path=checkpoint_path)
+    trainer.fit(model, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader)
 
     # NOT NEEDED: we are already at the last
     # selected_ckpt = post_training_get_last_checkpoint(

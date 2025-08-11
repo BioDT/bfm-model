@@ -5,7 +5,7 @@ Copyright 2025 (C) TNO. Licensed under the MIT license.
 import os
 from datetime import datetime
 from functools import partial
-from typing import List, Literal
+from typing import List, Literal, Any, Dict
 
 import lightning as L
 import torch
@@ -29,6 +29,23 @@ def activation_ckpt_policy(module):
     return isinstance(module, (Swin3DTransformer, MViT))
 
 
+# def _is_global_zero() -> bool:
+#     return int(os.environ.get("RANK", "0")) == 0
+
+# def get_mlflow_logger(output_dir: str | None, experiment_name: str = "BFM") -> MLFlowLogger | None:
+#     if not _is_global_zero():      # every non-zero rank returns None
+#         return None
+
+#     now = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+#     if output_dir is None:
+#         return MLFlowLogger(experiment_name=experiment_name,
+#                             run_name=f"BFM_{now}")          # default ./mlruns
+#     return MLFlowLogger(experiment_name=experiment_name,
+#                         run_name=f"BFM_{now}",
+#                         save_dir=output_dir)
+                        
+
+# Has issues in multinode
 def get_mlflow_logger(output_dir: str | None = None, experiment_name: str = "BFM") -> MLFlowLogger | None:
     # Setup logger with rank-specific paths to avoid conflicts
     current_time = datetime.now()
@@ -317,3 +334,73 @@ def post_training_get_last_checkpoint(output_dir: str, checkpoint_callback: Mode
         selected_ckpt = ckpt_list[0]
 
     return selected_ckpt
+
+# class OverwriteLR(L.Callback):
+#     def on_load_checkpoint(self, trainer: L.Trainer, pl_module: L.LightningModule, checkpoint) -> None:
+#         trainer.checkpoint['optimizer_states'][0]['param_groups'][0]['lr'] =  3e-5
+
+class OverwriteLR(L.Callback):
+    """
+    When a checkpoint is loaded this callback
+
+    1. rewrites every optimiser param-group's ``lr`` (and ``initial_lr``)
+       that lives inside the *checkpoint dict* **before** Lightning
+       restores it;
+    2. after the optimiser is recreated (``on_fit_start``) it makes sure the
+       *live* optimiser and all schedulers use the same value.
+
+    If you also want to change scheduler counters (e.g. restart cosine
+    schedule), pass a ``scheduler_override`` dict with the keys that appear in
+    the scheduler’s ``state_dict`` (see PyTorch docs).
+    """
+
+    def __init__(self, new_lr: float,
+                 scheduler_override: Dict[str, Any] | None = None) -> None:
+        super().__init__()
+        self.new_lr = float(new_lr)
+        self._sched_over = scheduler_override or {}
+
+    # --------------------------------------------------------------------- #
+    # 1) mutate the *checkpoint* before Lightning hands the states to the
+    #    freshly-created optimiser / scheduler objects
+    # --------------------------------------------------------------------- #
+    def on_load_checkpoint(
+        self,
+        trainer: L.Trainer,
+        pl_module: L.LightningModule,
+        checkpoint: Dict[str, Any],
+    ) -> None:                                              # ←  called on every rank
+        # -----------  optimiser param-groups  ------------
+        for opt_state in checkpoint.get("optimizer_states", []):
+            # opt_state["param_groups"] : List[Dict[str, Any]]
+            for pg in opt_state.get("param_groups", []):
+                pg["lr"] = self.new_lr
+                if "initial_lr" in pg:          # handled by some schedulers
+                    pg["initial_lr"] = self.new_lr
+
+        # -----------  lr-schedulers  ----------------------
+        for sch_state in checkpoint.get("lr_schedulers", []):
+            # Replace last_lr and any extra keys the user asked for
+            if "last_lr" in sch_state:
+                sch_state["last_lr"] = [self.new_lr] * len(sch_state["last_lr"])
+            for k, v in self._sched_over.items():
+                if k in sch_state:
+                    sch_state[k] = v
+
+    # --------------------------------------------------------------------- #
+    # 2) after states are restored -> ensure the *live* objects match
+    # --------------------------------------------------------------------- #
+    def on_fit_start(self, trainer: L.Trainer, pl_module: L.LightningModule) -> None:
+        #   Optimisers
+        for opt in trainer.optimizers:
+            for pg in opt.param_groups:
+                pg["lr"] = self.new_lr
+
+        #   LR-Schedulers (Lightning wraps them in dicts)
+        for sch_dict in trainer.lr_scheduler_configs:
+            scheduler = sch_dict.scheduler
+            if hasattr(scheduler, "base_lrs"):           # most PyTorch schedulers
+                scheduler.base_lrs = [self.new_lr] * len(scheduler.base_lrs)
+            if hasattr(scheduler, "last_lr"):
+                scheduler.last_lr = [self.new_lr] * len(scheduler.last_lr)
+            # if the scheduler keeps momentum etc. you can patch here too

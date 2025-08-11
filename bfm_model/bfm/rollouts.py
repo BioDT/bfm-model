@@ -244,7 +244,7 @@ def main(cfg: DictConfig):
     print("=== Test Results ===")
 
     test_sample = next(iter(test_dataloader))
-    rollout_dict = rollout_forecast(trainer, model=loaded_model, initial_batch=test_sample, cfg=cfg, steps=10)
+    rollout_dict = rollout_forecast(trainer, model=loaded_model, initial_batch=test_sample, cfg=cfg, steps=12)
     # print(f"len rollout dict {len(rollout_dict)}| items in", rollout_dict["batches"][0].batch_metadata)
 
     os.makedirs("rollout_batches", exist_ok=True)
