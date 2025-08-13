@@ -9,7 +9,9 @@ from bfm_model.bfm.dataloader_monthly import LargeClimateDataset, custom_collate
 
 variable_selection = {
     "species_variables": [8077224, 1898286, 2435261, 2437394, 9809229],
-    "surface_variables": ["t2m", "msl", "u10", "v10", "lsm"],
+    # "species_variables": [8077224],
+    "surface_variables": ["t2m", "msl", "v10"], # ["t2m", "msl", "u10", "v10", "lsm"]
+    "atmospheric_variables": ["q", "z"] # ["z", "t", "u", "v", "q"]
     # omit other groups or use "*" to keep all
     }
 
@@ -27,6 +29,7 @@ def get_train_dataloader(cfg):
     xb = dataset[0] if dataset.mode != "pretrain" else dataset[0][0]
     print(sorted(xb.surface_variables.keys()))
     print(len(xb.species_variables))
+    print(xb.species_variables.keys())
     print(sorted(xb.atmospheric_variables.keys()))
     print(xb.batch_metadata.species_list)
 
@@ -39,7 +42,7 @@ def get_train_dataloader(cfg):
         drop_last=True,
         pin_memory=True,
     )
-    print(f"Dataloader Train length: {len(train_dataloader)}")
+    print(f"Train Dataloader length: {len(train_dataloader)}")
     return train_dataloader
 
 
@@ -65,7 +68,7 @@ def get_val_dataloader(cfg, batch_size_override: int | None = None):
         drop_last=True,
         shuffle=False,
     )
-    print(f"Dataloder Validation length: {len(val_dataloader)}")
+    print(f"Validation Dataloder length: {len(val_dataloader)}")
     return val_dataloader
 
 

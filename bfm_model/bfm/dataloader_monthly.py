@@ -74,29 +74,85 @@ def _filter_group(
     return out
 
 def _apply_selection_inplace_on_raw_sample(
-    data: MutableMapping[str, object],
+    data: MutableMapping[str, Any],
     variable_selection: Optional[Mapping[str, Selection]],
     *,
     on_missing: Literal["error", "warn", "ignore"] = "warn",
 ) -> None:
-    """
-    Prune variable groups directly on the raw sample dict loaded from torch.load BEFORE
-    any scaling/cropping/normalization. Also sync species_list if needed.
-    """
     if not variable_selection:
         return
 
-    for group_name, keep in variable_selection.items():
+    log = logging.getLogger(__name__)
+
+    def _prune_group_inplace(
+        group_name: str,
+        keep: Selection,
+        *,
+        force_str_keys: bool = False,
+        sync_species_list: bool = False,
+    ) -> None:
         if keep is None or keep == "*":
-            continue
-        if group_name not in data:
+            if force_str_keys:
+                g = data.get(group_name)
+                if isinstance(g, dict) and any(not isinstance(k, str) for k in g.keys()):
+                    data[group_name] = {str(k): v for k, v in g.items()}
+                if sync_species_list:
+                    md = data.get("batch_metadata", {})
+                    if isinstance(md, dict) and isinstance(md.get("species_list"), list):
+                        md["species_list"] = [str(s) for s in md["species_list"]]
+            return
+
+        g = data.get(group_name)
+        if not isinstance(g, dict):
             if on_missing != "ignore":
-                logging.getLogger(__name__).warning("[select] unknown group in selection: %s", group_name)
-            continue
-        group_vars = data[group_name]
-        if not isinstance(group_vars, dict):
-            continue
-        data[group_name] = _filter_group(group_vars, keep, group_name=group_name, on_missing=on_missing)
+                log.warning("[select] unknown or non-dict group: %s", group_name)
+            return
+
+        # map string form -> original key
+        lut = {str(k): k for k in g.keys()}
+        keep_s = [str(k) for k in keep]
+        keep_orig = []
+        missing = []
+        for s in keep_s:
+            k = lut.get(s)
+            if k is None:
+                missing.append(s)
+            else:
+                keep_orig.append(k)
+
+        # fast in-place prune (avoid copying tensors)
+        if force_str_keys:
+            data[group_name] = {str(k): g[k] for k in keep_orig}
+        else:
+            # other groups: drop extraneous keys in-place
+            for k in list(g.keys()):
+                if k not in keep_orig:
+                    g.pop(k, None)
+
+        if sync_species_list:
+            md = data.get("batch_metadata", {})
+            if isinstance(md, dict) and isinstance(md.get("species_list"), list):
+                # string-align and filter
+                md["species_list"] = [str(s) for s in md["species_list"]]
+                keep_set = {str(k) for k in keep_orig}
+                md["species_list"] = [s for s in md["species_list"] if s in keep_set]
+
+        if missing and on_missing != "ignore":
+            msg = f"[select] group={group_name} missing {missing}"
+            if on_missing == "error":
+                raise KeyError(msg)
+            log.warning(msg)
+
+    # apply per-group
+    for gname, keep in variable_selection.items():
+        if gname == "species_variables":
+            _prune_group_inplace(
+                "species_variables", keep,
+                force_str_keys=True,
+                sync_species_list=True,
+            )
+        else:
+            _prune_group_inplace(gname, keep, force_str_keys=False, sync_species_list=False)
 
     # Keep metadata species_list aligned if species_variables filtered
     if "species_variables" in variable_selection and variable_selection["species_variables"] not in (None, "*"):
@@ -122,6 +178,11 @@ def normalize_species_keys_strict(species_vars: Mapping[Key, torch.Tensor],
             out[k] = v
     return out
 
+def normalize_keys(d: Dict[Union[int, str], torch.Tensor]) -> Dict[str, torch.Tensor]:
+    """
+    Turn any int or mixed keys into strings.
+    """
+    return {str(k): v for k, v in d.items()}
 
 
 def custom_collate(batch_list):
@@ -368,7 +429,8 @@ class LargeClimateDataset(Dataset):
         atmospheric_vars = extract_atmospheric_levels(atmospheric_vars, pressure_levels, self.atmos_levels, level_dim=1)
         lead_months = (end.year - start.year) * 12 + (end.month - start.month) + 1
 
-        species_vars = normalize_species_keys_strict(species_vars, species_list)
+        # species_vars = normalize_species_keys_strict(species_vars, species_list)
+        species_vars = normalize_keys(species_vars)  # ensure this doesn't re-add dropped keys
 
         latitude_var = torch.tensor(latitudes[:new_H])
         longitude_var = torch.tensor(longitudes[:new_W])
