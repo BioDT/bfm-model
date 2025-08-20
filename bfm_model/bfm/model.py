@@ -193,7 +193,7 @@ class BFM(LightningModule):
             "forest_variables": {"Forest": 1.2},
             "redlist_variables": {"RLI": 1.3},
             "misc_variables": {"avg_slhtf": 1.2, "avg_pevr": 1.0},
-            "species_variables": 4.0,
+            "species_variables": 1.0, # 200
         }
 
         self.lead_time = lead_time
@@ -519,7 +519,7 @@ class BFM(LightningModule):
         # TODO Play with the T_max => should be more or less equal to the total number of gradient steps we do, 
         # so the LR, fades to a /10 value in the end of the training.
         # The specific value 200.000 is for ~ 1000 epochs with batch size of 1 -> Adapt accordingly
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=5000, eta_min=self.learning_rate / 50)        # scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=self.lr_lambda)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=34000, eta_min=self.learning_rate / 10)        # scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=self.lr_lambda)
 
         return [optimizer], [scheduler]
         # return [optimizer]

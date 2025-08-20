@@ -136,9 +136,9 @@ class BFMEncoder(nn.Module):
 
         # variable mappings
         self.var_maps = {
-            "surface": {v: i for i, v in enumerate(surface_vars)},
+            # "surface": {v: i for i, v in enumerate(surface_vars)},
             # "edaphic": {v: i for i, v in enumerate(edaphic_vars)},
-            "atmos": {v: i for i, v in enumerate(atmos_vars)},
+            # "atmos": {v: i for i, v in enumerate(atmos_vars)},
             # "climate": {v: i for i, v in enumerate(climate_vars)},
             "species": {v: i for i, v in enumerate(species_vars)},
             # "vegetation": {v: i for i, v in enumerate(vegetation_vars)},
@@ -162,9 +162,9 @@ class BFMEncoder(nn.Module):
         self.atmos_levels_embed = nn.Embedding(self.num_atmos_levels, embed_dim)
 
         # token embeddings for each variable type
-        self.surface_token_embeds = self._create_patch_embed(len(surface_vars), patch_size, embed_dim, max_history_size)
+        # self.surface_token_embeds = self._create_patch_embed(len(surface_vars), patch_size, embed_dim, max_history_size)
         # self.edaphic_token_embeds = self._create_patch_embed(len(edaphic_vars), patch_size, embed_dim, max_history_size)
-        self.atmos_token_embeds = self._create_patch_embed(len(atmos_vars), patch_size, embed_dim, max_history_size)
+        # self.atmos_token_embeds = self._create_patch_embed(len(atmos_vars), patch_size, embed_dim, max_history_size)
         # self.climate_token_embeds = self._create_patch_embed(len(climate_vars), patch_size, embed_dim, max_history_size)
         self.species_token_embeds = self._create_patch_embed(len(species_vars), patch_size, embed_dim, max_history_size)
         # self.vegetation_token_embeds = self._create_patch_embed(len(vegetation_vars), patch_size, embed_dim, max_history_size)
@@ -258,9 +258,9 @@ class BFMEncoder(nn.Module):
         )
 
         # Calculate structured latent tokens
-        surface_latents = num_patches if self.surface_vars else 0
+        # surface_latents = num_patches if self.surface_vars else 0
         # edaphic_latents = num_patches if self.edaphic_vars else 0
-        atmos_latents = num_patches * len(self.atmos_levels) if self.atmos_vars else 0
+        # atmos_latents = num_patches * len(self.atmos_levels) if self.atmos_vars else 0
         # climate_latents = num_patches if self.climate_vars else 0
         species_latents = num_patches if self.species_vars else 0
         # vegetation_latents = num_patches if self.vegetation_vars else 0
@@ -272,9 +272,9 @@ class BFMEncoder(nn.Module):
 
         # store latent sizes for forward pass
         self.latent_sizes = {
-            "surface": surface_latents,
+            # "surface": surface_latents,
             # "edaphic": edaphic_latents,
-            "atmos": atmos_latents,
+            # "atmos": atmos_latents,
             # "climate": climate_latents,
             "species": species_latents,
             # "vegetation": vegetation_latents,
@@ -287,15 +287,15 @@ class BFMEncoder(nn.Module):
 
         # initialize structured latents only if needed
         latent_list = nn.ParameterList()
-        if surface_latents > 0:
-            self.surface_latents = nn.Parameter(torch.randn(surface_latents, self.embed_dim, device=device))
-            latent_list.append(self.surface_latents)
+        # if surface_latents > 0:
+        #     self.surface_latents = nn.Parameter(torch.randn(surface_latents, self.embed_dim, device=device))
+        #     latent_list.append(self.surface_latents)
         # if edaphic_latents > 0:
         #     self.edaphic_latents = nn.Parameter(torch.randn(edaphic_latents, self.embed_dim, device=device))
         #     latent_list.append(self.edaphic_latents)
-        if atmos_latents > 0:
-            self.atmos_latents = nn.Parameter(torch.randn(atmos_latents, self.embed_dim, device=device))
-            latent_list.append(self.atmos_latents)
+        # if atmos_latents > 0:
+        #     self.atmos_latents = nn.Parameter(torch.randn(atmos_latents, self.embed_dim, device=device))
+        #     latent_list.append(self.atmos_latents)
         # if climate_latents > 0:
         #     self.climate_latents = nn.Parameter(torch.randn(climate_latents, self.embed_dim, device=device))
         #     latent_list.append(self.climate_latents)
@@ -499,12 +499,12 @@ class BFMEncoder(nn.Module):
         # process each variable group
         embeddings = []
         embedding_groups = {}
-        surface_embed = self.process_variable_group(
-            batch.surface_variables, self.surface_token_embeds, "Surface Variables"
-        )  # shape: [num_patches, embed_dim]
-        if surface_embed is not None:
-            embeddings.append(surface_embed)
-            embedding_groups["surface"] = surface_embed
+        # surface_embed = self.process_variable_group(
+        #     batch.surface_variables, self.surface_token_embeds, "Surface Variables"
+        # )  # shape: [num_patches, embed_dim]
+        # if surface_embed is not None:
+        #     embeddings.append(surface_embed)
+        #     embedding_groups["surface"] = surface_embed
 
 
         # edaphic_embed = self.process_variable_group(
@@ -514,29 +514,29 @@ class BFMEncoder(nn.Module):
         #     embeddings.append(edaphic_embed)
         #     embedding_groups["edaphic"] = edaphic_embed
 
-        if batch.atmospheric_variables:
-            for level_idx, level in enumerate(self.atmos_levels):
-                # For each variable in atmospheric_variables, slice out dimension=2 (the levels)
-                # shape => [v, b, H, W] for that single level.
-                level_vars = {}
-                for var_name, var_data in batch.atmospheric_variables.items():
-                    sliced = var_data[..., level_idx, :, :]  # shape: [v, b, H, W]
-                    level_vars[var_name] = sliced
+        # if batch.atmospheric_variables:
+        #     for level_idx, level in enumerate(self.atmos_levels):
+        #         # For each variable in atmospheric_variables, slice out dimension=2 (the levels)
+        #         # shape => [v, b, H, W] for that single level.
+        #         level_vars = {}
+        #         for var_name, var_data in batch.atmospheric_variables.items():
+        #             sliced = var_data[..., level_idx, :, :]  # shape: [v, b, H, W]
+        #             level_vars[var_name] = sliced
 
-                # Now pass that dictionary (one level) to the correct embedding
-                level_embed = self.process_variable_group(
-                    level_vars, self.atmos_token_embeds, f"Atmospheric Level {level}"  # sized for 2 variables, 1 level at a time
-                )
+        #         # Now pass that dictionary (one level) to the correct embedding
+        #         level_embed = self.process_variable_group(
+        #             level_vars, self.atmos_token_embeds, f"Atmospheric Level {level}"  # sized for 2 variables, 1 level at a time
+        #         )
 
-                if level_embed is not None:
-                    # Add atmospheric level embedding
-                    # level_idx is the index for self.atmos_levels
-                    # self.atmos_levels_embed expects a LongTensor as input
-                    level_idx_tensor = torch.tensor([level_idx], dtype=torch.long, device=level_embed.device)
-                    specific_level_embedding = self.atmos_levels_embed(level_idx_tensor)  # Shape [1, embed_dim]
-                    level_embed = level_embed + specific_level_embedding  # Broadcast across patches
-                    embeddings.append(level_embed)
-                    embedding_groups["atmos"] = level_embed
+        #         if level_embed is not None:
+        #             # Add atmospheric level embedding
+        #             # level_idx is the index for self.atmos_levels
+        #             # self.atmos_levels_embed expects a LongTensor as input
+        #             level_idx_tensor = torch.tensor([level_idx], dtype=torch.long, device=level_embed.device)
+        #             specific_level_embedding = self.atmos_levels_embed(level_idx_tensor)  # Shape [1, embed_dim]
+        #             level_embed = level_embed + specific_level_embedding  # Broadcast across patches
+        #             embeddings.append(level_embed)
+        #             embedding_groups["atmos"] = level_embed
 
         # climate_embed = self.process_variable_group(
         #     batch.climate_variables, self.climate_token_embeds, "Climate Variables"

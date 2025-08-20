@@ -23,7 +23,7 @@ model:
   W: 280 #320  # Width
   num_latent_tokens: 8 #TODO Check consistensy in name and value
   backbone: "swin" # mvit
-  patch_size: 4 #2 # Size of spatial patches.
+  patch_size: 4 #2 #4 Size of spatial patches.
   embed_dim: 128 #512 # Embedding dimension.
   num_heads: 8 # Number of attention heads.
   head_dim: 64 # Dimension of each attention head.
@@ -49,15 +49,15 @@ training:
   epochs: 2000
   accelerator: cuda
   precision: bf16-mixed
-  precision_in: "high" # ["medium", "high", "highest"] https://pytorch.org/docs/stable/generated/torch.set_float32_matmul_precision.html#torch.set_float32_matmul_precision
+  precision_in: "highest" # ["medium", "high", "highest"] https://pytorch.org/docs/stable/generated/torch.set_float32_matmul_precision.html#torch.set_float32_matmul_precision
   devices: [0]
   strategy: #fsdp #fsdp #ddp # auto
   num_nodes: 1
   gradient_clip: 1.0
   log_steps: 1
-  lr: 0.0003  #5e-4
-  wd: 0.000003 #5e-6
-  checkpoint_path: #/home/atrantas/production/bfm-model/outputs/2025-08-12/02-45-33/checkpoints/epoch=1501-val_loss=0.05333.ckpt #/home/atrantas/production/bfm-model/outputs/2025-08-11/19-26-54/checkpoints/epoch=461-val_loss=0.10497.ckpt #/projects/prjs1134/data/projects/biodt/storage/weights/big_model/epoch=53-val_loss=0.00177.ckpt #/home/atrantas/production/bfm-model/outputs/2025-07-11/11-04-38/checkpoints/epoch=29-val_loss=0.00179.ckpt #/home/atrantas/production/bfm-model/outputs/2025-07-11/00-26-33/checkpoints/epoch=06-val_loss=0.00408.ckpt #/projects/prjs1134/data/projects/biodt/storage/runs_storage/bfm_big/09-55-39/checkpoints/epoch=470-val_loss=0.01705.ckpt  #/projects/prjs1134/data/projects/biodt/storage/weights/epoch=268-val_loss=0.00493.ckpt # /projects/prjs1134/data/projects/biodt/storage/runs_storage/10_July_2025_runs/2025-07-09/21-45-02/checkpoints/epoch=654-val_loss=0.01822.ckpt #/projects/prjs1134/data/projects/biodt/storage/weights/big_model/epoch=470-val_loss=0.01705_clean.ckpt #/home/atrantas/production/bfm-model/outputs/2025-07-07/09-55-39/checkpoints/epoch=470-val_loss=0.01705.ckpt #/home/atrantas/production/bfm-model/outputs/2025-07-04/18-09-46/checkpoints/epoch=101-val_loss=0.01934.ckpt #/home/atrantas/production/bfm-model/outputs/2025-07-04/12-57-55/checkpoints/epoch=38-val_loss=0.02872.ckpt #/home/atrantas/bfm-model/outputs/2025-06-03/14-27-12/checkpoints/epoch=340-val_loss=0.00555.ckpt #/home/atrantas/bfm-model/outputs/2025-06-02/10-17-22/checkpoints/epoch=112-val_loss=0.00970.ckpt #/home/atrantas/bfm-model/outputs/2025-05-25/12-39-21/checkpoints/epoch=195-val_loss=0.00404.ckpt #/home/atrantas/bfm-model/outputs/2025-05-24/19-55-32/checkpoints/epoch=158-val_loss=0.00413.ckpt #/home/atrantas/bfm-model/outputs/2025-05-24/15-29-50/checkpoints/epoch=36-val_loss=0.00565.ckpt # Add your checkpoint (.pt) path to continue the pre-training
+  lr: 0.0005  #5e-4
+  wd: 0.0005 #5e-6
+  checkpoint_path: #/home/atrantas/production/bfm-model/outputs/2025-08-15/15-49-40/checkpoints/epoch=397-val_loss=0.06193.ckpt #/home/atrantas/production/bfm-model/outputs/2025-08-13/16-54-19/checkpoints/epoch=461-val_loss=0.05760.ckpt #/home/atrantas/production/bfm-model/outputs/2025-08-12/02-45-33/checkpoints/epoch=1501-val_loss=0.05333.ckpt #/home/atrantas/production/bfm-model/outputs/2025-08-11/19-26-54/checkpoints/epoch=461-val_loss=0.10497.ckpt #/projects/prjs1134/data/projects/biodt/storage/weights/big_model/epoch=53-val_loss=0.00177.ckpt #/home/atrantas/production/bfm-model/outputs/2025-07-11/11-04-38/checkpoints/epoch=29-val_loss=0.00179.ckpt #/home/atrantas/production/bfm-model/outputs/2025-07-11/00-26-33/checkpoints/epoch=06-val_loss=0.00408.ckpt #/projects/prjs1134/data/projects/biodt/storage/runs_storage/bfm_big/09-55-39/checkpoints/epoch=470-val_loss=0.01705.ckpt  #/projects/prjs1134/data/projects/biodt/storage/weights/epoch=268-val_loss=0.00493.ckpt # /projects/prjs1134/data/projects/biodt/storage/runs_storage/10_July_2025_runs/2025-07-09/21-45-02/checkpoints/epoch=654-val_loss=0.01822.ckpt #/projects/prjs1134/data/projects/biodt/storage/weights/big_model/epoch=470-val_loss=0.01705_clean.ckpt #/home/atrantas/production/bfm-model/outputs/2025-07-07/09-55-39/checkpoints/epoch=470-val_loss=0.01705.ckpt #/home/atrantas/production/bfm-model/outputs/2025-07-04/18-09-46/checkpoints/epoch=101-val_loss=0.01934.ckpt #/home/atrantas/production/bfm-model/outputs/2025-07-04/12-57-55/checkpoints/epoch=38-val_loss=0.02872.ckpt #/home/atrantas/bfm-model/outputs/2025-06-03/14-27-12/checkpoints/epoch=340-val_loss=0.00555.ckpt #/home/atrantas/bfm-model/outputs/2025-06-02/10-17-22/checkpoints/epoch=112-val_loss=0.00970.ckpt #/home/atrantas/bfm-model/outputs/2025-05-25/12-39-21/checkpoints/epoch=195-val_loss=0.00404.ckpt #/home/atrantas/bfm-model/outputs/2025-05-24/19-55-32/checkpoints/epoch=158-val_loss=0.00413.ckpt #/home/atrantas/bfm-model/outputs/2025-05-24/15-29-50/checkpoints/epoch=36-val_loss=0.00565.ckpt # Add your checkpoint (.pt) path to continue the pre-training
   checkpoint_every: 151
   eval_every: 150
   td_learning: False
@@ -75,7 +75,7 @@ evaluation:
   # checkpoint_path: /projects/prjs1134/data/projects/biodt/storage/weights/epoch=268-val_loss=0.00493.ckpt # THE BEST PERFORMING /home/thanasis.trantas/git_projects/bfm-model/weights/epoch=268-val_loss=0.00493.ckpt #/home/atrantas/bfm-model/outputs/2025-05-25/12-36-44/checkpoints/epoch=65-val_loss=36.95078.ckpt #/home/atrantas/bfm-model/outputs/2025-05-24/19-55-32/checkpoints/epoch=158-val_loss=0.00413.ckpt #/home/atrantas/bfm-model/outputs/2025-05-24/15-29-50/checkpoints/epoch=26-val_loss=0.00631.ckpt
   # checkpoint_path: /projects/prjs1134/data/projects/biodt/storage/weights/epoch=66-val_loss=0.03095.ckpt # updated, bigger
   #checkpoint_path: /projects/prjs1134/data/projects/biodt/storage/runs_storage/good_runs/2025-07-04/18-09-46/checkpoints/epoch=101-val_loss=0.01934.ckpt #/home/atrantas/production/bfm-model/outputs/2025-06-30/16-30-17/checkpoints/epoch=482-val_loss=0.01767.ckpt #/projects/prjs1134/data/projects/biodt/storage/weights/epoch=00-val_loss=0.32124.ckpt # this one has the _latent_parameter_list
-  checkpoint_path: /home/atrantas/production/bfm-model/outputs/2025-08-12/02-45-33/checkpoints/epoch=1501-val_loss=0.05333.ckpt #/home/atrantas/production/bfm-model/outputs/2025-07-11/17-48-32/checkpoints/last.ckpt #/home/atrantas/production/bfm-model/outputs/2025-07-11/11-04-38/checkpoints/epoch=53-val_loss=0.00177.ckpt #/home/atrantas/production/bfm-model/outputs/2025-07-11/11-04-38/checkpoints/epoch=29-val_loss=0.00179.ckpt #/home/atrantas/production/bfm-model/outputs/2025-07-11/11-04-38/checkpoints/epoch=20-val_loss=0.00182.ckpt #/projects/prjs1134/data/projects/biodt/storage/runs_storage/bfm_big/09-55-39/checkpoints/epoch=470-val_loss=0.01705.ckpt #/home/atrantas/production/bfm-model/outputs/2025-07-07/11-20-03/checkpoints/epoch=802-val_loss=0.01803.ckpt #/home/atrantas/production/bfm-model/outputs/2025-07-08/19-39-55/checkpoints/epoch=210-val_loss=0.02389.ckpt #/home/atrantas/production/bfm-model/outputs/2025-07-09/20-17-19/checkpoints/epoch=119-val_loss=0.03615.ckpt #/home/atrantas/production/bfm-model/outputs/2025-07-09/21-45-02/checkpoints/epoch=654-val_loss=0.01822.ckpt #/home/atrantas/production/bfm-model/outputs/2025-07-10/00-53-57/checkpoints/epoch=86-val_loss=0.02393.ckpt #/projects/prjs1134/data/projects/biodt/storage/runs_storage/good_runs/2025-06-30/16-30-17/checkpoints/epoch=482-val_loss=0.01767.ckpt
+  checkpoint_path: /home/atrantas/production/bfm-model/outputs/2025-08-15/15-49-40/checkpoints/epoch=397-val_loss=0.06193.ckpt #/home/atrantas/production/bfm-model/outputs/2025-08-13/16-54-19/checkpoints/epoch=461-val_loss=0.05760.ckpt #/home/atrantas/production/bfm-model/outputs/2025-08-12/02-45-33/checkpoints/epoch=1501-val_loss=0.05333.ckpt #/home/atrantas/production/bfm-model/outputs/2025-07-11/17-48-32/checkpoints/last.ckpt #/home/atrantas/production/bfm-model/outputs/2025-07-11/11-04-38/checkpoints/epoch=53-val_loss=0.00177.ckpt #/home/atrantas/production/bfm-model/outputs/2025-07-11/11-04-38/checkpoints/epoch=29-val_loss=0.00179.ckpt #/home/atrantas/production/bfm-model/outputs/2025-07-11/11-04-38/checkpoints/epoch=20-val_loss=0.00182.ckpt #/projects/prjs1134/data/projects/biodt/storage/runs_storage/bfm_big/09-55-39/checkpoints/epoch=470-val_loss=0.01705.ckpt #/home/atrantas/production/bfm-model/outputs/2025-07-07/11-20-03/checkpoints/epoch=802-val_loss=0.01803.ckpt #/home/atrantas/production/bfm-model/outputs/2025-07-08/19-39-55/checkpoints/epoch=210-val_loss=0.02389.ckpt #/home/atrantas/production/bfm-model/outputs/2025-07-09/20-17-19/checkpoints/epoch=119-val_loss=0.03615.ckpt #/home/atrantas/production/bfm-model/outputs/2025-07-09/21-45-02/checkpoints/epoch=654-val_loss=0.01822.ckpt #/home/atrantas/production/bfm-model/outputs/2025-07-10/00-53-57/checkpoints/epoch=86-val_loss=0.02393.ckpt #/projects/prjs1134/data/projects/biodt/storage/runs_storage/good_runs/2025-06-30/16-30-17/checkpoints/epoch=482-val_loss=0.01767.ckpt
   batch_size: 1
   test_device: "cuda:0"
 
@@ -119,7 +119,7 @@ model_swin_backbone:
     encoder_num_heads: [8,16]
     decoder_depths: [2,2]
     decoder_num_heads: [16,8]
-    window_size: [1,4,5] # [1, 4, 5]
+    window_size: [1,1,1] # [1, 4, 5]
     mlp_ratio: 4.0
     qkv_bias: True
     drop_rate: 0.0

@@ -141,9 +141,9 @@ class BFMDecoder(nn.Module):
 
         # Create variable mappings for each category
         self.var_maps = {
-            "surface": {v: i for i, v in enumerate(surface_vars)},
+            # "surface": {v: i for i, v in enumerate(surface_vars)},
             # "edaphic": {v: i for i, v in enumerate(edaphic_vars)},
-            "atmos": {v: i for i, v in enumerate(atmos_vars)},
+            # "atmos": {v: i for i, v in enumerate(atmos_vars)},
             # "climate": {v: i for i, v in enumerate(climate_vars)},
             "species": {v: i for i, v in enumerate(species_vars)},
             # "species_distr": {v: i for i, v in enumerate(vegetation_vars)}, # TODO check naming
@@ -162,9 +162,9 @@ class BFMDecoder(nn.Module):
         self.absolute_time_embed = nn.Linear(embed_dim, embed_dim)
 
         # token projections for each variable type
-        self.surface_token_proj = nn.Linear(embed_dim, H * W)
+        # self.surface_token_proj = nn.Linear(embed_dim, H * W)
         # self.edaphic_token_proj = nn.Linear(embed_dim, H * W)
-        self.atmos_token_proj = nn.Linear(embed_dim, H * W)
+        # self.atmos_token_proj = nn.Linear(embed_dim, H * W)
         # self.climate_token_proj = nn.Linear(embed_dim, H * W)
         self.species_token_proj = nn.Linear(embed_dim, H * W)
         # self.vegetation_token_proj = nn.Linear(embed_dim, H * W)
@@ -176,9 +176,9 @@ class BFMDecoder(nn.Module):
 
         # total number of tokens needed for all variables
         total_tokens = (
-            len(surface_vars)
+            # len(surface_vars)
             # + len(edaphic_vars)
-            + len(atmos_vars) * len(atmos_levels)
+            # + len(atmos_vars) * len(atmos_levels)
             # + len(climate_vars)
             + len(species_vars)
             # + len(vegetation_vars)
@@ -369,13 +369,13 @@ class BFMDecoder(nn.Module):
         output = {}
 
         # surface variables
-        if len(self.surface_vars) > 0:
-            next_idx = current_idx + len(self.surface_vars)
-            surf_decoded = decoded[:, current_idx:next_idx]
-            surf_output = self.surface_token_proj(surf_decoded)
-            surf_output = surf_output.view(B, len(self.surface_vars), H, W)
-            output["surface_vars"] = {var: surf_output[:, i] for i, var in enumerate(self.surface_vars)}
-            current_idx = next_idx
+        # if len(self.surface_vars) > 0:
+        #     next_idx = current_idx + len(self.surface_vars)
+        #     surf_decoded = decoded[:, current_idx:next_idx]
+        #     surf_output = self.surface_token_proj(surf_decoded)
+        #     surf_output = surf_output.view(B, len(self.surface_vars), H, W)
+        #     output["surface_vars"] = {var: surf_output[:, i] for i, var in enumerate(self.surface_vars)}
+        #     current_idx = next_idx
 
         # # edaphic variables
         # if len(self.edaphic_vars) > 0:
@@ -387,13 +387,13 @@ class BFMDecoder(nn.Module):
         #     current_idx = next_idx
 
         # atmospheric variables
-        if len(self.atmos_vars) > 0:
-            next_idx = current_idx + len(self.atmos_vars) * len(self.atmos_levels)
-            atmos_decoded = decoded[:, current_idx:next_idx]
-            atmos_output = self.atmos_token_proj(atmos_decoded)
-            atmos_output = atmos_output.view(B, len(self.atmos_vars), len(self.atmos_levels), H, W)
-            output["atmos_vars"] = {var: atmos_output[:, i] for i, var in enumerate(self.atmos_vars)}
-            current_idx = next_idx
+        # if len(self.atmos_vars) > 0:
+        #     next_idx = current_idx + len(self.atmos_vars) * len(self.atmos_levels)
+        #     atmos_decoded = decoded[:, current_idx:next_idx]
+        #     atmos_output = self.atmos_token_proj(atmos_decoded)
+        #     atmos_output = atmos_output.view(B, len(self.atmos_vars), len(self.atmos_levels), H, W)
+        #     output["atmos_vars"] = {var: atmos_output[:, i] for i, var in enumerate(self.atmos_vars)}
+        #     current_idx = next_idx
 
         # # climate variables
         # if len(self.climate_vars) > 0:
@@ -465,9 +465,9 @@ class BFMDecoder(nn.Module):
         #     output["misc_vars"] = {var: misc_output[:, i] for i, var in enumerate(self.misc_vars)}
 
         output = {
-            "surface_variables": output.pop("surface_vars"),
+            # "surface_variables": output.pop("surface_vars"),
             # "edaphic_variables": output.pop("edaphic_vars"),
-            "atmospheric_variables": output.pop("atmos_vars"),
+            # "atmospheric_variables": output.pop("atmos_vars"),
             # "climate_variables": output.pop("climate_vars"),
             "species_variables": output.pop("species_vars"),
             # "vegetation_variables": output.pop("vegetation_vars"),
