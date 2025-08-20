@@ -1,11 +1,11 @@
 #!/bin/bash
-#SBATCH --job-name=bfm_model_large_from_ckpt
+#SBATCH --job-name=bfm_small_fit
 #SBATCH --partition=gpu_h100
-#SBATCH --time=4:00:00
+#SBATCH --time=6:00:00
 #SBATCH --nodes=1
-#SBATCH --ntasks-per-node=2
+#SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=15
-#SBATCH --gpus-per-node=2
+#SBATCH --gpus-per-node=1
 
 module purge
 

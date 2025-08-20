@@ -10,8 +10,8 @@ from bfm_model.bfm.dataloader_monthly import LargeClimateDataset, custom_collate
 variable_selection = {
     "species_variables": [8077224, 1898286, 2435261, 2437394, 9809229],
     # "species_variables": [8077224],
-    "surface_variables": ["t2m", "msl", "v10"], # ["t2m", "msl", "u10", "v10", "lsm"]
-    "atmospheric_variables": ["q", "z"] # ["z", "t", "u", "v", "q"]
+    # "surface_variables": ["t2m", "msl", "v10"], # ["t2m", "msl", "u10", "v10", "lsm"]
+    # "atmospheric_variables": ["q", "z"] # ["z", "t", "u", "v", "q"]
     # omit other groups or use "*" to keep all
     }
 
