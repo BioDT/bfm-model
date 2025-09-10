@@ -55,13 +55,33 @@ def _plot_maps(arr_pred: np.ndarray, arr_gt: np.ndarray, lats: np.ndarray, lons:
     """Quick-look two-panel plot (no grid, low DPI)."""
     arr_pred = np.asarray(arr_pred).squeeze()
     arr_gt = np.asarray(arr_gt).squeeze()
+    print("pred range", arr_pred.max(), arr_pred.min())
+    print("gt range", arr_gt.max(), arr_gt.min())
     proj = ccrs.PlateCarree()
     fig, ax = plt.subplots(1, 2, figsize=(10, 4), subplot_kw=dict(projection=proj))
-    for a, dat, lbl in zip(ax, (arr_pred, arr_gt), ("Prediction", "Ground Truth")):
-        cyc, lon_cyc = add_cyclic_point(dat, coord=lons)
-        mesh = a.pcolormesh(lon_cyc, lats, cyc, cmap="viridis", transform=proj)
-        a.add_feature(cfeature.COASTLINE, lw=0.4)
-        a.set_title(f"{title}\n{lbl}")
+    if share_colorscale:
+        # Compute shared color limits
+        vmin = np.min([arr_pred.min(), arr_gt.min()])
+        vmax = np.max([arr_pred.max(), arr_gt.max()])
+        for a, dat, lbl in zip(ax, (arr_pred, arr_gt), ("Prediction", "Ground Truth")):
+            cyc, lon_cyc = add_cyclic_point(dat, coord=lons)
+            mesh = a.pcolormesh(
+                lon_cyc,
+                lats,
+                cyc,
+                cmap="viridis",
+                vmin=vmin, vmax=vmax,   # shared scale
+                transform=proj
+            )
+            a.add_feature(cfeature.COASTLINE, lw=0.4)
+            a.set_title(f"{title}\n{lbl}")
+    else:
+        for a, dat, lbl in zip(ax, (arr_pred, arr_gt), ("Prediction", "Ground Truth")):
+            cyc, lon_cyc = add_cyclic_point(dat, coord=lons)
+            mesh = a.pcolormesh(lon_cyc, lats, cyc, cmap="viridis", transform=proj)
+            a.add_feature(cfeature.COASTLINE, lw=0.4)
+            a.set_title(f"{title}\n{lbl}")
+        
     fig.colorbar(mesh, ax=ax.ravel().tolist(), shrink=0.75)
     return fig
 
@@ -69,29 +89,56 @@ def _plot_maps(arr_pred: np.ndarray, arr_gt: np.ndarray, lats: np.ndarray, lons:
 def _plot_maps_informative(
     arr_pred: np.ndarray, arr_gt: np.ndarray, lats: np.ndarray, lons: np.ndarray, var_group: str, var_name: str, timestamp: str
 ) -> plt.Figure:
-    """High-quality two-panel plot with grid, labels and right-hand colourbar.
-    """
+    """High-quality two-panel plot with grid, labels and right-hand colourbar."""
     proj = ccrs.PlateCarree()
     fig, ax = plt.subplots(1, 2, figsize=(12, 4), subplot_kw=dict(projection=proj))
     # Draw panels and keep last mesh for colourbar
     mesh = None
-    for i, (a, dat, lbl) in enumerate(zip(ax, (arr_pred.squeeze(), arr_gt.squeeze()), ("Prediction", "Ground Truth"))):
+    if share_colorscale:
+        # Compute shared color limits
+        vmin = np.min([arr_pred.min(), arr_gt.min()])
+        vmax = np.max([arr_pred.max(), arr_gt.max()])
+        for i, (a, dat, lbl) in enumerate(zip(ax, (arr_pred.squeeze(), arr_gt.squeeze()), ("Prediction", "Ground Truth"))):
 
-        cyc, lon_cyc = add_cyclic_point(dat, coord=lons)
-        mesh = a.pcolormesh(lon_cyc, lats, cyc, cmap="viridis", transform=proj)
-        a.add_feature(cfeature.COASTLINE, lw=0.4)
+            cyc, lon_cyc = add_cyclic_point(dat, coord=lons)
+            mesh = a.pcolormesh(
+                lon_cyc,
+                lats,
+                cyc,
+                cmap="viridis",
+                vmin=vmin, vmax=vmax,   # shared scale
+                transform=proj
+            )
+            a.add_feature(cfeature.COASTLINE, lw=0.4)
 
-        gl = a.gridlines(draw_labels=True, linewidth=0.5, color="gray", linestyle="--")
-        gl.top_labels = gl.right_labels = False
+            gl = a.gridlines(draw_labels=True, linewidth=0.5, color="gray", linestyle="--")
+            gl.top_labels = gl.right_labels = False
 
-        if i == 0:  # left panel
-            a.set_ylabel("Latitude (°N)")
-        else:  # right panel
-            gl.left_labels = False  # hide lat tick-labels
-            a.set_ylabel("")
+            if i == 0:  # left panel
+                a.set_ylabel("Latitude (°N)")
+            else:  # right panel
+                gl.left_labels = False  # hide lat tick-labels
+                a.set_ylabel("")
 
-        a.set_xlabel("Longitude (°E)")
-        a.set_title(lbl)
+            a.set_xlabel("Longitude (°E)")
+            a.set_title(lbl)
+    else:
+        for i, (a, dat, lbl) in enumerate(zip(ax, (arr_pred.squeeze(), arr_gt.squeeze()), ("Prediction", "Ground Truth"))):
+            cyc, lon_cyc = add_cyclic_point(dat, coord=lons)
+            mesh = a.pcolormesh(lon_cyc, lats, cyc, cmap="viridis", transform=proj)
+            a.add_feature(cfeature.COASTLINE, lw=0.4)
+
+            gl = a.gridlines(draw_labels=True, linewidth=0.5, color="gray", linestyle="--")
+            gl.top_labels = gl.right_labels = False
+
+            if i == 0:  # left panel
+                a.set_ylabel("Latitude (°N)")
+            else:  # right panel
+                gl.left_labels = False  # hide lat tick-labels
+                a.set_ylabel("")
+
+            a.set_xlabel("Longitude (°E)")
+            a.set_title(lbl)
 
     cax = inset_axes(
         ax[-1],  # parent = right map
@@ -167,6 +214,8 @@ if slot == "species_variables":
         for v in var_sel:
             # pred[slot][v] = np.where(pred[slot][v] < 0, 0, pred[slot][v])
             pred[slot][v] = torch.clamp(pred[slot][v], min=0)
+
+share_colorscale = st.sidebar.checkbox("Share colorscale gt/pred")
 
 st.header(f"{file_sel} — {timestamp}")
 
