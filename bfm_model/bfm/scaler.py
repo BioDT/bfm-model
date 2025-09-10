@@ -28,6 +28,11 @@ dimensions_to_keep_monthly = {
         "q": [1],  # [time, t, lat, lon]
     }
 }
+# add some keys (they are used in test_lighting.py)
+dimensions_to_keep_by_key["pred"] = dimensions_to_keep_by_key
+dimensions_to_keep_by_key["gt"] = dimensions_to_keep_by_key
+dimensions_to_keep_monthly["pred"] = dimensions_to_keep_monthly
+dimensions_to_keep_monthly["gt"] = dimensions_to_keep_monthly
 
 
 def _rescale_recursive(
@@ -38,13 +43,17 @@ def _rescale_recursive(
     mode: Literal["standardize", "normalize"] = "normalize",
     direction: Literal["original", "scaled"] = "scaled",
 ):
+    # print(prefix, direction, stats)
     if isinstance(obj, torch.Tensor):
+        # print(prefix, stats)
+        # print(obj.shape)
         if stats:
             mean_val = stats["mean"]
             std_val = stats["std"]
             min_val = stats["min"]
             max_val = stats["max"]
             if dimensions_to_keep_by_key:
+                # print(prefix, dimensions_to_keep_by_key) # TODO: investigate change of key (test_lighting.py)
                 assert isinstance(
                     dimensions_to_keep_by_key, list
                 ), f"dimensions_to_keep_by_key should be a list, got {type(dimensions_to_keep_by_key)}, {dimensions_to_keep_by_key}"
@@ -82,21 +91,26 @@ def _rescale_recursive(
                     if direction == "scaled":
                         res = torch.add(obj, -mean_val) / std_val  # (obj - mean) / std
                     else:
-                        res = torch.add(obj / std_val, mean_val)  # (obj / std) + mean
+                        res = torch.add(obj * std_val, mean_val)  # (obj * std) + mean
                 elif mode == "normalize":
                     # min-max normalization
                     if direction == "scaled":
                         res = torch.add(obj, -min_val) / (max_val - min_val)
                     else:
-                        res = torch.add(obj / (max_val - min_val), min_val)
+                        res = torch.add(obj * (max_val - min_val), min_val)
             return res
         else:
             print(f"RESCALE cfg not found: current_key: {format_prefix(prefix)}")
             pass
     elif isinstance(obj, dict):
+        result = {}
+        if "batch_metadata" in obj:
+            result["batch_metadata"] = obj["batch_metadata"]
+        if "metadata" in obj:
+            result["metadata"] = obj["metadata"]
         for k, v in obj.items():
             if k not in ["batch_metadata", "metadata"]:
-                obj[k] = _rescale_recursive(
+                result[k] = _rescale_recursive(
                     v,
                     stats.get(str(k), {}),
                     dimensions_to_keep_by_key.get(str(k), {}),
@@ -104,9 +118,9 @@ def _rescale_recursive(
                     mode=mode,
                     direction=direction,
                 )
-        return obj
+        return result
     else:
-        pass
+        print(type(obj))
 
 
 def format_prefix(prefix: List[str]) -> str:

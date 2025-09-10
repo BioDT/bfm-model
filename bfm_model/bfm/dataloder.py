@@ -314,7 +314,7 @@ class LargeClimateDataset(Dataset):
             # convert from NamedTuple to dict
             batch = batch._asdict()
             convert_to_batch = True
-        _rescale_recursive(
+        batch_scaled = _rescale_recursive(
             batch,
             self.scaling_statistics,
             dimensions_to_keep_by_key=dimensions_to_keep_by_key,
@@ -323,5 +323,5 @@ class LargeClimateDataset(Dataset):
         )
         if convert_to_batch:
             # convert back to NamedTuple
-            batch = Batch(**batch)
-        return batch
+            batch_scaled = Batch(**batch_scaled)
+        return batch_scaled

@@ -2,12 +2,23 @@
 Copyright 2025 (C) TNO. Licensed under the MIT license.
 """
 
+import logging
 import os
 from collections import namedtuple
 from copy import deepcopy
 from datetime import datetime, timedelta
-from typing import Mapping, Sequence, Union, Optional, Dict, Literal, List, Any, MutableMapping
-import logging
+from typing import (
+    Any,
+    Dict,
+    List,
+    Literal,
+    Mapping,
+    MutableMapping,
+    Optional,
+    Sequence,
+    Union,
+)
+
 import torch
 from omegaconf.dictconfig import DictConfig
 from torch.utils.data import DataLoader, Dataset, default_collate
@@ -42,10 +53,10 @@ Batch = namedtuple(
 Metadata = namedtuple("Metadata", ["latitudes", "longitudes", "timestamp", "lead_time", "pressure_levels", "species_list"])
 
 
-
 Key = Union[str, int]
 Selection = Union[Sequence[Key], Literal["*"], None]
 VarDict = Dict[Key, torch.Tensor]
+
 
 def _filter_group(
     group_vars: Mapping[Key, torch.Tensor],
@@ -70,8 +81,10 @@ def _filter_group(
             raise KeyError(msg)
         elif on_missing == "warn":
             import logging
+
             logging.getLogger(__name__).warning(msg)
     return out
+
 
 def _apply_selection_inplace_on_raw_sample(
     data: MutableMapping[str, Any],
@@ -147,7 +160,8 @@ def _apply_selection_inplace_on_raw_sample(
     for gname, keep in variable_selection.items():
         if gname == "species_variables":
             _prune_group_inplace(
-                "species_variables", keep,
+                "species_variables",
+                keep,
                 force_str_keys=True,
                 sync_species_list=True,
             )
@@ -163,8 +177,8 @@ def _apply_selection_inplace_on_raw_sample(
             if isinstance(md, dict) and "species_list" in md and isinstance(md["species_list"], list):
                 md["species_list"] = [s for s in md["species_list"] if s in keep_set]
 
-def normalize_species_keys_strict(species_vars: Mapping[Key, torch.Tensor],
-                                  ordered_species_list: Sequence[Key]) -> VarDict:
+
+def normalize_species_keys_strict(species_vars: Mapping[Key, torch.Tensor], ordered_species_list: Sequence[Key]) -> VarDict:
     """
     Reorders species keys to match ordered_species_list without adding missing species.
     If a species in ordered_species_list is absent in species_vars, it is simply skipped.
@@ -177,6 +191,7 @@ def normalize_species_keys_strict(species_vars: Mapping[Key, torch.Tensor],
         if k not in out:
             out[k] = v
     return out
+
 
 def normalize_keys(d: Dict[Union[int, str], torch.Tensor]) -> Dict[str, torch.Tensor]:
     """
@@ -362,6 +377,7 @@ class LargeClimateDataset(Dataset):
         "misc_variables" {...},
     }
     """
+
     def __init__(
         self,
         data_dir: str,
@@ -479,15 +495,14 @@ class LargeClimateDataset(Dataset):
         convert_to_batch = isinstance(batch, Batch)
         if convert_to_batch:
             batch = batch._asdict()
-        _rescale_recursive(
+        batch_scaled = _rescale_recursive(
             batch,
             self.scaling_statistics,
             dimensions_to_keep_by_key=dimensions_to_keep_monthly,
             mode=self.scaling_settings.mode,
             direction=direction,
         )
-        return Batch(**batch) if convert_to_batch else batch
-
+        return Batch(**batch_scaled) if convert_to_batch else batch_scaled
 
 
 def extract_atmospheric_levels(
