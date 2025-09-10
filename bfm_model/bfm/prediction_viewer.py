@@ -160,6 +160,14 @@ if sample_tensor.ndim == 4:
     if not pl_sel:
         st.stop()
 
+if slot == "species_variables":
+    zero_negative_predictions = st.sidebar.checkbox("Negative preds -> 0")
+    if zero_negative_predictions:
+        print(pred[slot])
+        for v in var_sel:
+            # pred[slot][v] = np.where(pred[slot][v] < 0, 0, pred[slot][v])
+            pred[slot][v] = torch.clamp(pred[slot][v], min=0)
+
 st.header(f"{file_sel} — {timestamp}")
 
 TAB_NAMES = (
