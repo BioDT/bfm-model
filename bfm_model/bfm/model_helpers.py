@@ -249,7 +249,7 @@ def get_trainer(
         accelerator=cfg.training.accelerator,
         devices=cfg.training.devices,
         precision=cfg.training.precision,
-        strategy=distr_strategy,
+        # strategy=distr_strategy,
         num_nodes=cfg.training.num_nodes,
         log_every_n_steps=cfg.training.log_steps,
         logger=mlflow_logger,  # Only the rank 0 process will have a logger

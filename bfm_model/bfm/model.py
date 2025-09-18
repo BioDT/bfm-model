@@ -34,6 +34,7 @@ from bfm_model.bfm.dataloader_monthly import (
 )
 from bfm_model.bfm.decoder import BFMDecoder
 from bfm_model.bfm.encoder import BFMEncoder
+from bfm_model.bfm.reconstruction_head import ReconstructionHead
 from bfm_model.mvit.mvit_model import MViT
 from bfm_model.swin_transformer.core.swim_core_v2 import Swin3DTransformer
 
@@ -129,6 +130,15 @@ class BFM(LightningModule):
         peft_mode: str = "single",
         use_lora: bool = False,
         use_vera: bool = False,
+        use_masking: bool = False,
+        mask_ratio: float = 0.3,
+        masking_type: str = "random",
+        reconstruction_weight: float = 0.1,
+        # Mask-annealing schedule (optional)
+        mask_anneal_enabled: bool = False,
+        mask_anneal_start: float = 0.3,
+        mask_anneal_end: float = 0.9,
+        mask_anneal_steps: int | None = None,
         **kwargs,
     ):
         super().__init__()
@@ -143,6 +153,19 @@ class BFM(LightningModule):
         self.td_learning = td_learning
         self.use_mask = use_mask
         self.partially_masked_groups = partially_masked_groups
+        
+        # masking
+        self.use_masking = use_masking
+        self.mask_ratio = mask_ratio
+        self.masking_type = masking_type
+        self.reconstruction_weight = reconstruction_weight
+        # mask annealing configuration
+        self.mask_anneal_enabled = mask_anneal_enabled
+        self.mask_anneal_start = float(mask_anneal_start)
+        self.mask_anneal_end = float(mask_anneal_end)
+        self.mask_anneal_steps = int(mask_anneal_steps) if mask_anneal_steps else int(self.total_steps)
+        # cache for last encoder output (used by reconstruction loss)
+        self._last_encoded: torch.Tensor | None = None
 
         # load land-sea mask
         try:
@@ -230,8 +253,25 @@ class BFM(LightningModule):
             num_heads=num_heads,
             head_dim=head_dim,
             depth=depth,
+            use_masking=use_masking,
+            mask_ratio=mask_ratio,
+            masking_type=masking_type,
             **kwargs,
         )
+        
+        # Initialize reconstruction head if masking is enabled
+        if use_masking:
+            self.reconstruction_head = ReconstructionHead(
+                embed_dim=embed_dim,
+                decoder_embed_dim=512,  # Smaller than encoder for efficiency
+                decoder_depth=2,  # Lightweight decoder
+                decoder_num_heads=8,
+                patch_size=patch_size,
+                mlp_ratio=4.0,
+            )
+            print(f"Initialized reconstruction head for masked autoencoding")
+        else:
+            self.reconstruction_head = None
 
         patch_shape = (num_latent_tokens, H // self.encoder.patch_size, W // self.encoder.patch_size)
 
@@ -323,6 +363,8 @@ class BFM(LightningModule):
             lead_time = self.lead_time
         # print(f"BFM batch size: {batch_size}")
         encoded = self.encoder(batch, lead_time, batch_size)
+        # store for auxiliary reconstruction loss
+        self._last_encoded = encoded
         # print("Encoded shape", encoded.shape)
 
         # calculate number of patches in 2D
@@ -362,10 +404,88 @@ class BFM(LightningModule):
 
     def training_step(self, batch, batch_idx):
         x, y = batch
+        # optionally update masking ratio before forward pass
+        if self.use_masking and self.mask_anneal_enabled and hasattr(self.encoder, "masking_module") and self.encoder.masking_module is not None:
+            self._update_mask_ratio()
+        
+        # forward pass - get predictions
         output = self(x, self.lead_time, batch_size=self.batch_size)
-        loss = self.compute_loss(output, y)
-        self.log("train_loss", loss, batch_size=self.batch_size, sync_dist=True)
-        return loss
+        
+        # compute main prediction loss
+        pred_loss = self.compute_loss(output, y)
+        
+        # compute reconstruction loss if masking is enabled
+        total_loss = pred_loss
+        if self.use_masking and self.reconstruction_head is not None and self.training:
+            recon_loss = self.compute_reconstruction_loss(x)
+            if recon_loss is not None:
+                # add reconstruction loss as auxiliary loss
+                total_loss = pred_loss + self.reconstruction_weight * recon_loss
+                self.log("train_reconstruction_loss", recon_loss, batch_size=self.batch_size, sync_dist=True)
+                self.log("train_prediction_loss", pred_loss, batch_size=self.batch_size, sync_dist=True)
+        
+        self.log("train_loss", total_loss, batch_size=self.batch_size, sync_dist=True)
+        return total_loss
+
+    def _update_mask_ratio(self):
+        """
+        Linearly anneal mask ratio from start to end across mask_anneal_steps using global_step.
+        """
+        # global_step starts at 0
+        step = max(int(self.global_step), 0)
+        denom = max(self.mask_anneal_steps, 1)
+        progress = min(step / denom, 1.0)
+        new_ratio = self.mask_anneal_start + (self.mask_anneal_end - self.mask_anneal_start) * progress
+        new_ratio = float(min(max(new_ratio, 0.0), 1.0))
+
+        # Update encoder runtime values
+        self.encoder.mask_ratio = new_ratio
+        if getattr(self.encoder, "masking_module", None) is not None:
+            self.encoder.masking_module.mask_ratio = new_ratio
+        # Log infrequently to avoid spam
+        if step % 100 == 0:
+            self.log("mask_ratio", torch.tensor(new_ratio, device=self.device), prog_bar=True, batch_size=self.batch_size, sync_dist=True)
+    
+    def compute_reconstruction_loss(self, batch):
+        """
+        Compute reconstruction loss for masked patches.
+        
+        This uses the stored masked patches from the encoder to compute
+        reconstruction loss only on the masked positions.
+        
+        Args:
+            batch: Input batch (not used directly, patches come from encoder)
+            
+        Returns:
+            Reconstruction loss or None if no masking was applied
+        """
+        # check if masking was applied in the encoder and we have cached encoded tokens
+        if (
+            self.reconstruction_head is None
+            or self.encoder.masked_patches is None
+            or self.encoder.patch_mask is None
+            or self._last_encoded is None
+        ):
+            return None
+
+        # original token targets and boolean mask
+        original_patches = self.encoder.masked_patches  # [B, N, D]
+        mask = self.encoder.patch_mask  # [B, N] (bool)
+
+        if not mask.any():
+            return None
+
+        # predict embeddings and select masked positions directly in the head
+        reconstructed_masked = self.reconstruction_head(self._last_encoded, mask=mask)  # [K, D]
+        masked_original = original_patches[mask].detach()  # [K, D]
+
+        # guard against nan/inf bullshit in either target or prediction, this stuff messes training bad 
+        finite = torch.isfinite(masked_original) & torch.isfinite(reconstructed_masked)
+        if finite.any():
+            recon_loss = torch.nn.functional.mse_loss(reconstructed_masked[finite], masked_original[finite])
+        else:
+            recon_loss = torch.tensor(0.0, device=masked_original.device)
+        return recon_loss
 
     def test_step(self, batch, batch_idx):
         x, y = batch
@@ -462,6 +582,9 @@ class BFM(LightningModule):
 
                 abs_error_map = torch.abs(prediction_for_loss - target_tensor)
 
+                # Finite-value mask to guard against NaNs/Infs from data or model
+                finite_mask = torch.isfinite(prediction_for_loss) & torch.isfinite(target_tensor)
+
                 loss_var = torch.tensor(0.0, device=pred_tensor.device)
                 use_masked_loss_for_var = (
                     apply_mask_to_group
@@ -476,16 +599,20 @@ class BFM(LightningModule):
                         broadcastable_mask = current_land_mask.unsqueeze(0)
                     elif abs_error_map.ndim == 4:
                         broadcastable_mask = current_land_mask.unsqueeze(0).unsqueeze(0)
-
-                    masked_error_sum = torch.sum(abs_error_map * broadcastable_mask)
-                    num_elements_for_mean = torch.sum(broadcastable_mask.expand_as(abs_error_map))
-                    loss_var = (
-                        masked_error_sum / num_elements_for_mean
-                        if num_elements_for_mean > 0
-                        else torch.tensor(0.0, device=pred_tensor.device)
-                    )
+                    # Convert to boolean for safe logical operations
+                    mask_bool = broadcastable_mask > 0
+                    combined = mask_bool & finite_mask
+                    if combined.any():
+                        loss_var = abs_error_map[combined].mean()
+                    else:
+                        # skip contributing if no valid finite elements
+                        continue
                 else:
-                    loss_var = torch.mean(abs_error_map)
+                    if finite_mask.any():
+                        loss_var = abs_error_map[finite_mask].mean()
+                    else:
+                        # skip contributing if no valid finite elements
+                        continue
 
                 self.log(f"{group_name}_{var_name}_loss", loss_var, batch_size=gt_tensor.size(0))
 
@@ -499,7 +626,16 @@ class BFM(LightningModule):
                 total_loss += group_loss
                 count += 1
 
-        final_total_loss = total_loss / count if count > 0 else torch.tensor(0.0, device=self.device)
+        if count > 0:
+            final_total_loss = total_loss / count
+        else:
+            # Ensure the returned loss participates in autograd to avoid runtime errors
+            try:
+                any_param = next(p for p in self.parameters() if p.requires_grad)
+                final_total_loss = any_param.sum() * 0.0
+            except StopIteration:
+                # Fallback: constant with requires_grad=True (no param grads will be produced)
+                final_total_loss = torch.tensor(0.0, device=self.device, requires_grad=True)
         print(f"Total loss {final_total_loss}")
         return final_total_loss
 
@@ -519,7 +655,7 @@ class BFM(LightningModule):
         # TODO Play with the T_max => should be more or less equal to the total number of gradient steps we do, 
         # so the LR, fades to a /10 value in the end of the training.
         # The specific value 200.000 is for ~ 1000 epochs with batch size of 1 -> Adapt accordingly
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=8000, eta_min=self.learning_rate / 10)        # scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=self.lr_lambda)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=25000, eta_min=self.learning_rate / 10)        # scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=self.lr_lambda)
 
         return [optimizer], [scheduler]
 
@@ -826,3 +962,84 @@ def freeze_except(model):
             param.requires_grad = False
     print(f"PEFT trainable params = {len(trainable)} layers")
     return trainable
+
+# import torch
+# import matplotlib.pyplot as plt
+
+# def get_optimizer_and_scheduler(model, lr=0.003, wd=0.001, 
+#                                 T_max=12000, eta_min=None):
+#     """
+#     Returns an AdamW optimizer and CosineAnnealingLR scheduler.
+#     """
+#     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=wd)
+#     if eta_min is None:
+#         eta_min = lr / 10
+#     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+#         optimizer, T_max=T_max, eta_min=eta_min
+#     )
+#     return optimizer, scheduler
+
+
+# def record_lr(optimizer, scheduler, epochs, steps_per_epoch):
+#     """
+#     Simulates stepping through training and records LR at each step.
+#     Returns a list of learning rates.
+#     """
+#     lr_history = []
+#     total_steps = epochs * steps_per_epoch
+#     scheduler.last_epoch = -1
+
+#     for step in range(total_steps):
+#         scheduler.step()
+#         lr = scheduler.get_last_lr()[0]
+#         lr_history.append(lr)
+#     return lr_history
+
+# def plot_lr_schedule(model, 
+#                      lr=0.003, wd=0.001, 
+#                      T_max=1200, eta_min=None,
+#                      epochs=1000, steps_per_epoch=40,
+#                      figsize=(10, 6)):
+#     """
+#     Creates and plots the LR schedule over training steps.
+#     """
+#     optimizer, scheduler = get_optimizer_and_scheduler(
+#         model, lr=lr, wd=wd, T_max=T_max, eta_min=eta_min
+#     )
+#     lr_history = record_lr(optimizer, scheduler, epochs, steps_per_epoch)
+
+#     plt.figure(figsize=figsize)
+#     plt.plot(lr_history, label='Learning Rate')
+#     plt.xlabel('Training Steps')
+#     plt.ylabel('Learning Rate')
+#     plt.title(
+#         f'CosineAnnealingLR Schedule\n'
+#         f'lr={lr}, wd={wd}, T_max={T_max}, eta_min={scheduler.eta_min}'
+#     )
+#     plt.grid(True)
+#     plt.tight_layout()
+#     plt.show()
+
+
+# class DummyModel(torch.nn.Module):
+#     def __init__(self):
+#         super().__init__()
+#         self.lin = torch.nn.Linear(10, 1)
+#     def forward(self, x):
+#         return self.lin(x)
+
+# model = DummyModel()
+# plot_lr_schedule(
+#     model,
+#     lr=0.003,
+#     wd=0.001,
+#     T_max=5000, # Play with this
+#     eta_min=0.0003, # Play with this
+#     epochs=1000, # Play with this
+#     steps_per_epoch=14 # Play with this 
+# )
+
+# 1) Only fit species, for 36h
+# 2) Fit all variables, for 36h 
+# 3) Create an annealing masking: start:30% -> end:90%, for 36h for species only
+# 4) Create an annealing masking: start:30% -> end:90%, for 36h for ALL

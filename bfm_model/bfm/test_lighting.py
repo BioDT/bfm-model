@@ -89,11 +89,12 @@ def main(cfg: DictConfig):
     checkpoint_path = cfg.evaluation.checkpoint_path
     # Load Model from Checkpoint
     print(f"Loading model from checkpoint: {checkpoint_path}")
+    # bfm_model.load_from_checkpoint(checkpoint_path=checkpoint_path, strict=False)
     # Do the inference
     # test_results = trainer.test(model=bfm_model, ckpt_path=checkpoint_path, dataloaders=test_dataloader)
     predictions = trainer.predict(model=bfm_model, ckpt_path=checkpoint_path, dataloaders=test_dataloader)
     print("=== Test Results ===")
-    SAVE_DIR = Path("pre-train_test_exports")
+    SAVE_DIR = Path("standardize")
     SAVE_DIR.mkdir(exist_ok=True, parents=True)
 
     windows: defaultdict[int, dict] = defaultdict(dict)

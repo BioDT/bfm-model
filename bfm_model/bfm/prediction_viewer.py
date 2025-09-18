@@ -43,7 +43,7 @@ GRID_LON = np.round(np.arange(LON_START, LON_END + 1e-6, 0.25), 3)
 
 def _get_dir() -> Path:
     p = argparse.ArgumentParser(add_help=False)
-    p.add_argument("--data_dir", default="/folder_with_the_produced_windows", type=Path)
+    p.add_argument("--data_dir", default="standardize", type=Path)
     ns, _ = p.parse_known_args()
     return ns.data_dir.resolve()
 

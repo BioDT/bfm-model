@@ -20,12 +20,24 @@ model:
   W: 280 # Width
   num_latent_tokens: 8
   backbone: "swin" # mvit
-  patch_size: 4 # 2 # Size of spatial patches.
+  patch_size: 8 # 2 # Size of spatial patches.
   embed_dim: 512 #384 | 256 # Embedding dimension.
   num_heads: 16 # 12 Number of attention heads.
   head_dim: 64 # Dimension of each attention head.
   depth: 10 # 6 | 3 # Number of transformer layers.
   swin_backbone_size: "large" # Can be "medium" or "large"
+  
+  # Masking Configuration for Prithvi-style MAE
+  use_masking: true  # Set to true to enable masked autoencoding
+  mask_ratio: 0.3  # Fraction of patches to mask (30%)
+  masking_type: "random"  # Type of masking: "random", "block", or "tube"
+  reconstruction_weight: 0.1  # Weight for reconstruction loss (auxiliary to prediction loss)
+  # Optional linear annealing of mask ratio
+  mask_anneal_enabled: true
+  mask_anneal_start: 0.3
+  mask_anneal_end: 0.75
+  # If not set, will default to training.total_steps or internal default
+  mask_anneal_steps: 25000
 
 data:
   atmos_levels: [1000, 925, 850, 700, 600, 500, 400, 300, 250, 200, 150, 100, 50]
@@ -40,19 +52,19 @@ data:
     mode: normalize # normalize (mean and std), standardize (min-max)
 
 training:
-  batch_size: 1
+  batch_size: 8
   workers: 15
   epochs: 1000
   accelerator: cuda
   precision: bf16-mixed
   precision_in: "high" # ["medium", "high", "highest"] https://pytorch.org/docs/stable/generated/torch.set_float32_matmul_precision.html#torch.set_float32_matmul_precision
-  devices: [0,1]
+  devices: [0]
   strategy: fsdp #ddp # auto
   num_nodes: 1
   gradient_clip: 1.0
   log_steps: 1
-  lr: 0.0005  #5e-4
-  wd: 0.000005 #5e-6
+  lr: 0.00005  #5e-5
+  wd: 0.0005 #5e-2
   checkpoint_path: # Add your checkpoint path (weights.ckpt) here to continue pre-training
   checkpoint_every: 151
   eval_every: 150
@@ -68,7 +80,7 @@ mlflow:
 
 evaluation:
   rollout_data: /projects/prjs1134/data/projects/biodt/storage/final_dataset_monthly/rollout # Initial batch to start a rollout (need 1)
-  checkpoint_path: # Add your checkpoint path (weights.ckpt) to evaluate the model
+  checkpoint_path: /home/sgribincea/bfm-model/outputs/2025-09-17/21-50-39/checkpoints/epoch=301-val_loss=0.16791.ckpt # Add your checkpoint path (weights.ckpt) to evaluate the model
   batch_size: 1
   test_device: "cuda:0"
 
@@ -102,8 +114,8 @@ model_swin_backbone:
     mlp_ratio: 4.0
     qkv_bias: True
     drop_rate: 0.0
-    attn_drop_rate: 0.0
-    drop_path_rate: 0.1
+    attn_drop_rate: 0.25
+    drop_path_rate: 0.25
     use_lora: False
   medium:
     encoder_depths: [2,2]
@@ -114,6 +126,19 @@ model_swin_backbone:
     mlp_ratio: 4.0
     qkv_bias: True
     drop_rate: 0.0
-    attn_drop_rate: 0.0
-    drop_path_rate: 0.1
+    attn_drop_rate: 0.3
+    drop_path_rate: 0.3
     use_lora: False
+
+
+# optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
+
+# base = torch.optim.RAdam(self.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay,
+#                     decoupled_weight_decay=True)
+# optimizer = Lookahead(base, alpha=0.5, k=6)
+
+# lion_lr = max(self.learning_rate * 0.6, 1e-6)
+# optimizer = Lion(self.parameters(), lr=lion_lr, weight_decay=self.weight_decay, betas=(0.9, 0.99))
+
+# optimizer = torch.optim.Adagrad(self.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay,
+#                             eps=1e-10, initial_accumulator_value=0.0) # best performing?

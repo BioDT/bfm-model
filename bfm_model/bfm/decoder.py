@@ -139,21 +139,6 @@ class BFMDecoder(nn.Module):
         self.H = H
         self.W = W
 
-        # Create variable mappings for each category
-        self.var_maps = {
-            "surface": {v: i for i, v in enumerate(surface_vars)},
-            "edaphic": {v: i for i, v in enumerate(edaphic_vars)},
-            "atmos": {v: i for i, v in enumerate(atmos_vars)},
-            "climate": {v: i for i, v in enumerate(climate_vars)},
-            "species": {v: i for i, v in enumerate(species_vars)},
-            "species_distr": {v: i for i, v in enumerate(vegetation_vars)},
-            "land": {v: i for i, v in enumerate(land_vars)},
-            "agriculture": {v: i for i, v in enumerate(agriculture_vars)},
-            "forest": {v: i for i, v in enumerate(forest_vars)},
-            "redlist": {v: i for i, v in enumerate(redlist_vars)},
-            "misc": {v: i for i, v in enumerate(misc_vars)},
-        }
-
         pos_encoding_dim = self._calculate_pos_encoding_dim()
 
         # pos and time embeddings

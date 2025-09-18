@@ -26,6 +26,7 @@ import torch.nn as nn
 from einops import rearrange
 from torch.distributed.nn.functional import all_gather
 
+from bfm_model.bfm.masking import create_masking_module
 from bfm_model.perceiver_components.pos_encoder import build_position_encoding
 from bfm_model.perceiver_core.perceiver_io import PerceiverIO
 
@@ -101,6 +102,9 @@ class BFMEncoder(nn.Module):
         position_encoding_type: str = "fourier",
         H: int = 152,
         W: int = 320,
+        use_masking: bool = False,
+        mask_ratio: float = 0.3,
+        masking_type: str = "random",
     ):
         super().__init__()
         # basic config
@@ -183,6 +187,26 @@ class BFMEncoder(nn.Module):
         # Add H and W as instance variables
         self.H = H
         self.W = W
+        
+        # masking configuration
+        self.use_masking = use_masking
+        self.mask_ratio = mask_ratio
+        self.masking_type = masking_type
+        
+        # initialize masking module if enabled
+        if self.use_masking:
+            self.masking_module = create_masking_module(
+                masking_type=masking_type,
+                mask_ratio=mask_ratio,
+                embed_dim=embed_dim
+            )
+            print(f"Initialized {masking_type} masking with ratio {mask_ratio}")
+        else:
+            self.masking_module = None
+            
+        # storage for reconstruction targets (set during forward pass)
+        self.register_buffer('masked_patches', None, persistent=False)
+        self.register_buffer('patch_mask', None, persistent=False)
 
         # Initialize perceiver
         self._initialize_perceiver(H, W)
@@ -575,7 +599,7 @@ class BFMEncoder(nn.Module):
             embedding_groups["forest"] = forest_embed
 
         redlist_embed = self.process_variable_group(
-            batch.forest_variables, self.redlist_token_embeds, "Redlist Variables"
+            batch.redlist_variables, self.redlist_token_embeds, "Redlist Variables"
         )  # shape: [num_patches, embed_dim]
         if redlist_embed is not None:
             embeddings.append(redlist_embed)
@@ -670,6 +694,29 @@ class BFMEncoder(nn.Module):
 
         x = self.pre_perceiver_norm(x)
         # self._check_tensor(x, "Normalized input")
+        
+        # apply masking if enabled (for masked autoencoding)
+        if self.use_masking and self.masking_module is not None and self.training:
+            # Store original patches before masking for reconstruction
+            original_x = x.clone()
+            
+            # apply masking
+            x, mask, ids_restore = self.masking_module(x)
+            
+            # store for reconstruction loss computation
+            self.masked_patches = original_x  # store full patches
+            self.patch_mask = mask  # store mask indicating which patches were masked
+            self.ids_restore = ids_restore  # store indices for restoring order
+            
+            if B == 1:  # only print for single batch to avoid spam
+                masked_count = mask.sum().item()
+                total_patches = mask.numel()
+                print(f"Masking: {masked_count}/{total_patches} patches ({100*masked_count/total_patches:.1f}%)")
+        else:
+            # no masking during validation/test or if disabled
+            self.masked_patches = None
+            self.patch_mask = None
+            self.ids_restore = None
 
         latents = self._combine_latents(x.device)  # [num_latents, embed_dim]
         latents = latents.unsqueeze(0).repeat(B, 1, 1)  # [B, num_latents, embed_dim]
