@@ -1,7 +1,7 @@
 """
 Copyright 2025 (C) TNO. Licensed under the MIT license.
 
-BFM (Biodiversity Foundation Model) Decoder Module.
+BFM (BioAnalyst Foundation Model) Decoder Module.
 
 This module contains the decoder component of the BFM architecture, responsible for transforming
 encoded latent representations back into interpretable climate and biosphere variables.
@@ -30,7 +30,7 @@ from bfm_model.perceiver_core.perceiver_io import PerceiverIO
 
 class BFMDecoder(nn.Module):
     """
-    Biodiversity Foundation Model Decoder.
+    BioAnalyst Foundation Model Decoder.
 
     This decoder takes encoded representations and transforms them back into interpretable
     climate and biosphere variables using a Perceiver IO architecture.

@@ -416,9 +416,10 @@ class BFM(LightningModule):
         
         # compute reconstruction loss if masking is enabled
         total_loss = pred_loss
-        if self.use_masking and self.reconstruction_head is not None and self.training:
+        if self.use_masking and self.reconstruction_head is not None:
             recon_loss = self.compute_reconstruction_loss(x)
             if recon_loss is not None:
+                # print("reconstriction loss", recon_loss)
                 # add reconstruction loss as auxiliary loss
                 total_loss = pred_loss + self.reconstruction_weight * recon_loss
                 self.log("train_reconstruction_loss", recon_loss, batch_size=self.batch_size, sync_dist=True)
@@ -911,16 +912,16 @@ class BFMRollout(BFM):
         return total_loss
 
     # TODO Uncomment and use for debugging
-    # def optimizer_step(self, epoch, batch_idx, optimizer, *args, **kwargs):
-    #     # record parameter norms *before* step
-    #     pre_norms = {n: p.detach().abs().mean().item() for n, p in self.named_parameters() if p.requires_grad}
-    #     super().optimizer_step(epoch, batch_idx, optimizer, *args, **kwargs)
-    #     # compare after step (on owning shard)
-    #     for n, p in self.named_parameters():
-    #         if p.requires_grad and p.grad is not None:
-    #             delta = (p.detach().abs().mean() - pre_norms[n]).abs()
-    #             if delta < 1e-14:  # effectively unchanged
-    #                 print(f"⚠️  {n} did not update (Δ≈0)")
+    def optimizer_step(self, epoch, batch_idx, optimizer, *args, **kwargs):
+        # record parameter norms *before* step
+        pre_norms = {n: p.detach().abs().mean().item() for n, p in self.named_parameters() if p.requires_grad}
+        super().optimizer_step(epoch, batch_idx, optimizer, *args, **kwargs)
+        # compare after step (on owning shard)
+        for n, p in self.named_parameters():
+            if p.requires_grad and p.grad is not None:
+                delta = (p.detach().abs().mean() - pre_norms[n]).abs()
+                if delta < 1e-14:  # effectively unchanged
+                    print(f"⚠️  {n} did not update (Δ≈0)")
 
     # TODO Uncomment and use for debugging
     # DURING FSDP it will print no-grad to all parameters 
@@ -962,84 +963,3 @@ def freeze_except(model):
             param.requires_grad = False
     print(f"PEFT trainable params = {len(trainable)} layers")
     return trainable
-
-# import torch
-# import matplotlib.pyplot as plt
-
-# def get_optimizer_and_scheduler(model, lr=0.003, wd=0.001, 
-#                                 T_max=12000, eta_min=None):
-#     """
-#     Returns an AdamW optimizer and CosineAnnealingLR scheduler.
-#     """
-#     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=wd)
-#     if eta_min is None:
-#         eta_min = lr / 10
-#     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-#         optimizer, T_max=T_max, eta_min=eta_min
-#     )
-#     return optimizer, scheduler
-
-
-# def record_lr(optimizer, scheduler, epochs, steps_per_epoch):
-#     """
-#     Simulates stepping through training and records LR at each step.
-#     Returns a list of learning rates.
-#     """
-#     lr_history = []
-#     total_steps = epochs * steps_per_epoch
-#     scheduler.last_epoch = -1
-
-#     for step in range(total_steps):
-#         scheduler.step()
-#         lr = scheduler.get_last_lr()[0]
-#         lr_history.append(lr)
-#     return lr_history
-
-# def plot_lr_schedule(model, 
-#                      lr=0.003, wd=0.001, 
-#                      T_max=1200, eta_min=None,
-#                      epochs=1000, steps_per_epoch=40,
-#                      figsize=(10, 6)):
-#     """
-#     Creates and plots the LR schedule over training steps.
-#     """
-#     optimizer, scheduler = get_optimizer_and_scheduler(
-#         model, lr=lr, wd=wd, T_max=T_max, eta_min=eta_min
-#     )
-#     lr_history = record_lr(optimizer, scheduler, epochs, steps_per_epoch)
-
-#     plt.figure(figsize=figsize)
-#     plt.plot(lr_history, label='Learning Rate')
-#     plt.xlabel('Training Steps')
-#     plt.ylabel('Learning Rate')
-#     plt.title(
-#         f'CosineAnnealingLR Schedule\n'
-#         f'lr={lr}, wd={wd}, T_max={T_max}, eta_min={scheduler.eta_min}'
-#     )
-#     plt.grid(True)
-#     plt.tight_layout()
-#     plt.show()
-
-
-# class DummyModel(torch.nn.Module):
-#     def __init__(self):
-#         super().__init__()
-#         self.lin = torch.nn.Linear(10, 1)
-#     def forward(self, x):
-#         return self.lin(x)
-
-# model = DummyModel()
-# plot_lr_schedule(
-#     model,
-#     lr=0.003,
-#     wd=0.001,
-#     T_max=5000, # Play with this
-#     eta_min=0.0003, # Play with this
-#     epochs=1000, # Play with this
-#     steps_per_epoch=14 # Play with this 
-# )
-
-# 1) Only fit species, for 36h
-# 2) Fit all variables, for 36h 
-# 3) Create an annealing masking: start:30% -> end:90%, for 36h for species only
-# 4) Create an annealing masking: start:30% -> end:90%, for 36h for ALL

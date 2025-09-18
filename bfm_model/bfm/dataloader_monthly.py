@@ -31,7 +31,6 @@ from bfm_model.bfm.scaler import (
 )
 from bfm_model.bfm.utils import DictObj
 
-# Namedtuple definitions
 Batch = namedtuple(
     "Batch",
     [
@@ -56,34 +55,6 @@ Metadata = namedtuple("Metadata", ["latitudes", "longitudes", "timestamp", "lead
 Key = Union[str, int]
 Selection = Union[Sequence[Key], Literal["*"], None]
 VarDict = Dict[Key, torch.Tensor]
-
-
-def _filter_group(
-    group_vars: Mapping[Key, torch.Tensor],
-    keep: Selection,
-    *,
-    group_name: str,
-    on_missing: Literal["error", "warn", "ignore"] = "warn",
-) -> VarDict:
-    """Return only requested keys from a variable group. Never adds keys."""
-    if keep is None or keep == "*":
-        return dict(group_vars)
-    out: VarDict = {}
-    missing: List[Key] = []
-    for k in keep:
-        if k in group_vars:
-            out[k] = group_vars[k]
-        else:
-            missing.append(k)
-    if missing:
-        msg = f"[select] group={group_name} missing {len(missing)} keys: {missing[:8]}{' ...' if len(missing) > 8 else ''}"
-        if on_missing == "error":
-            raise KeyError(msg)
-        elif on_missing == "warn":
-            import logging
-
-            logging.getLogger(__name__).warning(msg)
-    return out
 
 
 def _apply_selection_inplace_on_raw_sample(
@@ -295,7 +266,7 @@ def crop_variables(variables, new_H, new_W, handle_nans=False, nan_mode="zero", 
         new_W (int): Target width dimension
         handle_nans (bool): Whether to handle NaN values at all
         nan_mode (str): Strategy for NaN handling.
-            - "mean_clip": old logic (replace NaNs with mean, clip to mean ± 2*std)
+            - "mean_clip": old logic (replace NaNs with mean, clip to mean +- 2*std)
             - "zero": replace all NaNs with 0.0, no extra clipping
 
     Returns:
@@ -333,11 +304,8 @@ def crop_variables(variables, new_H, new_W, handle_nans=False, nan_mode="zero", 
                         clip_min = mean_val - 2 * std_val
                         clip_max = mean_val + 2 * std_val
 
-                        # Replace NaNs with mean
                         cropped = torch.nan_to_num(cropped, nan=mean_val)
-                        # Convert to float32 if needed
                         cropped = cropped.to(torch.float32)
-                        # Clip
                         cropped = torch.clip(cropped, clip_min, clip_max)
                     else:
                         # If no valid values, just fill with 0 and do a small clip
@@ -347,7 +315,6 @@ def crop_variables(variables, new_H, new_W, handle_nans=False, nan_mode="zero", 
                 elif nan_mode == "zero":
                     # Simply replace all NaNs with 0.0
                     cropped = torch.nan_to_num(cropped)
-                    # cropped = cropped.to(torch.float32)
 
                 else:
                     raise ValueError(f"Unknown nan_mode: {nan_mode}")
@@ -633,7 +600,7 @@ def compute_batch_statistics(batch: Batch) -> dict:
 
 scalling_dict = {
     "enabled": False,
-    "stats_path": "/projects/prjs1134/data/projects/biodt/storage/monthly_batches/statistics/monthly_batches_stats_splitted_channels.json",
+    "stats_path": "<your_stats.json>",
     "mode": "normalize",
 }
 scaling_object = DictObj(scalling_dict)
@@ -936,5 +903,5 @@ def _convert(obj: Any, move_cpu: bool = True, target_dtype: torch.dtype = torch.
 
 
 if __name__ == "__main__":
-    data_path = "/projects/prjs1134/data/projects/biodt/storage/final_dataset_monthly/train"
+    data_path = "<path_to_data_folder_with_batches>"
     test_dataset_and_dataloader(data_path)

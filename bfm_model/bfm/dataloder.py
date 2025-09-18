@@ -126,7 +126,7 @@ def crop_variables(variables, new_H, new_W, handle_nans=True, nan_mode="mean_cli
         new_W (int): Target width dimension
         handle_nans (bool): Whether to handle NaN values at all
         nan_mode (str): Strategy for NaN handling.
-            - "mean_clip": old logic (replace NaNs with mean, clip to mean ± 2*std)
+            - "mean_clip": old logic (replace NaNs with mean, clip to mean +- 2*std)
             - "zero": replace all NaNs with 0.0, no extra clipping
 
     Returns:
@@ -164,11 +164,8 @@ def crop_variables(variables, new_H, new_W, handle_nans=True, nan_mode="mean_cli
                         clip_min = mean_val - 2 * std_val
                         clip_max = mean_val + 2 * std_val
 
-                        # Replace NaNs with mean
                         cropped = torch.nan_to_num(cropped, nan=mean_val)
-                        # Convert to float32 if needed
                         cropped = cropped.to(torch.float32)
-                        # Clip
                         cropped = torch.clip(cropped, clip_min, clip_max)
                     else:
                         # If no valid values, just fill with 0 and do a small clip

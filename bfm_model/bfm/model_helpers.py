@@ -100,6 +100,15 @@ def setup_bfm_model(cfg, mode: Literal["train", "test", "rollout"], checkpoint_p
             land_mask_path=cfg.data.land_mask_path,
             use_mask=cfg.training.use_mask,
             partially_masked_groups=cfg.training.partially_masked_groups,
+            use_masking=cfg.model.use_masking,
+            mask_ratio=cfg.model.mask_ratio,
+            masking_type=cfg.model.masking_type,
+            reconstruction_weight=cfg.model.reconstruction_weight,
+            # Mask-annealing schedule (optional)
+            mask_anneal_enabled=cfg.model.mask_anneal_enabled,
+            mask_anneal_start=cfg.model.mask_anneal_start,
+            mask_anneal_end=cfg.model.mask_anneal_end,
+            mask_anneal_steps=cfg.model.mask_anneal_steps,
             **swin_params,
         )
         # BFM = torch.compile(model)
