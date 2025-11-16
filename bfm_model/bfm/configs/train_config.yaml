@@ -80,7 +80,7 @@ mlflow:
 
 evaluation:
   rollout_data: /projects/prjs1134/data/projects/biodt/storage/final_dataset_monthly/rollout # Initial batch to start a rollout (need 1)
-  checkpoint_path: /home/sgribincea/bfm-model/outputs/2025-09-17/21-50-39/checkpoints/epoch=301-val_loss=0.16791.ckpt # Add your checkpoint path (weights.ckpt) to evaluate the model
+  checkpoint_path: /home/sgribincea/bfm-model/standardize_with_annealed_mask/10-41-46/checkpoints/epoch=172-val_loss=0.17702.ckpt # Add your checkpoint path (weights.ckpt) to evaluate the model
   batch_size: 1
   test_device: "cuda:0"
 

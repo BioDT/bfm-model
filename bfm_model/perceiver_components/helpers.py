@@ -446,6 +446,11 @@ class BuiltinGQAAttention(nn.Module):
         # Final projection
         self.out_proj = nn.Linear(n_q_heads * head_dim, q_dim)
 
+        # Attention capture flags (for interpretability analysis)
+        self.capture_attention_weights = False
+        self.last_attention_weights = None
+        self.attention_weights_history = []
+
     def forward(
         self, x: torch.Tensor, context: torch.Tensor = None, mask: torch.Tensor = None, is_causal: bool = None
     ) -> torch.Tensor:
@@ -485,15 +490,56 @@ class BuiltinGQAAttention(nn.Module):
         if mask is not None:
             final_attn_mask = mask.unsqueeze(1)  # (bsz, 1, seq_len_q, seq_len_kv)
 
-        out = F.scaled_dot_product_attention(
-            q,
-            k,
-            v,
-            attn_mask=final_attn_mask,
-            dropout_p=self.dropout_p if self.training else 0.0,
-            is_causal=is_causal,
-            enable_gqa=True,
-        )
+        # attention capture: manually compute attention to extract weights
+        if self.capture_attention_weights and not self.training:
+            with torch.no_grad():
+                q_bf16 = q.bfloat16()
+                k_bf16 = k.bfloat16()
+                v_bf16 = v.bfloat16()
+
+                # handle GQA
+                # if n_q_heads > n_kv_heads, we need to replicate K and V
+                if self.n_q_heads != self.n_kv_heads:
+                    n_rep = self.n_q_heads // self.n_kv_heads
+                    k_bf16 = k_bf16.repeat_interleave(n_rep, dim=1)
+                    v_bf16 = v_bf16.repeat_interleave(n_rep, dim=1)
+
+                # manually compute attention
+                scale = 1.0 / (self.head_dim ** 0.5)
+                attn_scores = torch.matmul(q_bf16, k_bf16.transpose(-2, -1)) * scale
+
+                # apply mask if provided (not tested really, but added for completeness)
+                if final_attn_mask is not None:
+                    max_neg_value = -torch.finfo(attn_scores.dtype).max
+                    attn_scores = attn_scores.masked_fill(~final_attn_mask, max_neg_value)
+
+                # attention weights
+                attn_weights = F.softmax(attn_scores, dim=-1)
+
+                # final output
+                out_bf16 = torch.matmul(attn_weights, v_bf16)
+                out = out_bf16.to(dtype=v.dtype)
+
+                # store attention weights (move to CPU immediately to free GPU memory)
+                attn_cpu = attn_weights.cpu().float()
+                self.last_attention_weights = attn_cpu
+                self.attention_weights_history.append(attn_cpu)
+
+                # cleanup
+                del q_bf16, k_bf16, v_bf16, attn_scores, attn_weights, out_bf16
+                torch.cuda.empty_cache()
+
+        else:
+            # normal path: use optimized SDPA
+            out = F.scaled_dot_product_attention(
+                q,
+                k,
+                v,
+                attn_mask=final_attn_mask,
+                dropout_p=self.dropout_p if self.training else 0.0,
+                is_causal=is_causal,
+                enable_gqa=True,
+            )
 
         # out shape is [bsz, n_q_heads, seq_len_q, head_dim]. We need to bring it back to [bsz, seq_len_q, n_q_heads * head_dim].
         out = out.transpose(1, 2).reshape(bsz, seq_len_q, self.n_q_heads * self.head_dim)
